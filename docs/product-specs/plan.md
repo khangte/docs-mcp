@@ -328,7 +328,7 @@ MCP 서버와 OpenAPI 문서의 연결은 다음 흐름으로 이루어진다.
 
 ```text
 docs-mcp/
-├─ app/
+├─ src/
 │  ├─ main.py                       # 애플리케이션 실행 진입점
 │  ├─ core/
 │  │  ├─ config.py                 # 환경 변수 및 설정 로딩
@@ -388,7 +388,7 @@ docs-mcp/
 │  ├─ services/                    # 서비스 계층 테스트
 │  ├─ api/                         # HTTP API 테스트
 │  └─ mcp/                         # MCP 도구 및 서버 테스트
-├─ plan.md                         # 프로젝트 기획 문서
+├─ docs/product-specs/plan.md      # 프로젝트 기획 문서
 ├─ .env.example                    # 환경 변수 예시
 ├─ pyproject.toml                  # Python 프로젝트 설정
 └─ README.md                       # 프로젝트 사용 및 실행 안내
@@ -446,7 +446,6 @@ MCP 검색 도구 예시:
 
 ```python
 from app.services.search.search_service import SearchService
-
 
 async def search_api_docs(query: str, top_k: int = 5) -> dict:
     results = await SearchService().search(query=query, top_k=top_k)
