@@ -1,0 +1,178 @@
+"""문서 색인/재색인 오케스트레이션.
+
+입력: ParsedDocument + ApiDocument (DB 엔티티)
+출력: 생성된 청크 개수.
+
+재색인 시 기존 청크를 DELETE 후 신규 INSERT 하되, 호출자(sync_service)가 한 트랜잭션 안에서 수행한다.
+"""
+
+from __future__ import annotations
+
+import hashlib
+
+from src.models.openapi import (
+    ApiChunk,
+    ApiDocument,
+    ApiEndpoint,
+    ApiParameter,
+    ApiRequestBody,
+    ApiResponse,
+    ApiSchema,
+)
+from src.repositories.chunk_repository import ChunkRepository
+from src.repositories.endpoint_repository import EndpointRepository
+from src.services.indexer.chunk_builder import build_chunks
+from src.services.indexer.embedding_provider import EmbeddingProvider
+from src.services.indexer.vector_index import InMemoryVectorIndex
+from src.services.parser.openapi_parser import ParsedDocument, ParsedEndpoint
+
+
+class IndexerService:
+    """ParsedDocument → DB 엔티티 + 청크 적재."""
+
+    def __init__(
+        self,
+        endpoint_repo: EndpointRepository,
+        chunk_repo: ChunkRepository,
+        embedding_provider: EmbeddingProvider,
+        vector_index: InMemoryVectorIndex,
+    ) -> None:
+        self._endpoint_repo = endpoint_repo
+        self._chunk_repo = chunk_repo
+        self._embedding_provider = embedding_provider
+        self._vector_index = vector_index
+
+    def index_document(
+        self, document: ApiDocument, parsed: ParsedDocument, is_reindex: bool
+    ) -> tuple[int, int]:
+        """엔드포인트/스키마/청크를 저장하고 생성된 청크 개수를 반환.
+
+        반환: (endpoints_count, chunks_count)
+        재색인일 경우 호출자가 이전 청크/엔드포인트/스키마를 먼저 지워야 한다.
+        """
+        endpoint_ids: dict[tuple[str, str], str] = {}
+        for idx, parsed_ep in enumerate(parsed.endpoints):
+            endpoint_id = _make_endpoint_id(document.id, parsed_ep, idx)
+            endpoint_ids[(parsed_ep.method, parsed_ep.path)] = endpoint_id
+            endpoint = _to_endpoint_entity(document.id, endpoint_id, parsed_ep)
+            self._endpoint_repo.add(endpoint)
+            for param in parsed_ep.parameters:
+                self._endpoint_repo.add(
+                    _to_parameter_entity(endpoint_id, param)
+                )
+            if parsed_ep.request_body is not None:
+                self._endpoint_repo.add(
+                    _to_request_body_entity(endpoint_id, parsed_ep.request_body)
+                )
+            for response in parsed_ep.responses:
+                self._endpoint_repo.add(
+                    _to_response_entity(endpoint_id, response)
+                )
+        for idx, parsed_schema in enumerate(parsed.schemas):
+            schema_entity = ApiSchema(
+                id=f"{document.id}:schema:{idx}",
+                document_id=document.id,
+                name=parsed_schema.name,
+                json_schema=_json_dumps_safe(parsed_schema.json_schema),
+                description=parsed_schema.description,
+            )
+            self._endpoint_repo.add_schema(schema_entity)
+
+        built_chunks = build_chunks(parsed, endpoint_ids)
+        texts = [c.text for c in built_chunks]
+        embeddings = (
+            self._embedding_provider.embed(texts) if texts else []
+        )
+        for idx, (built, vector) in enumerate(zip(built_chunks, embeddings, strict=True)):
+            chunk_id = f"{document.id}:chunk:{idx}"
+            chunk = ApiChunk(
+                id=chunk_id,
+                document_id=document.id,
+                chunk_type=built.chunk_type,
+                ref_id=built.ref_id,
+                text=built.text,
+            )
+            chunk.embedding = vector
+            self._chunk_repo.add(chunk)
+            self._vector_index.upsert(chunk_id, vector)
+
+        return len(parsed.endpoints), len(built_chunks)
+
+
+def _to_endpoint_entity(
+    document_id: str, endpoint_id: str, parsed: ParsedEndpoint
+) -> ApiEndpoint:
+    entity = ApiEndpoint(
+        id=endpoint_id,
+        document_id=document_id,
+        method=parsed.method,
+        path=parsed.path,
+        operation_id=parsed.operation_id,
+        summary=parsed.summary,
+        description=parsed.description,
+    )
+    entity.tags = list(parsed.tags)
+    return entity
+
+
+def _to_parameter_entity(endpoint_id: str, parsed: object) -> ApiParameter:
+    # parsed: ParsedParameter
+    from src.services.parser.openapi_parser import ParsedParameter
+
+    assert isinstance(parsed, ParsedParameter)
+    entity = ApiParameter(
+        endpoint_id=endpoint_id,
+        name=parsed.name,
+        location=parsed.location,
+        required=1 if parsed.required else 0,
+        description=parsed.description,
+        schema_ref=parsed.schema_ref,
+    )
+    entity.schema = parsed.schema
+    return entity
+
+
+def _to_request_body_entity(endpoint_id: str, parsed: object) -> ApiRequestBody:
+    from src.services.parser.openapi_parser import ParsedRequestBody
+
+    assert isinstance(parsed, ParsedRequestBody)
+    entity = ApiRequestBody(
+        endpoint_id=endpoint_id,
+        content_type=parsed.content_type,
+        required=1 if parsed.required else 0,
+        schema_ref=parsed.schema_ref,
+    )
+    entity.schema = parsed.schema
+    entity.example = parsed.example
+    return entity
+
+
+def _to_response_entity(endpoint_id: str, parsed: object) -> ApiResponse:
+    from src.services.parser.openapi_parser import ParsedResponse
+
+    assert isinstance(parsed, ParsedResponse)
+    entity = ApiResponse(
+        endpoint_id=endpoint_id,
+        status_code=parsed.status_code,
+        content_type=parsed.content_type,
+        description=parsed.description,
+        schema_ref=parsed.schema_ref,
+    )
+    entity.schema = parsed.schema
+    entity.example = parsed.example
+    return entity
+
+
+def _make_endpoint_id(document_id: str, parsed: ParsedEndpoint, idx: int) -> str:
+    key = f"{document_id}:{parsed.method}:{parsed.path}:{idx}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+    return f"{document_id}:ep:{digest}"
+
+
+def _json_dumps_safe(obj: dict[str, object]) -> str:
+    import json
+
+    try:
+        return json.dumps(obj)
+    except (TypeError, ValueError):
+        return "{}"
