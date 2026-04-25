@@ -28,6 +28,7 @@
 - 타입: `feat`, `fix`, `refactor`, `docs`, `test`, `chore` 등
 - scope는 변경 대상 모듈명 사용: `feat(planner): 기능 추가`
 - 한 커밋에 하나의 변경만 (atomic commit)
+  + 변경 내용이 다르면 파일별로 작성
 - 커밋 메시지는 한국어로 일관되게 작성
 
 ## PR 규칙
