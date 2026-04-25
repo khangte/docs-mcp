@@ -67,6 +67,44 @@ uvicorn src.main:app --reload
 - **RAG 질문**: `POST /query` (JSON: `{"question": "사용자 정보를 조회하는 API는 뭐야?"}`)
 - **예시 생성**: `GET /endpoints/{endpoint_id}/example?format=curl`
 
+## 🤖 MCP (Model Context Protocol) 연동
+
+이 프로젝트는 Claude Desktop 및 기타 MCP 호환 클라이언트에서 도구로 사용할 수 있는 MCP 서버 기능을 제공합니다.
+
+### 1. Claude Desktop 설정 (macOS/Windows)
+
+Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같이 서버를 추가합니다.
+
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "docs-mcp": {
+      "command": "python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/path/to/docs-mcp",
+      "env": {
+        "DOCS_MCP_DATABASE_URL": "sqlite:///./docs_mcp.db"
+      }
+    }
+  }
+}
+```
+
+### 2. 제공되는 도구 (Tools)
+
+- `list_documents`: 등록된 문서 목록 확인
+- `register_document`: 새 OpenAPI 문서 등록 (URL/텍스트)
+- `search_endpoints`: API 엔드포인트 검색
+- `query_rag`: 자연어 질의응답 (RAG)
+- `get_endpoint_details`: 엔드포인트 상세 정보 및 코드 예시 조회
+
+### 3. 제공되는 리소스 (Resources)
+
+- `document://{document_id}/raw`: 문서 원문 보기
+
 ## 🧪 테스트 실행
 
 ```bash
