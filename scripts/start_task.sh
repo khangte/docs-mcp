@@ -22,7 +22,8 @@ WORKTREE_ROOT="${REPO_ROOT}/.worktrees"
 WORKTREE_DIR="${WORKTREE_ROOT}/${TASK_TYPE}-${TASK_NAME}"
 BRANCH="${TASK_TYPE}/${TASK_NAME}"
 LOG_DIR="${REPO_ROOT}/output/logs/${TASK_TYPE}-${TASK_NAME}"
-EXEC_PLAN="${WORKTREE_DIR}/EXEC_PLAN.md"
+EXEC_PLAN_DIR="docs/exec-plans/active/${TASK_TYPE}-${TASK_NAME}"
+EXEC_PLAN="${WORKTREE_DIR}/${EXEC_PLAN_DIR}/EXEC_PLAN.md"
 PORT_FILE="${WORKTREE_DIR}/.ports"
 
 # base branch: develop 우선, 없으면 현재 HEAD
@@ -45,6 +46,7 @@ else
 fi
 
 mkdir -p "$LOG_DIR"
+mkdir -p "$(dirname "$EXEC_PLAN")"
 
 # 포트: task-name 해시 기반 오프셋 (3000~3899, 3개 연속 할당)
 HASH="$(printf '%s' "$TASK_NAME" | cksum | awk '{print $1}')"
