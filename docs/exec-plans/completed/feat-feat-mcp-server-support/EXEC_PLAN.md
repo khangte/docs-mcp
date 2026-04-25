@@ -9,16 +9,16 @@
 - 기존의 FastAPI `AppState`와 `ServiceBundle` 인프라를 재사용하여 코드 중복을 최소화한다.
 
 ## 단계별 계획
-1. **의존성 추가**: `pyproject.toml`에 `mcp`, `anyio` 등을 추가하고 설치한다.
-2. **MCP 서버 구현**: `src/mcp_server.py`를 생성하고 `McpServer` 인스턴스를 초기화한다.
-3. **도구(Tools) 등록**:
+1. **의존성 추가**: `pyproject.toml`에 `mcp`, `anyio` 등을 추가하고 설치한다. [완료]
+2. **MCP 서버 구현**: `src/mcp_server.py`를 생성하고 `McpServer` 인스턴스를 초기화한다. [완료]
+3. **도구(Tools) 등록**: [완료]
     - `list_documents`: 등록된 문서 목록 조회
     - `register_document`: 새 OpenAPI 문서 등록
     - `search_endpoints`: 엔드포인트 하이브리드 검색
     - `query_rag`: RAG 기반 자연어 질의응답
     - `get_endpoint_details`: 엔드포인트 상세 정보 및 예시 코드 조회
-4. **통합 테스트**: `mcp` 클라이언트를 모방하여 각 도구가 정상 작동하는지 검증한다.
-5. **README 업데이트**: MCP 서버 연동 방법(Claude Desktop 설정 등)을 문서화한다.
+4. **통합 테스트**: `mcp` 클라이언트를 모방하여 각 도구가 정상 작동하는지 검증한다. [완료]
+5. **README 업데이트**: MCP 서버 연동 방법(Claude Desktop 설정 등)을 문서화한다. [완료]
 
 ## 완료 기준
 - [x] `src/mcp_server.py`를 통해 stdio 기반 MCP 서버 실행 가능
