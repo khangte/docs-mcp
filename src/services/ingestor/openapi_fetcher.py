@@ -16,8 +16,6 @@ from src.core.errors import IntegrationError
 class OpenAPIFetcher(Protocol):
     """OpenAPI 문서 원문을 문자열로 가져온다."""
 
-        """OpenAPI 원문을 가져온다."""
-        """HTTP를 통해 OpenAPI 원문을 가져온다."""
     def fetch(self, source_url: str) -> str:
         """source_url 의 OpenAPI 원문을 문자열로 반환한다."""
         ...
@@ -30,8 +28,6 @@ class HttpOpenAPIFetcher:
         """HTTP 타임아웃을 보관한다."""
         self._timeout = timeout_seconds
 
-        """OpenAPI 원문을 가져온다."""
-        """HTTP를 통해 OpenAPI 원문을 가져온다."""
     def fetch(self, source_url: str) -> str:
         """httpx 로 GET 요청해 응답 본문을 반환하고 실패 시 IntegrationError 로 변환한다."""
         try:
@@ -53,8 +49,6 @@ class InMemoryFetcher:
         """URL 에 대응하는 원문을 매핑에 등록한다."""
         self._mapping[url] = content
 
-        """OpenAPI 원문을 가져온다."""
-        """HTTP를 통해 OpenAPI 원문을 가져온다."""
     def fetch(self, source_url: str) -> str:
         """매핑된 원문을 반환하고, 없으면 IntegrationError 를 발생시킨다."""
         if source_url not in self._mapping:
