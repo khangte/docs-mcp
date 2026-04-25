@@ -16,6 +16,7 @@ class JsonFormatter(logging.Formatter):
     """logging.Formatter 를 JSON 한 줄로 커스터마이즈."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """LogRecord 를 JSON 한 줄 문자열로 직렬화한다."""
         base: dict[str, Any] = {
             "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
             "level": record.levelname,
@@ -35,6 +36,7 @@ _configured = False
 
 
 def _configure_root(level: str) -> None:
+    """루트 로거에 JSON 핸들러를 1회만 부착한다."""
     global _configured
     if _configured:
         return

@@ -14,10 +14,12 @@ router = APIRouter()
 
 @router.get("/health")
 def health() -> dict[str, str]:
+    """단순 헬스체크: 항상 ok 를 반환한다."""
     return {"status": "ok"}
 
 
 def _get_state(request: Request) -> AppState:
+    """요청에서 AppState 를 꺼내 반환한다."""
     state = getattr(request.app.state, "app_state", None)
     if state is None:
         raise RuntimeError("AppState is not configured on the application")
@@ -26,6 +28,7 @@ def _get_state(request: Request) -> AppState:
 
 @router.get("/ready")
 def ready(state: AppState = Depends(_get_state)) -> dict[str, Any]:
+    """DB 와 벡터 인덱스 동작 여부를 확인해 레디니스 상태를 반환한다."""
     db_ok = False
     documents = 0
     try:

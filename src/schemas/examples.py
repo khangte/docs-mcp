@@ -6,6 +6,8 @@ from pydantic import BaseModel
 
 
 class ExampleResponse(BaseModel):
+    """요청 예시 코드 응답 DTO."""
+
     format: str
     code: str
     notes: str | None = None

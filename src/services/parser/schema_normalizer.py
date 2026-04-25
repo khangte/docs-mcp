@@ -25,6 +25,7 @@ def resolve_ref(ref: str | None, schemas: list[ParsedSchema]) -> dict[str, Any] 
 
 
 def schema_name_from_ref(ref: str | None) -> str | None:
+    """컴포넌트 ref 문자열에서 스키마 이름만 떼어 반환한다(없으면 None)."""
     if not ref or not ref.startswith(_COMPONENT_PREFIX):
         return None
     return ref[len(_COMPONENT_PREFIX):]

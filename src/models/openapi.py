@@ -31,10 +31,13 @@ class Base(DeclarativeBase):
 
 
 def _utcnow() -> datetime:
+    """현재 UTC 시각을 반환한다."""
     return datetime.now(timezone.utc)
 
 
 class ApiDocument(Base):
+    """OpenAPI 문서 메타·원문·하위 엔드포인트/스키마/청크/이력 묶음."""
+
     __tablename__ = "api_document"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -65,6 +68,8 @@ class ApiDocument(Base):
 
 
 class ApiEndpoint(Base):
+    """API 엔드포인트(METHOD + PATH) 단위 ORM 모델."""
+
     __tablename__ = "api_endpoint"
     __table_args__ = (UniqueConstraint("document_id", "method", "path", name="uq_endpoint_doc"),)
 
@@ -90,6 +95,7 @@ class ApiEndpoint(Base):
 
     @property
     def tags(self) -> list[str]:
+        """저장된 tags_json 을 파싱해 태그 리스트를 반환한다."""
         try:
             return list(json.loads(self.tags_json or "[]"))
         except json.JSONDecodeError:
@@ -97,10 +103,13 @@ class ApiEndpoint(Base):
 
     @tags.setter
     def tags(self, value: list[str]) -> None:
+        """태그 리스트를 JSON 문자열로 직렬화해 저장한다."""
         self.tags_json = json.dumps(list(value))
 
 
 class ApiParameter(Base):
+    """엔드포인트 파라미터(path/query/header/cookie) ORM 모델."""
+
     __tablename__ = "api_parameter"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -116,6 +125,7 @@ class ApiParameter(Base):
 
     @property
     def schema(self) -> dict[str, Any]:
+        """저장된 schema_json 을 dict 로 디코딩해 반환한다."""
         try:
             return dict(json.loads(self.schema_json or "{}"))
         except json.JSONDecodeError:
@@ -123,10 +133,13 @@ class ApiParameter(Base):
 
     @schema.setter
     def schema(self, value: dict[str, Any]) -> None:
+        """파라미터 스키마 dict 를 JSON 문자열로 직렬화해 저장한다."""
         self.schema_json = json.dumps(value)
 
 
 class ApiRequestBody(Base):
+    """엔드포인트 요청 본문 ORM 모델."""
+
     __tablename__ = "api_request_body"
 
     endpoint_id: Mapped[str] = mapped_column(
@@ -142,6 +155,7 @@ class ApiRequestBody(Base):
 
     @property
     def schema(self) -> dict[str, Any]:
+        """저장된 schema_json 을 dict 로 디코딩해 반환한다."""
         try:
             return dict(json.loads(self.schema_json or "{}"))
         except json.JSONDecodeError:
@@ -149,10 +163,12 @@ class ApiRequestBody(Base):
 
     @schema.setter
     def schema(self, value: dict[str, Any]) -> None:
+        """요청 바디 스키마 dict 를 JSON 문자열로 저장한다."""
         self.schema_json = json.dumps(value)
 
     @property
     def example(self) -> Any:
+        """저장된 example_json 을 디코딩해 반환한다."""
         if self.example_json is None:
             return None
         try:
@@ -162,10 +178,13 @@ class ApiRequestBody(Base):
 
     @example.setter
     def example(self, value: Any) -> None:
+        """예시 값을 JSON 문자열로 직렬화해 저장한다."""
         self.example_json = None if value is None else json.dumps(value)
 
 
 class ApiResponse(Base):
+    """엔드포인트 응답 ORM 모델."""
+
     __tablename__ = "api_response"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -181,6 +200,7 @@ class ApiResponse(Base):
 
     @property
     def schema(self) -> dict[str, Any]:
+        """저장된 schema_json 을 dict 로 디코딩해 반환한다."""
         try:
             return dict(json.loads(self.schema_json or "{}"))
         except json.JSONDecodeError:
@@ -188,10 +208,12 @@ class ApiResponse(Base):
 
     @schema.setter
     def schema(self, value: dict[str, Any]) -> None:
+        """응답 스키마 dict 를 JSON 문자열로 저장한다."""
         self.schema_json = json.dumps(value)
 
     @property
     def example(self) -> Any:
+        """저장된 example_json 을 디코딩해 반환한다."""
         if self.example_json is None:
             return None
         try:
@@ -201,10 +223,13 @@ class ApiResponse(Base):
 
     @example.setter
     def example(self, value: Any) -> None:
+        """예시 값을 JSON 문자열로 직렬화해 저장한다."""
         self.example_json = None if value is None else json.dumps(value)
 
 
 class ApiSchema(Base):
+    """문서 단위 컴포넌트 스키마 ORM 모델."""
+
     __tablename__ = "api_schema"
     __table_args__ = (UniqueConstraint("document_id", "name", name="uq_schema_doc_name"),)
 
@@ -218,6 +243,7 @@ class ApiSchema(Base):
 
     @property
     def schema(self) -> dict[str, Any]:
+        """저장된 json_schema 를 dict 로 디코딩해 반환한다."""
         try:
             return dict(json.loads(self.json_schema or "{}"))
         except json.JSONDecodeError:
@@ -225,6 +251,8 @@ class ApiSchema(Base):
 
 
 class ApiChunk(Base):
+    """검색용 청크(텍스트 + 임베딩) ORM 모델."""
+
     __tablename__ = "api_chunk"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -238,6 +266,7 @@ class ApiChunk(Base):
 
     @property
     def embedding(self) -> list[float]:
+        """저장된 embedding_json 을 float 리스트로 디코딩해 반환한다."""
         try:
             return [float(x) for x in json.loads(self.embedding_json or "[]")]
         except (json.JSONDecodeError, TypeError, ValueError):
@@ -245,10 +274,13 @@ class ApiChunk(Base):
 
     @embedding.setter
     def embedding(self, value: list[float]) -> None:
+        """임베딩 벡터를 JSON 문자열로 직렬화해 저장한다."""
         self.embedding_json = json.dumps(list(value))
 
 
 class DocumentSyncHistory(Base):
+    """문서 동기화 시도 결과 이력 ORM 모델."""
+
     __tablename__ = "document_sync_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

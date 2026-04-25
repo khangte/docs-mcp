@@ -25,6 +25,7 @@ def do_search(
     document_id: str | None = Query(default=None),
     services: ServiceBundle = Depends(get_services),
 ) -> SearchResponse:
+    """하이브리드/키워드/벡터 모드 중 하나로 엔드포인트를 검색해 결과를 반환한다."""
     stripped = query.strip()
     if not stripped:
         raise ValidationError("query must not be empty")

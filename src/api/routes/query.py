@@ -16,6 +16,7 @@ def answer_query(
     body: QueryRequest,
     services: ServiceBundle = Depends(get_services),
 ) -> QueryResponse:
+    """RAG 파이프라인으로 질의에 답하고 인용을 함께 반환한다."""
     result = services.rag_service.answer(
         question=body.question,
         top_k=body.top_k,

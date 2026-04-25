@@ -21,10 +21,14 @@ _SUPPORTED_FORMATS = {"curl", "fetch", "axios", "python"}
 
 
 class RequestExampleService:
+    """저장된 엔드포인트 정보로부터 호출 예시 코드를 생성한다."""
+
     def __init__(self, endpoint_repo: EndpointRepository) -> None:
+        """엔드포인트 저장소 의존성을 보관한다."""
         self._endpoint_repo = endpoint_repo
 
     def generate(self, endpoint_id: str, fmt: str) -> dict[str, Any]:
+        """지정 포맷(curl/fetch/axios/python)으로 호출 예시 코드 페이로드를 만들어 반환한다."""
         if fmt not in _SUPPORTED_FORMATS:
             raise ValidationError(f"unsupported format: {fmt}")
         endpoint = self._endpoint_repo.get(endpoint_id)
@@ -53,6 +57,7 @@ class RequestExampleService:
 
 
 def _resolve_path(endpoint: ApiEndpoint) -> str:
+    """경로 파라미터를 샘플 값으로 치환한 URL 경로를 반환한다."""
     path = endpoint.path
     for param in endpoint.parameters:
         if param.location != "path":
@@ -63,6 +68,7 @@ def _resolve_path(endpoint: ApiEndpoint) -> str:
 
 
 def _required_query_pairs(endpoint: ApiEndpoint) -> list[tuple[str, str]]:
+    """필수 쿼리 파라미터의 (이름, 샘플값) 쌍을 모아 반환한다."""
     pairs: list[tuple[str, str]] = []
     for param in endpoint.parameters:
         if param.location != "query" or not param.required:
@@ -73,6 +79,7 @@ def _required_query_pairs(endpoint: ApiEndpoint) -> list[tuple[str, str]]:
 
 
 def _required_header_pairs(endpoint: ApiEndpoint) -> list[tuple[str, str]]:
+    """필수 헤더 파라미터의 (이름, 샘플값) 쌍을 모아 반환한다."""
     pairs: list[tuple[str, str]] = []
     for param in endpoint.parameters:
         if param.location != "header" or not param.required:
@@ -83,6 +90,7 @@ def _required_header_pairs(endpoint: ApiEndpoint) -> list[tuple[str, str]]:
 
 
 def _body_sample(body: ApiRequestBody) -> Any | None:
+    """요청 바디의 예시값(있으면) 또는 스키마 기반 샘플을 만들어 반환한다."""
     if body.example is not None:
         return body.example
     if body.schema:
@@ -91,6 +99,7 @@ def _body_sample(body: ApiRequestBody) -> Any | None:
 
 
 def _sample_from_schema(schema: dict[str, Any], name: str) -> Any:
+    """JSON Schema 의 type/example 정보로부터 결정적 샘플 값을 만들어 반환한다."""
     if not isinstance(schema, dict):
         return "example"
     if "example" in schema and schema["example"] is not None:
@@ -118,6 +127,7 @@ def _sample_from_schema(schema: dict[str, Any], name: str) -> Any:
 def _render_curl(
     method: str, url: str, headers: list[tuple[str, str]], body: Any | None
 ) -> str:
+    """curl 명령 형식의 예시 코드를 문자열로 렌더링한다."""
     parts = [f"curl -X {method.upper()} '{url}'"]
     for k, v in headers:
         parts.append(f"  -H '{k}: {v}'")
@@ -130,6 +140,7 @@ def _render_curl(
 def _render_fetch(
     method: str, url: str, headers: list[tuple[str, str]], body: Any | None
 ) -> str:
+    """JS fetch() 호출 형식의 예시 코드를 렌더링한다."""
     options: dict[str, Any] = {"method": method.upper()}
     hdr_obj: dict[str, str] = {k: v for k, v in headers}
     if body is not None:
@@ -144,6 +155,7 @@ def _render_fetch(
 def _render_axios(
     method: str, url: str, headers: list[tuple[str, str]], body: Any | None
 ) -> str:
+    """axios() 호출 형식의 예시 코드를 렌더링한다."""
     config: dict[str, Any] = {"method": method.lower(), "url": url}
     hdr_obj: dict[str, str] = {k: v for k, v in headers}
     if hdr_obj:
@@ -156,6 +168,7 @@ def _render_axios(
 def _render_python(
     method: str, url: str, headers: list[tuple[str, str]], body: Any | None
 ) -> str:
+    """Python requests 호출 형식의 예시 코드를 렌더링한다."""
     lines = [
         "import requests",
         "",

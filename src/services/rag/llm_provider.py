@@ -8,6 +8,8 @@ from typing import Protocol
 
 @dataclass
 class CitationCtx:
+    """LLM 컨텍스트로 전달할 인용 정보."""
+
     endpoint_id: str
     method: str
     path: str
@@ -17,12 +19,18 @@ class CitationCtx:
 
 @dataclass
 class LLMAnswer:
+    """LLM 응답 텍스트와 근거 보유 여부."""
+
     text: str
     is_grounded: bool
 
 
 class LLMProvider(Protocol):
-    def generate(self, question: str, context: list[CitationCtx]) -> LLMAnswer: ...
+    """LLM 생성 인터페이스."""
+
+    def generate(self, question: str, context: list[CitationCtx]) -> LLMAnswer:
+        """질문과 인용 컨텍스트를 받아 답변을 생성한다."""
+        ...
 
 
 NO_RESULT_MESSAGE = "해당 API 를 찾을 수 없습니다."
@@ -35,6 +43,7 @@ class TemplateLLMProvider:
     """
 
     def generate(self, question: str, context: list[CitationCtx]) -> LLMAnswer:
+        """컨텍스트가 비면 안내 문구를, 있으면 결정적 템플릿으로 답변을 만들어 반환한다."""
         if not context:
             return LLMAnswer(text=NO_RESULT_MESSAGE, is_grounded=False)
         lines = [f"질문: {question}", "관련 API:"]

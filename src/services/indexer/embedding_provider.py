@@ -18,28 +18,36 @@ _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 class EmbeddingProvider(Protocol):
     """임베딩 계약."""
 
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """입력 텍스트들을 임베딩 벡터 리스트로 변환한다."""
+        ...
 
     @property
-    def dim(self) -> int: ...
+    def dim(self) -> int:
+        """임베딩 벡터 차원 수를 반환한다."""
+        ...
 
 
 class HashEmbeddingProvider:
     """토큰 해시 버킷 누적 + L2 정규화 기반 결정적 임베딩."""
 
     def __init__(self, dim: int = 256) -> None:
+        """차원을 검증해 보관한다."""
         if dim <= 0:
             raise ValueError("dim must be positive")
         self._dim = dim
 
     @property
     def dim(self) -> int:
+        """임베딩 차원 수를 반환한다."""
         return self._dim
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        """입력 텍스트 각각을 결정적으로 임베딩한 벡터들을 반환한다."""
         return [self._embed_one(text) for text in texts]
 
     def _embed_one(self, text: str) -> list[float]:
+        """텍스트 한 건을 토큰 해시 버킷 누적 후 L2 정규화한 벡터로 만든다."""
         vector = [0.0] * self._dim
         tokens = _tokenize(text)
         if not tokens:
@@ -57,10 +65,12 @@ class HashEmbeddingProvider:
 
 
 def _tokenize(text: str) -> list[str]:
+    """입력 텍스트에서 영숫자/언더스코어 토큰을 소문자 리스트로 추출한다."""
     return [t.lower() for t in _TOKEN_RE.findall(text or "")]
 
 
 def _l2_normalize(vector: list[float]) -> list[float]:
+    """벡터를 L2 노름으로 나눠 단위 벡터로 만든다(0 벡터는 그대로 반환)."""
     norm_sq = sum(v * v for v in vector)
     if norm_sq <= 0.0:
         return vector

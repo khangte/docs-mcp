@@ -23,6 +23,7 @@ def register_document(
     body: RegisterDocumentRequest,
     services: ServiceBundle = Depends(get_services),
 ) -> RegisterDocumentResponse:
+    """OpenAPI 문서를 신규 등록하고 등록 결과 메타를 반환한다."""
     result = services.sync_service.register(
         source_url=body.source_url,
         raw_document=body.raw_document,
@@ -46,6 +47,7 @@ def register_document(
 def list_documents(
     services: ServiceBundle = Depends(get_services),
 ) -> list[DocumentSummary]:
+    """등록된 모든 문서의 요약 목록을 반환한다."""
     docs = services.document_repo.list_all()
     return [
         DocumentSummary(
@@ -65,6 +67,7 @@ def get_document(
     document_id: str,
     services: ServiceBundle = Depends(get_services),
 ) -> DocumentDetail:
+    """문서 상세 정보와 최근 동기화 이력을 반환한다."""
     from src.core.errors import DocumentNotFoundError
 
     doc = services.document_repo.get(document_id)
@@ -95,5 +98,6 @@ def delete_document(
     document_id: str,
     services: ServiceBundle = Depends(get_services),
 ) -> DocumentDeleteResponse:
+    """문서 및 관련 인덱스를 삭제한다."""
     services.sync_service.delete(document_id)
     return DocumentDeleteResponse(deleted=True, document_id=document_id)

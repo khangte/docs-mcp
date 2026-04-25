@@ -18,6 +18,8 @@ from src.core.errors import ParserError
 
 @dataclass
 class ParsedParameter:
+    """파싱된 파라미터 정보(이름·위치·필수 여부·스키마 등)."""
+
     name: str
     location: str
     required: bool
@@ -28,6 +30,8 @@ class ParsedParameter:
 
 @dataclass
 class ParsedRequestBody:
+    """파싱된 요청 바디 정보."""
+
     content_type: str
     schema: dict[str, Any] = field(default_factory=dict)
     required: bool = False
@@ -37,6 +41,8 @@ class ParsedRequestBody:
 
 @dataclass
 class ParsedResponse:
+    """파싱된 응답 정보."""
+
     status_code: str
     content_type: str
     schema: dict[str, Any] = field(default_factory=dict)
@@ -47,6 +53,8 @@ class ParsedResponse:
 
 @dataclass
 class ParsedEndpoint:
+    """파싱된 엔드포인트 정보(메서드·경로·파라미터·응답 등)."""
+
     method: str
     path: str
     operation_id: str | None
@@ -60,6 +68,8 @@ class ParsedEndpoint:
 
 @dataclass
 class ParsedSchema:
+    """파싱된 컴포넌트 스키마 정보."""
+
     name: str
     json_schema: dict[str, Any] = field(default_factory=dict)
     description: str = ""
@@ -67,6 +77,8 @@ class ParsedSchema:
 
 @dataclass
 class ParsedDocument:
+    """파싱된 OpenAPI 문서 중간 표현(엔드포인트·스키마 묶음)."""
+
     title: str
     version: str
     endpoints: list[ParsedEndpoint] = field(default_factory=list)
@@ -104,6 +116,7 @@ def parse_document(raw: str) -> ParsedDocument:
 
 
 def _get_info(data: dict[str, Any]) -> tuple[str, str]:
+    """문서의 info.title / info.version 을 안전하게 추출해 반환한다."""
     info = data.get("info") or {}
     title = str(info.get("title") or "Untitled API")
     version = str(info.get("version") or "unknown")
@@ -111,6 +124,7 @@ def _get_info(data: dict[str, Any]) -> tuple[str, str]:
 
 
 def _parse_openapi3(data: dict[str, Any]) -> ParsedDocument:
+    """OpenAPI 3.x 문서를 ParsedDocument 로 변환한다."""
     title, version = _get_info(data)
     paths = data.get("paths")
     if not isinstance(paths, dict):
@@ -147,6 +161,7 @@ def _parse_openapi3_operation(
     operation: dict[str, Any],
     common_parameters: list[Any],
 ) -> ParsedEndpoint:
+    """OpenAPI 3.x 의 operation 객체 하나를 ParsedEndpoint 로 변환한다."""
     parameters: list[ParsedParameter] = []
     for p in list(common_parameters) + list(operation.get("parameters") or []):
         parameters.append(_parse_parameter_like(p))
@@ -168,6 +183,7 @@ def _parse_openapi3_operation(
 
 
 def _parse_parameter_like(raw: Any) -> ParsedParameter:
+    """OpenAPI/Swagger 파라미터 dict 를 ParsedParameter 로 정규화한다."""
     obj = _ensure_dict(raw)
     schema = obj.get("schema")
     if isinstance(schema, dict):
@@ -188,6 +204,7 @@ def _parse_parameter_like(raw: Any) -> ParsedParameter:
 
 
 def _parse_openapi3_request_body(raw: Any) -> ParsedRequestBody | None:
+    """OpenAPI 3.x requestBody 객체에서 첫 미디어 타입을 골라 ParsedRequestBody 를 만든다."""
     if not isinstance(raw, dict):
         return None
     content = raw.get("content") or {}
@@ -213,6 +230,7 @@ def _parse_openapi3_request_body(raw: Any) -> ParsedRequestBody | None:
 
 
 def _parse_openapi3_responses(raw: dict[str, Any]) -> list[ParsedResponse]:
+    """OpenAPI 3.x responses 매핑을 ParsedResponse 리스트(상태코드 정렬)로 변환한다."""
     responses: list[ParsedResponse] = []
     for status_code, body in raw.items():
         body = _ensure_dict(body)
@@ -246,6 +264,7 @@ def _parse_openapi3_responses(raw: dict[str, Any]) -> list[ParsedResponse]:
 
 
 def _parse_swagger2(data: dict[str, Any]) -> ParsedDocument:
+    """Swagger 2.0 문서를 ParsedDocument 로 변환한다."""
     title, version = _get_info(data)
     paths = data.get("paths")
     if not isinstance(paths, dict):
@@ -290,6 +309,7 @@ def _parse_swagger2_operation(
     consumes_default: list[str],
     produces_default: list[str],
 ) -> ParsedEndpoint:
+    """Swagger 2.0 의 operation 하나를 ParsedEndpoint 로 변환한다(body 파라미터는 requestBody 로 승격)."""
     parameters: list[ParsedParameter] = []
     body_param: dict[str, Any] | None = None
     for p in operation.get("parameters") or []:
@@ -345,6 +365,7 @@ def _normalize_swagger2_ref(endpoint: ParsedEndpoint) -> ParsedEndpoint:
     """Swagger 2.0 `#/definitions/X` 를 `#/components/schemas/X` 로 치환한다."""
 
     def _rewrite(ref: str | None) -> str | None:
+        """`#/definitions/X` 형 ref 를 OpenAPI 3 스타일로 치환한다."""
         if not ref:
             return ref
         return ref.replace("#/definitions/", "#/components/schemas/")
@@ -362,18 +383,21 @@ def _normalize_swagger2_ref(endpoint: ParsedEndpoint) -> ParsedEndpoint:
 
 
 def _rewrite_inline_ref(schema: dict[str, Any]) -> None:
+    """스키마 dict 안의 $ref 가 swagger2 형식이면 OpenAPI 3 형식으로 치환한다."""
     ref = schema.get("$ref")
     if isinstance(ref, str) and ref.startswith("#/definitions/"):
         schema["$ref"] = ref.replace("#/definitions/", "#/components/schemas/")
 
 
 def _ensure_dict(value: Any) -> dict[str, Any]:
+    """값이 dict 면 그대로, 아니면 빈 dict 를 반환한다."""
     if isinstance(value, dict):
         return value
     return {}
 
 
 def _extract_ref(schema: dict[str, Any]) -> str | None:
+    """스키마 dict 의 $ref 문자열을 반환하고, 없으면 None 을 반환한다."""
     ref = schema.get("$ref")
     if isinstance(ref, str) and ref:
         return ref

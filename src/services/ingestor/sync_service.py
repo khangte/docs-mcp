@@ -27,6 +27,8 @@ from src.services.parser.openapi_parser import parse_document
 
 @dataclass
 class RegistrationResult:
+    """문서 등록/재색인 결과 요약."""
+
     document: ApiDocument
     endpoints_count: int
     schemas_count: int
@@ -50,6 +52,7 @@ class SyncService:
         fetcher: OpenAPIFetcher,
         vector_index: InMemoryVectorIndex,
     ) -> None:
+        """세션·저장소·인덱서·fetcher·벡터 인덱스 의존성을 보관한다."""
         self._session = session
         self._document_repo = document_repo
         self._endpoint_repo = endpoint_repo
@@ -66,6 +69,7 @@ class SyncService:
         raw_document: str | None,
         title_override: str | None = None,
     ) -> RegistrationResult:
+        """원본 URL 또는 원문을 받아 수집·파싱·색인하고 신규 문서로 등록한다."""
         if (source_url is None) == (raw_document is None):
             raise ValidationError("exactly one of source_url or raw_document must be provided")
 
@@ -122,6 +126,7 @@ class SyncService:
         force: bool = False,
         raw_override: str | None = None,
     ) -> RegistrationResult:
+        """기존 문서를 다시 가져와 해시가 변하면 재색인하고, 동일하면 skip 으로 기록한다."""
         document = self._document_repo.get(document_id)
         if document is None:
             raise DocumentNotFoundError(document_id)
@@ -205,6 +210,7 @@ class SyncService:
         )
 
     def delete(self, document_id: str) -> None:
+        """문서를 DB 에서 제거하고 벡터 인덱스에서도 관련 청크를 제거한다."""
         document = self._document_repo.get(document_id)
         if document is None:
             raise DocumentNotFoundError(document_id)
@@ -215,8 +221,10 @@ class SyncService:
 
 
 def _new_id() -> str:
+    """16자리 hex 형태의 신규 문서 ID 를 생성한다."""
     return uuid.uuid4().hex[:16]
 
 
 def _hash(raw: str) -> str:
+    """원문 문자열의 SHA-256 해시를 hex 로 반환한다."""
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

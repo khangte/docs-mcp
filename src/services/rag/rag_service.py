@@ -10,6 +10,8 @@ from src.services.search.search_service import SearchOptions, SearchService
 
 @dataclass
 class Citation:
+    """RAG 응답에 포함되는 인용 항목."""
+
     endpoint_id: str
     method: str
     path: str
@@ -18,6 +20,8 @@ class Citation:
 
 @dataclass
 class RAGAnswer:
+    """RAG 응답 묶음(질문·답변·인용·문서·근거여부)."""
+
     question: str
     answer: str
     citations: list[Citation]
@@ -26,11 +30,14 @@ class RAGAnswer:
 
 
 class RAGService:
+    """검색 결과를 LLM 컨텍스트로 합쳐 답변을 생성하는 서비스."""
+
     def __init__(
         self,
         search_service: SearchService,
         llm_provider: LLMProvider,
     ) -> None:
+        """검색 서비스와 LLM 프로바이더 의존성을 보관한다."""
         self._search = search_service
         self._llm = llm_provider
 
@@ -41,6 +48,7 @@ class RAGService:
         document_id: str | None = None,
         method: str | None = None,
     ) -> RAGAnswer:
+        """질문으로 하이브리드 검색을 수행하고 LLM 답변·인용을 묶어 반환한다."""
         options = SearchOptions(
             top_k=top_k,
             method=method,

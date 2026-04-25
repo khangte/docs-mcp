@@ -14,6 +14,8 @@ from src.services.search.vector_search import VectorSearch
 
 @dataclass
 class SearchResultItem:
+    """검색 결과 항목(엔드포인트 메타 + 점수 + 스니펫)."""
+
     endpoint_id: str
     document_id: str
     method: str
@@ -27,6 +29,8 @@ class SearchResultItem:
 
 @dataclass
 class SearchOptions:
+    """검색 옵션(top_k·필터·모드)."""
+
     top_k: int = 5
     method: str | None = None
     tag: str | None = None
@@ -35,6 +39,8 @@ class SearchOptions:
 
 
 class SearchService:
+    """키워드/벡터 점수를 합쳐 엔드포인트 단위로 결과를 반환하는 검색 서비스."""
+
     def __init__(
         self,
         chunk_repo: ChunkRepository,
@@ -43,6 +49,7 @@ class SearchService:
         vector_search: VectorSearch,
         hybrid_alpha: float = 0.4,
     ) -> None:
+        """저장소·검색기·하이브리드 가중치를 보관한다."""
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
         self._keyword_search = keyword_search
@@ -50,6 +57,7 @@ class SearchService:
         self._alpha = hybrid_alpha
 
     def search(self, query: str, options: SearchOptions) -> list[SearchResultItem]:
+        """후보 청크에 대해 키워드·벡터 점수를 합쳐 정렬한 엔드포인트 결과를 반환한다."""
         if options.mode not in {"hybrid", "keyword", "vector"}:
             from src.core.errors import ValidationError
 
@@ -97,6 +105,7 @@ class SearchService:
         return results[: options.top_k]
 
     def _build_candidate_chunks(self, options: SearchOptions) -> list[ApiChunk]:
+        """document_id/method/tag 옵션을 적용해 후보 청크 목록을 만든다."""
         chunks = list(self._chunk_repo.list_all())
         if options.document_id:
             chunks = [c for c in chunks if c.document_id == options.document_id]
@@ -120,6 +129,7 @@ class SearchService:
         return kept
 
     def get_endpoint_or_raise(self, endpoint_id: str) -> ApiEndpoint:
+        """엔드포인트를 조회하고 없으면 EndpointNotFoundError 를 발생시킨다."""
         endpoint = self._endpoint_repo.get(endpoint_id)
         if endpoint is None:
             raise EndpointNotFoundError(endpoint_id)
@@ -129,6 +139,7 @@ class SearchService:
 def _combine_score(
     keyword_score: float, vector_score: float, mode: str, alpha: float
 ) -> float:
+    """모드에 따라 키워드/벡터 점수를 단독 또는 가중합으로 합친다."""
     if mode == "keyword":
         return keyword_score
     if mode == "vector":
@@ -137,6 +148,7 @@ def _combine_score(
 
 
 def _snippet(chunk: ApiChunk) -> str:
+    """청크 텍스트가 길면 200자에서 잘라 말줄임표를 붙인 스니펫을 만든다."""
     text = chunk.text or ""
     if len(text) <= 200:
         return text

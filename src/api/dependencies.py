@@ -32,6 +32,8 @@ from src.services.search.vector_search import VectorSearch
 
 @dataclass
 class AppState:
+    """앱 전역 상태(엔진/벡터 인덱스/프로바이더 등)를 보관하는 컨테이너."""
+
     engine: Engine
     session_factory: sessionmaker[Session]
     vector_index: InMemoryVectorIndex
@@ -48,6 +50,7 @@ class AppState:
         embedding_dim: int = 256,
         hybrid_alpha: float = 0.4,
     ) -> "AppState":
+        """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·인덱스·프로바이더)을 채운 AppState 를 만든다."""
         return cls(
             engine=engine,
             session_factory=create_session_factory(engine),

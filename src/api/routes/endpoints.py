@@ -28,6 +28,7 @@ def get_endpoint(
     endpoint_id: str,
     services: ServiceBundle = Depends(get_services),
 ) -> EndpointDetail:
+    """엔드포인트 상세(파라미터·요청바디·응답·참조 스키마)를 반환한다."""
     endpoint = services.endpoint_repo.get(endpoint_id)
     if endpoint is None:
         raise EndpointNotFoundError(endpoint_id)
@@ -77,6 +78,7 @@ def get_example(
     format: str = Query(default="curl"),
     services: ServiceBundle = Depends(get_services),
 ) -> ExampleResponse:
+    """엔드포인트 호출 예시 코드(curl/fetch 등)를 생성해 반환한다."""
     payload = services.example_service.generate(endpoint_id, format)
     return ExampleResponse(
         format=payload["format"],
@@ -86,6 +88,7 @@ def get_example(
 
 
 def _to_parameter_detail(p: ApiParameter) -> ParameterDetail:
+    """ORM 파라미터 엔티티를 응답 DTO 로 변환한다."""
     return ParameterDetail(
         name=p.name,
         **{"in": p.location},
@@ -96,6 +99,7 @@ def _to_parameter_detail(p: ApiParameter) -> ParameterDetail:
 
 
 def _safe_load(raw: str | None) -> dict[str, Any]:
+    """JSON 문자열을 dict 로 안전하게 파싱하고, 실패 시 빈 dict 를 반환한다."""
     if not raw:
         return {}
     try:
@@ -106,6 +110,7 @@ def _safe_load(raw: str | None) -> dict[str, Any]:
 
 
 def _safe_example(raw: str | None) -> Any:
+    """예시 JSON 문자열을 파싱하고, 실패 시 None 을 반환한다."""
     if raw is None:
         return None
     try:
@@ -117,6 +122,7 @@ def _safe_example(raw: str | None) -> Any:
 def _collect_referenced_schemas(
     endpoint: ApiEndpoint, services: ServiceBundle
 ) -> list[SchemaSnippet]:
+    """엔드포인트가 참조하는 컴포넌트 스키마 스니펫 목록을 모아 반환한다."""
     refs: list[str] = []
     for p in endpoint.parameters:
         if p.schema_ref:

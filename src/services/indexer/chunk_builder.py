@@ -9,6 +9,8 @@ from src.services.parser.openapi_parser import ParsedDocument, ParsedEndpoint, P
 
 @dataclass
 class BuiltChunk:
+    """청크 텍스트 빌드 결과(타입/참조ID/텍스트)."""
+
     chunk_type: str  # "endpoint" | "schema"
     ref_id: str  # endpoint_id 또는 schema_name
     text: str

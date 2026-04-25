@@ -17,6 +17,7 @@ def resync_document(
     body: SyncRequest | None = None,
     services: ServiceBundle = Depends(get_services),
 ) -> SyncResponse:
+    """기존 문서를 재수집·재색인하고 변경 결과를 반환한다."""
     payload = body or SyncRequest()
     result = services.sync_service.resync(
         document_id,
