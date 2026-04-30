@@ -2,7 +2,7 @@
 
 OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generation) 기술을 활용하여 API 명세에 대한 자연어 질의응답 및 검색 서비스를 제공하는 서버입니다.
 
-## 🚀 주요 기능
+## 주요 기능
 
 - **OpenAPI 문서 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x 및 Swagger 2.0 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
 - **하이브리드 검색**: 키워드(토큰 매칭)와 벡터 유사도 검색을 결합하여 원하는 API 엔드포인트를 정확하게 찾아냅니다.
@@ -10,7 +10,7 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 - **코드 예시 생성**: 엔드포인트 상세 정보로부터 `curl`, `fetch`, `axios`, `python(requests)` 등 다양한 포맷의 호출 예시 코드를 즉시 생성합니다.
 - **자동 재색인**: 문서의 내용 변경을 감지(해시 비교)하여 변경된 경우에만 지능적으로 인덱스를 업데이트합니다.
 
-## 🛠 기술 스택
+## 기술 스택
 
 - **Backend**: Python 3.10+, FastAPI
 - **Database**: SQLAlchemy 2.0 (기본 SQLite)
@@ -20,7 +20,7 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
   - 하이브리드 검색 엔진 (Keyword + Vector)
 - **Documentation**: Pydantic v2 (Schema/DTO)
 
-## 📂 프로젝트 구조
+## 프로젝트 구조
 
 ```text
 src/
@@ -38,7 +38,7 @@ src/
     └── search/      # 하이브리드 검색 서비스
 ```
 
-## 🏁 시작하기
+## 시작하기
 
 ### 1. 의존성 설치
 
@@ -60,14 +60,14 @@ uvicorn src.main:app --reload
 ```
 서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI를 통해 API를 테스트할 수 있습니다.
 
-## 📖 주요 API 가이드
+## 주요 API 가이드
 
 - **문서 등록**: `POST /documents` (URL 또는 raw_document 전달)
 - **하이브리드 검색**: `GET /search?query=...&mode=hybrid`
 - **RAG 질문**: `POST /query` (JSON: `{"question": "사용자 정보를 조회하는 API는 뭐야?"}`)
 - **예시 생성**: `GET /endpoints/{endpoint_id}/example?format=curl`
 
-## 🤖 MCP (Model Context Protocol) 연동
+## MCP (Model Context Protocol) 연동
 
 이 프로젝트는 Claude Desktop 및 기타 MCP 호환 클라이언트에서 도구로 사용할 수 있는 MCP 서버 기능을 제공합니다.
 
@@ -105,7 +105,7 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 
 - `document://{document_id}/raw`: 문서 원문 보기
 
-## 🧪 테스트 실행
+## 테스트 실행
 
 ```bash
 pytest tests/

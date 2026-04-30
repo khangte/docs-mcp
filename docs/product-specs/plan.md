@@ -277,12 +277,12 @@ MCP 서버와 OpenAPI 문서의 연결은 다음 흐름으로 이루어진다.
 전체 처리 흐름은 다음과 같다.
 
 1. 관리자가 OpenAPI 문서 URL을 등록한다.
-2. `app/services/ingestor/openapi_fetcher.py`가 원문 명세를 수집한다.
-3. `app/services/parser/openapi_parser.py`가 엔드포인트, 파라미터, 요청/응답 스키마를 분리한다.
-4. `app/services/indexer/chunk_builder.py`가 검색 단위를 구성하고, `embedding_service.py`가 벡터를 생성한다.
+2. `src/services/ingestor/openapi_fetcher.py`가 원문 명세를 수집한다.
+3. `src/services/parser/openapi_parser.py`가 엔드포인트, 파라미터, 요청/응답 스키마를 분리한다.
+4. `src/services/indexer/chunk_builder.py`가 검색 단위를 구성하고, `embedding_provider.py`가 벡터를 생성한다.
 5. 정규화된 데이터와 검색용 청크를 PostgreSQL + pgvector에 저장한다.
-6. `app/services/search/search_service.py`가 키워드 검색과 벡터 검색 결과를 통합한다.
-7. `app/mcp/tools/` 아래 도구가 검색 결과를 Claude가 사용할 수 있는 MCP 응답 형태로 변환한다.
+6. `src/services/search/search_service.py`가 키워드 검색과 벡터 검색 결과를 통합한다.
+7. `src/mcp_server.py`가 검색 결과를 Claude가 사용할 수 있는 MCP 응답 형태로 변환한다.
 
 이 접근 방식을 선택한 이유는 다음과 같다.
 
@@ -312,7 +312,7 @@ MCP 서버와 OpenAPI 문서의 연결은 다음 흐름으로 이루어진다.
 예를 들어 사용자가 "POST 로그인 API 중 401 응답 설명 있는 것 찾아줘"라고 요청하면 처리 흐름은 다음과 같다.
 
 1. Claude가 요청 의도를 해석한다.
-2. Claude가 `search_api_docs` 도구를 선택하고, 필요하면 `method=POST`, `status_code=401` 같은 인자를 구성한다.
+2. Claude가 `search_endpoints` 도구를 선택하고, 필요하면 `method=POST`, `status_code=401` 같은 인자를 구성한다.
 3. MCP 서버가 이 요청을 검색 서비스에 전달한다.
 4. 검색 서비스가 저장된 인덱스를 조회해 결과를 반환한다.
 
@@ -329,91 +329,76 @@ MCP 서버와 OpenAPI 문서의 연결은 다음 흐름으로 이루어진다.
 ```text
 docs-mcp/
 ├─ src/
-│  ├─ main.py                       # 애플리케이션 실행 진입점
+│  ├─ main.py                       # FastAPI 앱 진입점
+│  ├─ mcp_server.py                 # MCP 서버 진입점 및 도구 등록
 │  ├─ core/
 │  │  ├─ config.py                 # 환경 변수 및 설정 로딩
 │  │  ├─ logging.py                # 공통 로깅 설정
 │  │  └─ db.py                     # DB 세션 및 연결 관리
 │  ├─ models/
-│  │  ├─ api_document.py           # 원본 OpenAPI 문서 메타데이터 모델
-│  │  ├─ api_endpoint.py           # 엔드포인트 정보 모델
-│  │  ├─ api_schema.py             # 스키마 정보 모델
-│  │  ├─ api_chunk.py              # 검색용 청크 및 임베딩 모델
-│  │  └─ sync_history.py           # 수집/재색인 이력 모델
+│  │  └─ openapi.py                 # OpenAPI 관련 DB 모델 (document, endpoint 등)
 │  ├─ schemas/
-│  │  ├─ document.py               # 문서 등록/조회 스키마
-│  │  ├─ search.py                 # 검색 요청/응답 스키마
-│  │  ├─ endpoint.py               # 엔드포인트 상세 응답 스키마
-│  │  └─ sync.py                   # 동기화 상태 스키마
+│  │  ├─ documents.py               # 문서 등록/조회 스키마
+│  │  ├─ search.py                  # 검색 요청/응답 스키마
+│  │  ├─ endpoints.py               # 엔드포인트 상세 응답 스키마
+│  │  └─ query.py                   # RAG 질의 스키마
 │  ├─ repositories/
-│  │  ├─ document_repository.py    # 문서 저장/조회 DB 접근
-│  │  ├─ endpoint_repository.py    # 엔드포인트 DB 접근
-│  │  ├─ chunk_repository.py       # 검색 청크 DB 접근
-│  │  └─ sync_repository.py        # 동기화 이력 DB 접근
+│  │  ├─ document_repository.py     # 문서 저장/조회 DB 접근
+│  │  ├─ endpoint_repository.py     # 엔드포인트 DB 접근
+│  │  ├─ chunk_repository.py        # 검색 청크 DB 접근
+│  │  └─ sync_history_repository.py # 동기화 이력 DB 접근
 │  ├─ services/
 │  │  ├─ ingestor/
-│  │  │  ├─ openapi_fetcher.py     # OpenAPI 원문 수집
-│  │  │  └─ sync_service.py        # 수집 및 재동기화 오케스트레이션
+│  │  │  ├─ openapi_fetcher.py      # OpenAPI 원문 수집
+│  │  │  └─ sync_service.py         # 수집 및 재동기화 오케스트레이션
 │  │  ├─ parser/
-│  │  │  ├─ openapi_parser.py      # OpenAPI 문서 파싱
-│  │  │  └─ schema_normalizer.py   # 스키마 정규화 처리
+│  │  │  ├─ openapi_parser.py       # OpenAPI 문서 파싱
+│  │  │  └─ schema_normalizer.py    # 스키마 정규화 처리
 │  │  ├─ indexer/
-│  │  │  ├─ chunk_builder.py       # 검색 단위 청크 생성
-│  │  │  └─ embedding_service.py   # 벡터 임베딩 생성
+│  │  │  ├─ chunk_builder.py        # 검색 단위 청크 생성
+│  │  │  ├─ embedding_provider.py   # 벡터 임베딩 생성
+│  │  │  ├─ indexer_service.py      # 색인 프로세스 관리
+│  │  │  └─ vector_index.py         # 벡터 검색 인덱스 관리 (HNSW 등)
 │  │  ├─ search/
-│  │  │  ├─ keyword_search.py      # 키워드 검색 로직
-│  │  │  ├─ vector_search.py       # 벡터 검색 로직
-│  │  │  └─ search_service.py      # 검색 통합 및 랭킹 처리
+│  │  │  ├─ keyword_search.py       # 키워드 검색 로직
+│  │  │  ├─ vector_search.py        # 벡터 검색 로직
+│  │  │  └─ search_service.py       # 검색 통합 및 랭킹 처리
+│  │  ├─ rag/
+│  │  │  ├─ llm_provider.py         # LLM 연동 (답변 생성)
+│  │  │  └─ rag_service.py          # RAG 프로세스 관리
 │  │  └─ examples/
 │  │     └─ request_example_service.py  # 요청 예시 코드 생성
 │  ├─ api/
 │  │  ├─ routes/
-│  │  │  ├─ documents.py           # 문서 등록/목록 라우트
-│  │  │  ├─ search.py              # 검색/상세조회 라우트
-│  │  │  └─ sync.py                # 재동기화 관리 라우트
-│  │  └─ dependencies.py           # 공통 의존성 주입
-│  └─ mcp/
-│     ├─ server.py                 # MCP 서버 초기화 및 도구 등록
-│     ├─ tools/
-│     │  ├─ search_api_docs.py     # 문서 검색 MCP 도구
-│     │  ├─ get_endpoint_detail.py # 엔드포인트 상세조회 MCP 도구
-│     │  └─ generate_request_example.py # 요청 예시 생성 MCP 도구
-│     └─ adapters/
-│        └─ search_adapter.py      # 검색 서비스를 MCP 도구와 연결
-├─ alembic/                        # DB 마이그레이션 관리
-├─ scripts/
-│  ├─ seed_documents.py            # 초기 문서 적재 스크립트
-│  └─ reindex_documents.py         # 수동 재색인 스크립트
+│  │  │  ├─ documents.py            # 문서 등록/목록 라우트
+│  │  │  ├─ endpoints.py            # 엔드포인트 상세 조회 라우트
+│  │  │  ├─ search.py               # 하이브리드 검색 라우트
+│  │  │  ├─ query.py                # RAG 질의 라우트
+│  │  │  ├─ health.py               # 헬스체크 라우트
+│  │  │  └─ sync.py                 # 재동기화 관리 라우트
+│  │  └─ dependencies.py            # 공통 의존성 주입
 ├─ tests/
-│  ├─ services/                    # 서비스 계층 테스트
-│  ├─ api/                         # HTTP API 테스트
-│  └─ mcp/                         # MCP 도구 및 서버 테스트
-├─ docs/product-specs/plan.md      # 프로젝트 기획 문서
-├─ .env.example                    # 환경 변수 예시
-├─ pyproject.toml                  # Python 프로젝트 설정
-└─ README.md                       # 프로젝트 사용 및 실행 안내
+│  ├─ unit/                         # 단위 테스트
+│  └─ integration/                  # 통합 테스트
+├─ docs/product-specs/plan.md       # 프로젝트 기획 문서
+├─ pyproject.toml                   # Python 프로젝트 설정
+└─ README.md                        # 프로젝트 사용 및 실행 안내
 ```
 
 ### 11-2. 주요 파일 경로
 
 개발 초기에 자주 다루게 될 핵심 파일 경로는 다음과 같다.
 
-- `app/main.py`: FastAPI 애플리케이션 시작점
-- `app/core/config.py`: 환경 변수와 설정값 정의
-- `app/core/db.py`: DB 연결 및 세션 관리
-- `app/services/ingestor/openapi_fetcher.py`: OpenAPI 원문 수집
-- `app/services/ingestor/sync_service.py`: 재수집 및 동기화 정책 실행
-- `app/services/parser/openapi_parser.py`: OpenAPI 명세 파싱
-- `app/services/indexer/chunk_builder.py`: 검색 청크 구성
-- `app/services/indexer/embedding_service.py`: 임베딩 생성
-- `app/services/search/search_service.py`: 검색 통합 처리
-- `app/services/examples/request_example_service.py`: 요청 예시 생성
-- `app/mcp/server.py`: MCP 서버 초기화 및 도구 등록
-- `app/mcp/tools/search_api_docs.py`: 문서 검색 도구
-- `app/mcp/tools/get_endpoint_detail.py`: 상세 조회 도구
-- `app/mcp/tools/generate_request_example.py`: 예시 생성 도구
-- `scripts/reindex_documents.py`: 수동 재색인 실행 스크립트
-- `tests/mcp/`: MCP 도구 테스트
+- `src/main.py`: FastAPI 애플리케이션 시작점
+- `src/mcp_server.py`: MCP 서버 시작점 및 도구 등록
+- `src/core/config.py`: 환경 변수와 설정값 정의
+- `src/services/ingestor/openapi_fetcher.py`: OpenAPI 원문 수집
+- `src/services/ingestor/sync_service.py`: 재수집 및 동기화 정책 실행
+- `src/services/parser/openapi_parser.py`: OpenAPI 명세 파싱
+- `src/services/indexer/chunk_builder.py`: 검색 청크 구성
+- `src/services/search/search_service.py`: 검색 통합 처리
+- `src/services/examples/request_example_service.py`: 요청 예시 생성
+- `tests/integration/test_mcp_server.py`: MCP 도구 테스트
 
 ### 11-3. 코드 스니펫
 
@@ -422,46 +407,26 @@ docs-mcp/
 문서 등록 및 색인 흐름 예시:
 
 ```python
-from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
-from app.services.parser.openapi_parser import OpenAPIParser
-from app.services.indexer.chunk_builder import ChunkBuilder
-from app.services.search.search_service import SearchService
+from src.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher
+from src.services.parser.openapi_parser import OpenAPIParser
+from src.services.indexer.chunk_builder import ChunkBuilder
+from src.services.ingestor.sync_service import SyncService
 
 
 async def register_openapi_document(url: str) -> None:
-    raw_doc = await OpenAPIFetcher().fetch(url)
-    parsed_doc = OpenAPIParser().parse(raw_doc)
-    chunks = ChunkBuilder().build(parsed_doc)
-
-    # 원문, 정규화 데이터, 청크를 저장한 뒤 검색 가능 상태로 만든다.
-    await SearchService().index_document(
-        source_url=url,
-        raw_document=raw_doc,
-        parsed_document=parsed_doc,
-        chunks=chunks,
-    )
+    # SyncService를 통해 수집, 파싱, 색인 과정을 일괄 처리한다.
+    # 내부적으로 HttpOpenAPIFetcher, OpenAPIParser, ChunkBuilder 등을 활용한다.
+    pass
 ```
 
 MCP 검색 도구 예시:
 
 ```python
-from app.services.search.search_service import SearchService
+from src.services.search.search_service import SearchService, SearchOptions
 
-async def search_api_docs(query: str, top_k: int = 5) -> dict:
-    results = await SearchService().search(query=query, top_k=top_k)
-    return {
-        "query": query,
-        "count": len(results),
-        "items": [
-            {
-                "method": item.method,
-                "path": item.path,
-                "summary": item.summary,
-                "score": item.score,
-            }
-            for item in results
-        ],
-    }
+async def search_endpoints(query: str, top_k: int = 5) -> list[dict]:
+    # SearchService를 사용하여 하이브리드 검색을 수행한다.
+    pass
 ```
 
 각 영역의 역할은 다음과 같다.
