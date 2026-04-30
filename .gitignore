@@ -209,3 +209,10 @@ __marimo__/
 .worktrees/
 data/
 *.db
+.ports
+
+# Claude Code
+CLAUDE.md
+.claude/
+.claudeignore
+harness/
