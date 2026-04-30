@@ -39,4 +39,6 @@ NNNN-<kebab-case-title>.md
 
 ## 인덱스
 
-현재 확정된 ADR 없음. 등록 후보는 `ARCHITECTURE.md §16` 참고.
+- [ADR-0001: 저장형 검색 구조 채택](0001-storage-search-structure.md)
+- [ADR-0002: pgvector 기반 하이브리드 검색 도입](0002-pgvector-hybrid-search.md)
+- [ADR-0003: MCP 도구의 읽기 전용 경계 유지](0003-read-only-mcp-boundary.md)
