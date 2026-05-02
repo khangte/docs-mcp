@@ -70,7 +70,9 @@ class SearchService:
 
         keyword_hits = {
             h.chunk_id: h.score
-            for h in self._keyword_search.search(query, top_k=len(candidate_ids), candidates=candidate_ids)
+            for h in self._keyword_search.search(
+                query, top_k=len(candidate_ids), chunks=candidate_chunks
+            )
         }
         vector_hits = {
             h.chunk_id: h.score
@@ -105,28 +107,14 @@ class SearchService:
         return results[: options.top_k]
 
     def _build_candidate_chunks(self, options: SearchOptions) -> list[ApiChunk]:
-        """document_id/method/tag 옵션을 적용해 후보 청크 목록을 만든다."""
-        chunks = list(self._chunk_repo.list_all())
-        if options.document_id:
-            chunks = [c for c in chunks if c.document_id == options.document_id]
-        if options.method is None and options.tag is None:
-            return chunks
-        # 필터링은 endpoint 에 따른다
-        kept: list[ApiChunk] = []
-        for chunk in chunks:
-            if chunk.chunk_type != "endpoint":
-                # schema 청크는 method/tag 로 필터링하지 않음
-                kept.append(chunk)
-                continue
-            endpoint = self._endpoint_repo.get(chunk.ref_id)
-            if endpoint is None:
-                continue
-            if options.method and endpoint.method.upper() != options.method.upper():
-                continue
-            if options.tag and options.tag not in endpoint.tags:
-                continue
-            kept.append(chunk)
-        return kept
+        """SQL 필터로 후보 청크를 조회한다. N+1 쿼리 없음."""
+        return list(
+            self._chunk_repo.list_by_endpoint_filter(
+                method=options.method,
+                tag=options.tag,
+                document_id=options.document_id,
+            )
+        )
 
     def get_endpoint_or_raise(self, endpoint_id: str) -> ApiEndpoint:
         """엔드포인트를 조회하고 없으면 EndpointNotFoundError 를 발생시킨다."""

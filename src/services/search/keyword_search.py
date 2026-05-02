@@ -40,14 +40,18 @@ class KeywordSearch:
         query: str,
         top_k: int,
         candidates: set[str] | None = None,
+        chunks: list[ApiChunk] | None = None,
     ) -> list[KeywordHit]:
-        """쿼리 토큰 매칭 비율로 점수를 매겨 상위 top_k 결과를 반환한다."""
+        """쿼리 토큰 매칭 비율로 점수를 매겨 상위 top_k 결과를 반환한다.
+
+        chunks 가 주어지면 해당 목록을 사용하고, 없으면 저장소에서 전체 조회한다.
+        """
         q_tokens = set(tokenize(query))
         if not q_tokens:
             return []
-        chunks = self._chunk_repo.list_all()
+        source = chunks if chunks is not None else list(self._chunk_repo.list_all())
         scored: list[KeywordHit] = []
-        for chunk in chunks:
+        for chunk in source:
             if candidates is not None and chunk.id not in candidates:
                 continue
             score = _score_chunk(chunk, q_tokens)

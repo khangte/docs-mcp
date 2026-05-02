@@ -313,15 +313,15 @@ src/
 > **⚠️ 순서 제약**: Phase 1 완료 → Phase 2 완료 → 그 후에만 Phase 3 시작.
 > Phase 3의 `mcp_server.py`가 `IndexerService`를 직접 생성하는데, Phase 2의 생성자 변경이 먼저 완료되지 않으면 이전 3-인자 방식으로 실수로 호출할 수 있습니다.
 
-### Phase 4 — 검색 성능 (리스크: 중간)
+### Phase 4 — 검색 성능 (리스크: 중간) ✅ 완료
 
 | 순서 | 파일 | 변경 내용 |
 |---|---|---|
-| 1 | `src/repositories/chunk_repository.py` | `list_by_endpoint_filter(method, tag, document_id)` 추가 |
-| 2 | `src/services/search/keyword_search.py` | `chunks` 파라미터 수용, list_all 제거 |
-| 3 | `src/services/search/search_service.py` | SQL 필터 사용, chunks를 keyword_search에 전달 |
+| 1 | `src/repositories/chunk_repository.py` | `list_by_endpoint_filter(method, tag, document_id)` 추가 ✅ |
+| 2 | `src/services/search/keyword_search.py` | `chunks` 파라미터 수용, list_all 제거 ✅ |
+| 3 | `src/services/search/search_service.py` | SQL 필터 사용, chunks를 keyword_search에 전달 ✅ |
 
-**검증**: 변경 전후 동일 쿼리에서 동일 결과, N+1 쿼리 없음 확인
+**검증**: `pytest tests/` 96 passed ✅ · N+1 쿼리 없음 확인 ✅
 
 ### Phase 5 — 기계적 정리 (리스크: 낮음)
 
