@@ -149,6 +149,9 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 
 def get_default_app() -> FastAPI:
-    """uvicorn --factory 로 사용하거나, 직접 import 에서 호출."""
+    """uvicorn 진입점 (src.main:app)."""
     return create_app()
+
+
+app = create_app()
 
