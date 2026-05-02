@@ -32,21 +32,15 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(base, ensure_ascii=False)
 
 
-_configured = False
-
-
 def _configure_root(level: str) -> None:
     """루트 로거에 JSON 핸들러를 1회만 부착한다."""
-    global _configured
-    if _configured:
+    root = logging.getLogger()
+    if root.handlers:
         return
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter())
-    root = logging.getLogger()
-    root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
-    _configured = True
 
 
 def get_logger(name: str, level: str = "INFO") -> logging.Logger:

@@ -274,7 +274,7 @@ src/
 
 ## 6. 단계별 구현 순서
 
-### Phase 1 — 안전/독립적 변경 (리스크: 낮음)
+### Phase 1 — 안전/독립적 변경 (리스크: 낮음) ✅ 완료
 
 | 순서 | 파일 | 변경 내용 |
 |---|---|---|
@@ -283,7 +283,7 @@ src/
 | 3 | `src/core/logging.py` | _configured 전역 제거 |
 | 4 | `src/core/db.py` | managed_session 추가 |
 
-**검증**: `pytest tests/unit/` 전부 통과
+**검증**: `pytest tests/unit/` 65 passed ✅ · `pytest tests/` 96 passed ✅
 
 ### Phase 2 — 서비스 레이어 수정 (리스크: 중간)
 

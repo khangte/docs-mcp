@@ -7,6 +7,7 @@ main.py 에서 생성해 의존성으로 주입하고, 테스트에서는 in-mem
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 from sqlalchemy import create_engine
@@ -36,6 +37,19 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 def session_scope(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     """요청 범위 세션 생성기 (FastAPI Depends 호환 형태)."""
+    session = session_factory()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+@contextmanager
+def managed_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
+    """예외 발생 시에도 session.close() 를 보장하는 컨텍스트 매니저.
+
+    MCP 도구처럼 제너레이터 프로토콜을 사용할 수 없는 컨텍스트에서 사용한다.
+    """
     session = session_factory()
     try:
         yield session

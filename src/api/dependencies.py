@@ -131,14 +131,18 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
 
 
 def rebuild_vector_index(state: AppState) -> None:
-    """앱 기동 시 DB 에 있는 청크로 인메모리 인덱스 복원."""
+    """앱 기동 시 DB 에 있는 청크로 인메모리 인덱스 복원.
+
+    replace_all 로 원자적 교체를 수행해 clear→upsert 사이의 빈 구간을 없앤다.
+    """
     session = state.session_factory()
     try:
         chunk_repo = ChunkRepository(session)
-        state.vector_index.clear()
-        for chunk in chunk_repo.list_all():
-            vector = chunk.embedding
-            if vector:
-                state.vector_index.upsert(chunk.id, vector)
+        pairs = [
+            (chunk.id, chunk.embedding)
+            for chunk in chunk_repo.list_all()
+            if chunk.embedding
+        ]
     finally:
         session.close()
+    state.vector_index.replace_all(pairs)
