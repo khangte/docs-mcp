@@ -366,7 +366,7 @@ src/
 
 ### 경고 6: module-level app 제거 후 uvicorn 실행 방법 확인
 
-**위험**: `main.py` 198줄 제거 후 기존 `uvicorn app.main:app` 명령이 `AttributeError: module 'src.main' has no attribute 'app'`로 실패합니다.
+**위험**: `main.py` 198줄 제거 후 기존 `uvicorn app.main:app` 명령이 `AttributeError: module 'app.main' has no attribute 'app'`로 실패합니다.
 
 **완화**: `app/app.py` 생성과 `main.py` 198줄 제거를 같은 커밋에서 수행합니다. `Makefile`, `Dockerfile`, `.ports` 파일의 uvicorn 명령을 `uvicorn app.app:app`으로 일괄 업데이트합니다.
 
