@@ -194,6 +194,3 @@ def get_default_app() -> FastAPI:
     """uvicorn --factory 로 사용하거나, 직접 import 에서 호출."""
     return create_app()
 
-
-app = get_default_app()
-

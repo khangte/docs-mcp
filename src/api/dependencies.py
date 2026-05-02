@@ -16,6 +16,7 @@ from src.core.db import create_session_factory
 from src.repositories.chunk_repository import ChunkRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.endpoint_repository import EndpointRepository
+from src.repositories.schema_repository import SchemaRepository
 from src.repositories.sync_history_repository import SyncHistoryRepository
 from src.services.examples.request_example_service import RequestExampleService
 from src.services.indexer.embedding_provider import EmbeddingProvider, HashEmbeddingProvider
@@ -70,6 +71,7 @@ class ServiceBundle:
     document_repo: DocumentRepository
     endpoint_repo: EndpointRepository
     chunk_repo: ChunkRepository
+    schema_repo: SchemaRepository
     sync_history_repo: SyncHistoryRepository
     sync_service: SyncService
     search_service: SearchService
@@ -87,18 +89,19 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         document_repo = DocumentRepository(session)
         endpoint_repo = EndpointRepository(session)
         chunk_repo = ChunkRepository(session)
+        schema_repo = SchemaRepository(session)
         sync_history_repo = SyncHistoryRepository(session)
         indexer = IndexerService(
             endpoint_repo=endpoint_repo,
             chunk_repo=chunk_repo,
             embedding_provider=state.embedding_provider,
-            vector_index=state.vector_index,
         )
         sync_service = SyncService(
             session=session,
             document_repo=document_repo,
             endpoint_repo=endpoint_repo,
             chunk_repo=chunk_repo,
+            schema_repo=schema_repo,
             sync_history_repo=sync_history_repo,
             indexer=indexer,
             fetcher=state.fetcher,
@@ -120,6 +123,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             document_repo=document_repo,
             endpoint_repo=endpoint_repo,
             chunk_repo=chunk_repo,
+            schema_repo=schema_repo,
             sync_history_repo=sync_history_repo,
             sync_service=sync_service,
             search_service=search_service,

@@ -18,6 +18,7 @@ from src.models.openapi import ApiDocument, DocumentSyncHistory
 from src.repositories.chunk_repository import ChunkRepository
 from src.repositories.document_repository import DocumentRepository
 from src.repositories.endpoint_repository import EndpointRepository
+from src.repositories.schema_repository import SchemaRepository
 from src.repositories.sync_history_repository import SyncHistoryRepository
 from src.services.indexer.indexer_service import IndexerService
 from src.services.indexer.vector_index import InMemoryVectorIndex
@@ -47,6 +48,7 @@ class SyncService:
         document_repo: DocumentRepository,
         endpoint_repo: EndpointRepository,
         chunk_repo: ChunkRepository,
+        schema_repo: SchemaRepository,
         sync_history_repo: SyncHistoryRepository,
         indexer: IndexerService,
         fetcher: OpenAPIFetcher,
@@ -57,6 +59,7 @@ class SyncService:
         self._document_repo = document_repo
         self._endpoint_repo = endpoint_repo
         self._chunk_repo = chunk_repo
+        self._schema_repo = schema_repo
         self._sync_history_repo = sync_history_repo
         self._indexer = indexer
         self._fetcher = fetcher
@@ -96,7 +99,7 @@ class SyncService:
         self._document_repo.add(document)
         self._session.flush()
 
-        endpoints_count, chunks_count = self._indexer.index_document(
+        endpoints_count, chunks_count, deferred = self._indexer.index_document(
             document=document, parsed=parsed, is_reindex=False
         )
         schemas_count = len(parsed.schemas)
@@ -109,6 +112,7 @@ class SyncService:
             )
         )
         self._session.commit()
+        self._vector_index.upsert_many(deferred)
 
         return RegistrationResult(
             document=document,
@@ -170,11 +174,7 @@ class SyncService:
         existing_endpoints = list(self._endpoint_repo.list_by_document(document_id))
         for ep in existing_endpoints:
             self._session.delete(ep)
-        # 스키마 제거
-        from src.models.openapi import ApiSchema
-        from sqlalchemy import delete as sa_delete
-
-        self._session.execute(sa_delete(ApiSchema).where(ApiSchema.document_id == document_id))
+        self._schema_repo.delete_by_document(document_id)
         self._session.flush()
 
         document.content_hash = new_hash
@@ -183,7 +183,7 @@ class SyncService:
         document.version = parsed.version or document.version
         document.indexed_at = datetime.now(timezone.utc)
 
-        endpoints_count, chunks_count = self._indexer.index_document(
+        endpoints_count, chunks_count, deferred = self._indexer.index_document(
             document=document, parsed=parsed, is_reindex=True
         )
         schemas_count = len(parsed.schemas)
@@ -196,8 +196,9 @@ class SyncService:
             )
         )
         self._session.commit()
-        # 벡터 인덱스에서 이전 청크 제거 (새 청크는 indexer 가 upsert)
+        # commit 성공 후 이전 청크 제거, 새 청크 upsert
         self._vector_index.delete_many(chunk_ids_to_remove)
+        self._vector_index.upsert_many(deferred)
 
         return RegistrationResult(
             document=document,

@@ -1,14 +1,16 @@
 """문서 색인/재색인 오케스트레이션.
 
 입력: ParsedDocument + ApiDocument (DB 엔티티)
-출력: 생성된 청크 개수.
+출력: (endpoints_count, chunks_count, deferred_upserts)
 
-재색인 시 기존 청크를 DELETE 후 신규 INSERT 하되, 호출자(sync_service)가 한 트랜잭션 안에서 수행한다.
+deferred_upserts 는 호출자가 session.commit() 이후에 vector_index.upsert_many() 로
+적용해야 한다. 이렇게 해야 DB 롤백 시 인메모리 인덱스가 발산하지 않는다.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 
 from src.models.openapi import (
     ApiChunk,
@@ -23,8 +25,13 @@ from src.repositories.chunk_repository import ChunkRepository
 from src.repositories.endpoint_repository import EndpointRepository
 from src.services.indexer.chunk_builder import build_chunks
 from src.services.indexer.embedding_provider import EmbeddingProvider
-from src.services.indexer.vector_index import InMemoryVectorIndex
-from src.services.parser.openapi_parser import ParsedDocument, ParsedEndpoint
+from src.services.parser.openapi_parser import (
+    ParsedDocument,
+    ParsedEndpoint,
+    ParsedParameter,
+    ParsedRequestBody,
+    ParsedResponse,
+)
 
 
 class IndexerService:
@@ -35,20 +42,19 @@ class IndexerService:
         endpoint_repo: EndpointRepository,
         chunk_repo: ChunkRepository,
         embedding_provider: EmbeddingProvider,
-        vector_index: InMemoryVectorIndex,
     ) -> None:
-        """저장소·임베딩·벡터 인덱스 의존성을 보관한다."""
+        """저장소·임베딩 의존성을 보관한다."""
         self._endpoint_repo = endpoint_repo
         self._chunk_repo = chunk_repo
         self._embedding_provider = embedding_provider
-        self._vector_index = vector_index
 
     def index_document(
         self, document: ApiDocument, parsed: ParsedDocument, is_reindex: bool
-    ) -> tuple[int, int]:
-        """엔드포인트/스키마/청크를 저장하고 생성된 청크 개수를 반환.
+    ) -> tuple[int, int, list[tuple[str, list[float]]]]:
+        """엔드포인트/스키마/청크를 DB 에 저장하고 벡터 upsert 대기 목록을 반환한다.
 
-        반환: (endpoints_count, chunks_count)
+        반환: (endpoints_count, chunks_count, deferred_upserts)
+        deferred_upserts 는 호출자가 commit() 성공 후 vector_index.upsert_many() 로 적용한다.
         재색인일 경우 호출자가 이전 청크/엔드포인트/스키마를 먼저 지워야 한다.
         """
         endpoint_ids: dict[tuple[str, str], str] = {}
@@ -81,9 +87,8 @@ class IndexerService:
 
         built_chunks = build_chunks(parsed, endpoint_ids)
         texts = [c.text for c in built_chunks]
-        embeddings = (
-            self._embedding_provider.embed(texts) if texts else []
-        )
+        embeddings = self._embedding_provider.embed(texts) if texts else []
+        deferred: list[tuple[str, list[float]]] = []
         for idx, (built, vector) in enumerate(zip(built_chunks, embeddings, strict=True)):
             chunk_id = f"{document.id}:chunk:{idx}"
             chunk = ApiChunk(
@@ -95,9 +100,9 @@ class IndexerService:
             )
             chunk.embedding = vector
             self._chunk_repo.add(chunk)
-            self._vector_index.upsert(chunk_id, vector)
+            deferred.append((chunk_id, vector))
 
-        return len(parsed.endpoints), len(built_chunks)
+        return len(parsed.endpoints), len(built_chunks), deferred
 
 
 def _to_endpoint_entity(
