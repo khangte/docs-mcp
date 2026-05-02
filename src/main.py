@@ -18,8 +18,8 @@ from src.api.routes import health as health_routes
 from src.api.routes import query as query_routes
 from src.api.routes import search as search_routes
 from src.api.routes import sync as sync_routes
+from src.bootstrap import bootstrap_app_state
 from src.core.config import Settings, get_settings
-from src.core.db import create_db_engine
 from src.core.errors import (
     APIError,
     DocumentNotFoundError,
@@ -31,7 +31,6 @@ from src.core.errors import (
     ValidationError,
 )
 from src.core.logging import get_logger
-from src.models.openapi import create_all
 from src.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher, OpenAPIFetcher
 
 _LOG = get_logger("docs_mcp.api")
@@ -79,15 +78,20 @@ def create_app(
     """설정·fetcher·app_state 를 받아 라우트와 예외 핸들러를 등록한 FastAPI 앱을 생성한다."""
     cfg = settings or get_settings()
     if app_state is None:
-        engine = create_db_engine(cfg.database_url)
-        create_all(engine)
-        fetcher_impl: OpenAPIFetcher = fetcher or HttpOpenAPIFetcher()
-        app_state = AppState.from_engine(
-            engine=engine,
-            fetcher=fetcher_impl,
-            embedding_dim=cfg.embedding_dim,
-            hybrid_alpha=cfg.hybrid_alpha,
-        )
+        if fetcher is not None:
+            # 테스트 등 커스텀 fetcher 주입 경로
+            from src.core.db import create_db_engine
+            from src.models.openapi import create_all
+            engine = create_db_engine(cfg.database_url)
+            create_all(engine)
+            app_state = AppState.from_engine(
+                engine=engine,
+                fetcher=fetcher,
+                embedding_dim=cfg.embedding_dim,
+                hybrid_alpha=cfg.hybrid_alpha,
+            )
+        else:
+            app_state = bootstrap_app_state(cfg)
         rebuild_vector_index(app_state)
 
     app = FastAPI(title="docs-mcp OpenAPI RAG")

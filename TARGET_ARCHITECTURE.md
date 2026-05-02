@@ -300,15 +300,15 @@ src/
 
 > **⚠️ 주의**: `IndexerService` 생성자 변경과 `sync_service.py` 변경은 반드시 같은 커밋에서 수행합니다.
 
-### Phase 3 — MCP transport 재배선 (리스크: 높음)
+### Phase 3 — MCP transport 재배선 (리스크: 높음) ✅ 완료
 
 | 순서 | 파일 | 변경 내용 |
 |---|---|---|
-| 1 | `src/bootstrap.py` | 신규 생성 |
-| 2 | `src/mcp_server.py` | async 도구, managed_session, raise 에러, bootstrap 사용 |
-| 3 | `src/main.py` | bootstrap 사용 (선택적 정리) |
+| 1 | `src/bootstrap.py` | 신규 생성 ✅ |
+| 2 | `src/mcp_server.py` | async 도구, managed_session, raise 에러, bootstrap 사용 ✅ |
+| 3 | `src/main.py` | bootstrap 사용 (선택적 정리) ✅ |
 
-**검증**: `pytest tests/integration/test_mcp_server.py -v` 전부 통과
+**검증**: `pytest tests/integration/test_mcp_server.py -v` 4 passed ✅ · `pytest tests/` 96 passed ✅
 
 > **⚠️ 순서 제약**: Phase 1 완료 → Phase 2 완료 → 그 후에만 Phase 3 시작.
 > Phase 3의 `mcp_server.py`가 `IndexerService`를 직접 생성하는데, Phase 2의 생성자 변경이 먼저 완료되지 않으면 이전 3-인자 방식으로 실수로 호출할 수 있습니다.
@@ -327,7 +327,7 @@ src/
 
 - `src/models/openapi.py` — `_decode_json_dict`, `_decode_json_any` 헬퍼 추출
 - `src/main.py` — exception handler 테이블 방식으로 단순화
-- `src/mcp_server.py` — `logging.basicConfig` → `get_logger()` 교체
+- `src/mcp_server.py` — `logging.basicConfig` → `get_logger()` 교체 ✅ (Phase 3에서 선적용)
 
 ---
 
@@ -357,11 +357,9 @@ src/
 
 **완화**: Phase 3의 `mcp_server.py` 변경은 6개 도구/리소스 전체를 한 커밋에서 처리합니다. 절반만 바꾼 상태로 커밋하지 않습니다.
 
-### 경고 5: mcp_server.py의 logging.basicConfig (RISK-MCP-4)
+### 경고 5: mcp_server.py의 logging.basicConfig (RISK-MCP-4) ✅ 해소
 
-**위험**: `mcp_server.py` 22-23줄의 `logging.basicConfig(level=logging.INFO)`가 루트 로거에 기본 핸들러를 붙입니다. 이후 `get_logger()`가 `root.handlers` 체크에서 이미 있다고 판단하여 `JsonFormatter`를 스킵합니다. MCP 서버만 비구조화 로그를 출력하게 됩니다.
-
-**완화**: Phase 5에서 `logging.basicConfig` 제거 + `get_logger("docs_mcp.mcp")` 교체. Phase 3 이전에 수행해도 무방합니다.
+`logging.basicConfig` 제거, `get_logger("docs_mcp.mcp")` 교체가 Phase 3에서 완료되었습니다.
 
 ### 경고 6: module-level app 제거 후 uvicorn 실행 방법 확인
 
@@ -375,19 +373,19 @@ src/
 
 | ID | 파일 | 줄 | 분류 | 심각도 |
 |---|---|---|---|---|
-| RISK-MCP-1 | `mcp_server.py` | 30–41 | MCP 호환성 | 높음 |
-| RISK-MCP-2 | `mcp_server.py` | 34, 39–40 | MCP 호환성 | 높음 |
-| RISK-MCP-3 | `mcp_server.py` | 178–181 | 라이프사이클 | 중간 |
-| RISK-MCP-4 | `test_mcp_server.py` | 20, 33, 41 | MCP 호환성 | 중간 |
-| RISK-LC-1 | `mcp_server.py` | 181 | 라이프사이클 | 중간 |
-| RISK-LC-2 | `main.py` | 198 | 라이프사이클 | 높음 |
-| RISK-LC-3 | `dependencies.py` | 138–142 | 라이프사이클 | 중간 |
-| RISK-TX-1 | `sync_service.py` + `indexer_service.py` | 96–111 / 98 | 트랜잭션 | 높음 |
-| RISK-TX-2 | `sync_service.py` | 198–200 | 트랜잭션 | 중간 |
-| RISK-TX-4 | `dependencies.py` + `vector_index.py` | 86 | 트랜잭션 | 높음 |
-| RISK-HC-1 | `sync_service.py` + `dependencies.py` | 44–63 / 97–106 | 숨은 결합 | 중간 |
-| RISK-HC-2 | `mcp_server.py` | 14 | 숨은 결합 | 중간 |
-| RISK-ASYNC-1 | `vector_index.py` | 28–72 | 비동기 위험 | 높음 |
-| RISK-ASYNC-2 | `mcp_server.py` | 44–163 | 비동기 위험 | 높음 |
-| RISK-IC-1 | `indexer_service.py` | 123, 130, 138 | 임포트 순환 | 낮음 |
-| RISK-IC-2 | `mcp_server.py` | 68 | 임포트 순환 | 중간 |
+| RISK-MCP-1 | `mcp_server.py` | 30–41 | MCP 호환성 | 높음 | ✅ Phase 3 해소 |
+| RISK-MCP-2 | `mcp_server.py` | 34, 39–40 | MCP 호환성 | 높음 | ✅ Phase 3 해소 |
+| RISK-MCP-3 | `mcp_server.py` | 178–181 | 라이프사이클 | 중간 | ✅ Phase 3 해소 |
+| RISK-MCP-4 | `test_mcp_server.py` | 20, 33, 41 | MCP 호환성 | 중간 | ✅ Phase 3 해소 |
+| RISK-LC-1 | `mcp_server.py` | 181 | 라이프사이클 | 중간 | ✅ Phase 3 해소 |
+| RISK-LC-2 | `main.py` | 198 | 라이프사이클 | 높음 | ✅ Phase 2 해소 |
+| RISK-LC-3 | `dependencies.py` | 138–142 | 라이프사이클 | 중간 | ✅ Phase 1 해소 |
+| RISK-TX-1 | `sync_service.py` + `indexer_service.py` | 96–111 / 98 | 트랜잭션 | 높음 | ✅ Phase 2 해소 |
+| RISK-TX-2 | `sync_service.py` | 198–200 | 트랜잭션 | 중간 | ✅ Phase 2 해소 |
+| RISK-TX-4 | `dependencies.py` + `vector_index.py` | 86 | 트랜잭션 | 높음 | ✅ Phase 1 해소 |
+| RISK-HC-1 | `sync_service.py` + `dependencies.py` | 44–63 / 97–106 | 숨은 결합 | 중간 | ✅ Phase 2 해소 |
+| RISK-HC-2 | `mcp_server.py` | 14 | 숨은 결합 | 중간 | ✅ Phase 3 해소 |
+| RISK-ASYNC-1 | `vector_index.py` | 28–72 | 비동기 위험 | 높음 | ✅ Phase 1 해소 |
+| RISK-ASYNC-2 | `mcp_server.py` | 44–163 | 비동기 위험 | 높음 | ✅ Phase 3 해소 |
+| RISK-IC-1 | `indexer_service.py` | 123, 130, 138 | 임포트 순환 | 낮음 | ✅ Phase 2 해소 |
+| RISK-IC-2 | `mcp_server.py` | 68 | 임포트 순환 | 중간 | ✅ Phase 3 해소 |
