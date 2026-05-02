@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.models.openapi import ApiChunk
-from src.services.search.keyword_search import KeywordSearch, tokenize
+from app.models.openapi import ApiChunk
+from app.services.search.keyword_search import KeywordSearch, tokenize
 
 
 class _FakeChunkRepo:

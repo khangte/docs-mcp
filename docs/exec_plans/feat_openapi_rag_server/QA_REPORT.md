@@ -52,7 +52,7 @@
    - **수정 방향**: `_build_candidate_chunks()` 결과를 두 검색 모듈에 공유해 점수만 계산하도록 시그니처를 `score_candidates(query, candidate_chunks)` 형태로 통합하거나, KeywordSearch/VectorSearch 가 candidates set 만 받고 chunk lookup 은 service 가 한 번만 하도록 리팩터링.
 
 3. `src/services/indexer/indexer_service.py::_to_parameter_entity` / `_to_request_body_entity` / `_to_response_entity` 의 함수 내 import + assert
-   - 루프마다 함수 안에서 `from src.services.parser.openapi_parser import ParsedParameter` (등) import + `assert isinstance(...)`.
+   - 루프마다 함수 안에서 `from app.services.parser.openapi_parser import ParsedParameter` (등) import + `assert isinstance(...)`.
    - **수정 방향**: import 는 모듈 상단으로 옮기고, 시그니처를 `parsed: ParsedParameter` 로 정확히 타이핑. assert 는 타입 시스템으로 대체. 함수 단일 책임은 양호하나 동적 import + assert 는 코드 품질 감점 요소.
 
 4. `src/api/routes/health.py::ready` 의 broad `except Exception:`

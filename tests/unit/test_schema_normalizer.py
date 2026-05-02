@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.services.parser.openapi_parser import parse_document
-from src.services.parser.schema_normalizer import (
+from app.services.parser.openapi_parser import parse_document
+from app.services.parser.schema_normalizer import (
     collect_referenced_schemas,
     resolve_ref,
     schema_name_from_ref,

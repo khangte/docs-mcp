@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from src.services.indexer.embedding_provider import HashEmbeddingProvider
+from app.services.indexer.embedding_provider import HashEmbeddingProvider
 
 
 def test_embedding_deterministic() -> None:

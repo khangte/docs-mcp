@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.errors import EndpointNotFoundError, ValidationError
+from app.core.errors import EndpointNotFoundError, ValidationError
 
 
 def _register_and_find_get_pet(services_factory, sample_openapi_3: str):

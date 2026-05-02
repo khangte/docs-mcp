@@ -23,7 +23,7 @@
 - [ ] `SPEC.md` 에 기능 8개 이상 + 각 기능의 입출력·검증기준 기재
 - [ ] `src/` 아래 `core / models / schemas / repositories / services(ingestor|parser|indexer|search|examples|rag) / api` 레이어 구현 (ARCHITECTURE.md 금지 규칙 준수)
 - [ ] `python -m pytest tests/ -v` 전체 통과 (외부 의존성 없음)
-- [ ] `uvicorn src.main:app` 로 기동되며 `/health` 200, `/query` 가 자연어 질의에 대해 `answer` + `citations`(endpoint_id, method, path, snippet) 구조로 응답
+- [ ] `uvicorn app.main:app` 로 기동되며 `/health` 200, `/query` 가 자연어 질의에 대해 `answer` + `citations`(endpoint_id, method, path, snippet) 구조로 응답
 - [ ] `QA_REPORT.md` 최종 판정 "합격"
 - [ ] 산출물 4종이 `docs/exec-plans/completed/feat-openapi-rag-server/` 로 아카이브
 - [ ] 금지 패턴 없음(전역 변수/빈 except/하드코딩 경로/100줄 초과 함수/타입 힌트 누락 없음)

@@ -7,11 +7,11 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.api.dependencies import AppState
-from src.core.db import create_db_engine, create_session_factory
-from src.main import create_app
-from src.models.openapi import create_all
-from src.services.ingestor.openapi_fetcher import InMemoryFetcher
+from app.api.dependencies import AppState
+from app.core.db import create_db_engine, create_session_factory
+from app.main import create_app
+from app.models.openapi import create_all
+from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from tests.fixtures.samples import openapi_3_json, swagger_2_json
 
 
@@ -80,7 +80,7 @@ def app(app_state):
 @pytest.fixture()
 def services_factory(app_state):
     """app_state 기반으로 ServiceBundle 을 생성하는 헬퍼 팩토리."""
-    from src.api.dependencies import build_services
+    from app.api.dependencies import build_services
 
     def _factory():
         return next(build_services(app_state))

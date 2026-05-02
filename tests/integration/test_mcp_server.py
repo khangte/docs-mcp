@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from src.mcp_server import create_mcp_server
+from app.mcp_server import create_mcp_server
 
 
 @pytest.fixture()

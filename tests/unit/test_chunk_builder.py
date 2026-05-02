@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from src.services.indexer.chunk_builder import build_chunks
-from src.services.parser.openapi_parser import parse_document
+from app.services.indexer.chunk_builder import build_chunks
+from app.services.parser.openapi_parser import parse_document
 
 
 def test_endpoint_chunk_text_contains_essentials(sample_openapi_3: str) -> None:

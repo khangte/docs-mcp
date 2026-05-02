@@ -24,7 +24,7 @@
 | `src/services/indexer/indexer_service.py` | `index_document()` 반환 타입 변경 — vector upsert를 후처리로 이전, 생성자에서 `vector_index` 제거 | RISK-TX-1 |
 | `src/services/ingestor/sync_service.py` | `commit()` 이후 `upsert_many()` 호출, `sa_delete` 직접 실행 → `schema_repo` 위임 | RISK-TX-1, RISK-TX-2, RISK-HC-1 |
 | `src/mcp_server.py` | 도구 함수 `async def` 전환, `managed_session` 패턴, `raise EndpointNotFoundError` | RISK-MCP-1/2, RISK-ASYNC-2 |
-| `src/main.py` | 198줄 `app = get_default_app()` 제거 | RISK-LC-2 |
+| `app/main.py` | 198줄 `app = get_default_app()` 제거 | RISK-LC-2 |
 | `src/core/db.py` | `managed_session()` 컨텍스트 매니저 추가 | RISK-MCP-1/2 |
 | `src/core/logging.py` | `_configured` 전역 플래그 → `root.handlers` 체크로 교체 | 테스트 격리 |
 | `src/api/dependencies.py` | `rebuild_vector_index`에서 `replace_all()` 사용 | RISK-LC-3 |
@@ -34,7 +34,7 @@
 | 파일 | 역할 | 해결하는 리스크 |
 |---|---|---|
 | `src/bootstrap.py` | `bootstrap_app_state(cfg)` 팩토리 — main/mcp 공유 | RISK-HC-2, 중복 제거 |
-| `src/app.py` | 한 줄: `app = create_app()` — uvicorn 전용 진입점 | RISK-LC-2 |
+| `app/app.py` | 한 줄: `app = create_app()` — uvicorn 전용 진입점 | RISK-LC-2 |
 | `src/repositories/schema_repository.py` | `ApiSchema` CRUD 분리 | RISK-HC-1, 레이어 경계 |
 
 ---
@@ -196,11 +196,11 @@ if not endpoint:
 app = get_default_app()  # ← 이 줄 제거
 
 # src/app.py (신규, uvicorn 전용)
-from src.main import create_app
+from app.main import create_app
 app = create_app()
 ```
 
-uvicorn 실행: `uvicorn src.app:app` 또는 `uvicorn src.main:create_app --factory`
+uvicorn 실행: `uvicorn app.app:app` 또는 `uvicorn app.main:create_app --factory`
 
 ### 문제 4: 인덱스 준비 완료 보장 (RISK-MCP-3)
 
@@ -292,10 +292,10 @@ src/
 | 2 | `src/repositories/schema_repository.py` | 신규 생성 |
 | 3 | `src/services/ingestor/sync_service.py` | commit 후 upsert_many, schema_repo 사용 |
 | 4 | `src/api/dependencies.py` | IndexerService 생성자 업데이트, schema_repo 추가 |
-| 5 | `src/main.py` | 198줄 제거 |
-| 6 | `src/app.py` | 신규 생성 |
+| 5 | `app/main.py` | 198줄 제거 |
+| 6 | `app/app.py` | 신규 생성 |
 
-**검증**: `pytest tests/` 전부 통과, `python -c "import src.main"` 로그 출력 없음
+**검증**: `pytest tests/` 전부 통과, `python -c "import app.main"` 로그 출력 없음
 
 > **⚠️ 주의**: `IndexerService` 생성자 변경과 `sync_service.py` 변경은 반드시 같은 커밋에서 수행합니다.
 
@@ -305,7 +305,7 @@ src/
 |---|---|---|
 | 1 | `src/bootstrap.py` | 신규 생성 ✅ |
 | 2 | `src/mcp_server.py` | async 도구, managed_session, raise 에러, bootstrap 사용 ✅ |
-| 3 | `src/main.py` | bootstrap 사용 (선택적 정리) ✅ |
+| 3 | `app/main.py` | bootstrap 사용 (선택적 정리) ✅ |
 
 **검증**: `pytest tests/integration/test_mcp_server.py -v` 4 passed ✅ · `pytest tests/` 96 passed ✅
 
@@ -327,7 +327,7 @@ src/
 | 순서 | 파일 | 변경 내용 |
 |---|---|---|
 | 1 | `src/models/openapi.py` | `_decode_json_dict`, `_decode_json_any` 헬퍼 추출, 5개 프로퍼티에 적용 ✅ |
-| 2 | `src/main.py` | `_DOMAIN_ERROR_STATUS` 테이블 + `_make_handler` 팩토리로 핸들러 8개 → 1개 루프로 단순화 ✅ |
+| 2 | `app/main.py` | `_DOMAIN_ERROR_STATUS` 테이블 + `_make_handler` 팩토리로 핸들러 8개 → 1개 루프로 단순화 ✅ |
 | 3 | `src/mcp_server.py` | `logging.basicConfig` → `get_logger()` 교체 ✅ (Phase 3에서 선적용) |
 
 **검증**: `pytest tests/` 96 passed ✅
@@ -366,9 +366,9 @@ src/
 
 ### 경고 6: module-level app 제거 후 uvicorn 실행 방법 확인
 
-**위험**: `main.py` 198줄 제거 후 기존 `uvicorn src.main:app` 명령이 `AttributeError: module 'src.main' has no attribute 'app'`로 실패합니다.
+**위험**: `main.py` 198줄 제거 후 기존 `uvicorn app.main:app` 명령이 `AttributeError: module 'src.main' has no attribute 'app'`로 실패합니다.
 
-**완화**: `src/app.py` 생성과 `main.py` 198줄 제거를 같은 커밋에서 수행합니다. `Makefile`, `Dockerfile`, `.ports` 파일의 uvicorn 명령을 `uvicorn src.app:app`으로 일괄 업데이트합니다.
+**완화**: `app/app.py` 생성과 `main.py` 198줄 제거를 같은 커밋에서 수행합니다. `Makefile`, `Dockerfile`, `.ports` 파일의 uvicorn 명령을 `uvicorn app.app:app`으로 일괄 업데이트합니다.
 
 ---
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from src.services.indexer.embedding_provider import HashEmbeddingProvider
-from src.services.indexer.vector_index import InMemoryVectorIndex
-from src.services.search.vector_search import VectorSearch
+from app.services.indexer.embedding_provider import HashEmbeddingProvider
+from app.services.indexer.vector_index import InMemoryVectorIndex
+from app.services.search.vector_search import VectorSearch
 
 
 def _unit_vec(components: list[float]) -> list[float]:

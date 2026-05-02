@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from src.core.errors import ParserError
-from src.services.parser.openapi_parser import parse_document
-from src.services.parser.schema_normalizer import (
+from app.core.errors import ParserError
+from app.services.parser.openapi_parser import parse_document
+from app.services.parser.schema_normalizer import (
     collect_referenced_schemas,
     resolve_ref,
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.services.rag.llm_provider import NO_RESULT_MESSAGE
+from app.services.rag.llm_provider import NO_RESULT_MESSAGE
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.services.rag.llm_provider import NO_RESULT_MESSAGE
+from app.services.rag.llm_provider import NO_RESULT_MESSAGE
 
 
 def test_rag_no_results_returns_fixed_message(services_factory) -> None:

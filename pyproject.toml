@@ -29,7 +29,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["app*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -54,5 +54,5 @@ ban-relative-imports = "all"
 
 [tool.vulture]
 min_confidence = 80
-paths = ["src/"]
+paths = ["app/"]
 ignore_names = ["test_*", "setUp", "tearDown"]

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.errors import ValidationError
-from src.services.search.search_service import SearchOptions
+from app.core.errors import ValidationError
+from app.services.search.search_service import SearchOptions
 
 
 def _register(services_factory, raw: str):

@@ -23,7 +23,7 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 ## 프로젝트 구조
 
 ```text
-src/
+app/
 ├── bootstrap.py     # AppState 팩토리 (main/mcp_server 공유)
 ├── main.py          # FastAPI 앱 팩토리 + uvicorn 진입점
 ├── mcp_server.py    # MCP 서버 (Claude Desktop 통합)
@@ -51,7 +51,7 @@ pip install -r requirements.txt
 
 ### 2. 환경 설정
 
-`.env` 파일 또는 환경변수를 통해 설정을 조절할 수 있습니다. (기본값은 `src/core/config.py` 참고)
+`.env` 파일 또는 환경변수를 통해 설정을 조절할 수 있습니다. (기본값은 `app/core/config.py` 참고)
 
 - `DOCS_MCP_DATABASE_URL`: 데이터베이스 연결 URL (기본: `sqlite:///./docs_mcp.db`)
 - `DOCS_MCP_LOG_LEVEL`: 로그 레벨 (기본: `INFO`)
@@ -59,13 +59,13 @@ pip install -r requirements.txt
 ### 3. 서버 실행
 
 ```bash
-uvicorn src.main:app --reload
+uvicorn app.main:app --reload
 ```
 
 또는 팩토리 패턴 사용:
 
 ```bash
-uvicorn src.main:create_app --factory --reload
+uvicorn app.main:create_app --factory --reload
 ```
 
 서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI를 통해 API를 테스트할 수 있습니다.
@@ -93,7 +93,7 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
   "mcpServers": {
     "docs-mcp": {
       "command": "python",
-      "args": ["-m", "src.mcp_server"],
+      "args": ["-m", "app.mcp_server"],
       "cwd": "/path/to/docs-mcp",
       "env": {
         "DOCS_MCP_DATABASE_URL": "sqlite:///./docs_mcp.db"

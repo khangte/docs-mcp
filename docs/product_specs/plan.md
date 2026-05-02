@@ -407,10 +407,10 @@ docs-mcp/
 문서 등록 및 색인 흐름 예시:
 
 ```python
-from src.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher
-from src.services.parser.openapi_parser import OpenAPIParser
-from src.services.indexer.chunk_builder import ChunkBuilder
-from src.services.ingestor.sync_service import SyncService
+from app.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher
+from app.services.parser.openapi_parser import OpenAPIParser
+from app.services.indexer.chunk_builder import ChunkBuilder
+from app.services.ingestor.sync_service import SyncService
 
 
 async def register_openapi_document(url: str) -> None:
@@ -422,7 +422,7 @@ async def register_openapi_document(url: str) -> None:
 MCP 검색 도구 예시:
 
 ```python
-from src.services.search.search_service import SearchService, SearchOptions
+from app.services.search.search_service import SearchService, SearchOptions
 
 async def search_endpoints(query: str, top_k: int = 5) -> list[dict]:
     # SearchService를 사용하여 하이브리드 검색을 수행한다.

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.errors import (
+from app.core.errors import (
     DocumentNotFoundError,
     DuplicateDocumentError,
     IntegrationError,
     ValidationError,
 )
-from src.services.ingestor.openapi_fetcher import InMemoryFetcher
+from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 
 
 def test_register_with_raw_document(services_factory, sample_openapi_3: str) -> None:
