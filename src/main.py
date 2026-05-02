@@ -147,11 +147,4 @@ def _register_exception_handlers(app: FastAPI) -> None:
             content=_error_payload(exc.code, str(exc), trace_id),
         )
 
-
-def get_default_app() -> FastAPI:
-    """uvicorn 진입점 (src.main:app)."""
-    return create_app()
-
-
 app = create_app()
-

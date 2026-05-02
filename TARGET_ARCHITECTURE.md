@@ -221,9 +221,8 @@ def main():
 
 ```
 src/
-├── app.py                       ★ 신규 — app = create_app() (uvicorn 전용)
 ├── bootstrap.py                 ★ 신규 — bootstrap_app_state(cfg) -> AppState
-├── main.py                      ~ 수정 — 198줄 제거, bootstrap 사용
+├── main.py                      ~ 수정 — bootstrap 사용
 ├── mcp_server.py                ~ 수정 — async 도구, managed_session, raise 에러
 │
 ├── core/
