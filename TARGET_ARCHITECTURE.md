@@ -285,7 +285,7 @@ src/
 
 **검증**: `pytest tests/unit/` 65 passed ✅ · `pytest tests/` 96 passed ✅
 
-### Phase 2 — 서비스 레이어 수정 (리스크: 중간)
+### Phase 2 — 서비스 레이어 수정 (리스크: 중간) ✅ 완료
 
 | 순서 | 파일 | 변경 내용 |
 |---|---|---|
