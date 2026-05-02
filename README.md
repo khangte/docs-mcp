@@ -24,6 +24,10 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 
 ```text
 src/
+├── app.py           # uvicorn 진입점 (create_app 임포트)
+├── bootstrap.py     # AppState 팩토리 (main/mcp_server 공유)
+├── main.py          # FastAPI 앱 팩토리
+├── mcp_server.py    # MCP 서버 (Claude Desktop 통합)
 ├── api/             # FastAPI 라우트 및 의존성 주입
 ├── core/            # 공통 설정, DB 엔진, 예외 및 로깅
 ├── models/          # SQLAlchemy ORM 모델 (Base, ApiDocument 등)
@@ -56,8 +60,15 @@ pip install -r requirements.txt
 ### 3. 서버 실행
 
 ```bash
-uvicorn src.main:app --reload
+uvicorn src.app:app --reload
 ```
+
+또는 팩토리 패턴 사용:
+
+```bash
+uvicorn src.main:create_app --factory --reload
+```
+
 서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI를 통해 API를 테스트할 수 있습니다.
 
 ## 주요 API 가이드
