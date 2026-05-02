@@ -323,11 +323,15 @@ src/
 
 **검증**: `pytest tests/` 96 passed ✅ · N+1 쿼리 없음 확인 ✅
 
-### Phase 5 — 기계적 정리 (리스크: 낮음)
+### Phase 5 — 기계적 정리 (리스크: 낮음) ✅ 완료
 
-- `src/models/openapi.py` — `_decode_json_dict`, `_decode_json_any` 헬퍼 추출
-- `src/main.py` — exception handler 테이블 방식으로 단순화
-- `src/mcp_server.py` — `logging.basicConfig` → `get_logger()` 교체 ✅ (Phase 3에서 선적용)
+| 순서 | 파일 | 변경 내용 |
+|---|---|---|
+| 1 | `src/models/openapi.py` | `_decode_json_dict`, `_decode_json_any` 헬퍼 추출, 5개 프로퍼티에 적용 ✅ |
+| 2 | `src/main.py` | `_DOMAIN_ERROR_STATUS` 테이블 + `_make_handler` 팩토리로 핸들러 8개 → 1개 루프로 단순화 ✅ |
+| 3 | `src/mcp_server.py` | `logging.basicConfig` → `get_logger()` 교체 ✅ (Phase 3에서 선적용) |
+
+**검증**: `pytest tests/` 96 passed ✅
 
 ---
 

@@ -30,6 +30,24 @@ class Base(DeclarativeBase):
     """모든 ORM 모델의 베이스 클래스."""
 
 
+def _decode_json_dict(raw: str | None) -> dict[str, Any]:
+    """JSON 문자열을 dict 로 디코딩한다. 실패 시 빈 dict 를 반환한다."""
+    try:
+        return dict(json.loads(raw or "{}"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _decode_json_any(raw: str | None) -> Any:
+    """JSON 문자열을 임의 타입으로 디코딩한다. None 이거나 실패 시 None 을 반환한다."""
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
 def _utcnow() -> datetime:
     """현재 UTC 시각을 반환한다."""
     return datetime.now(timezone.utc)
@@ -98,7 +116,7 @@ class ApiEndpoint(Base):
         """저장된 tags_json 을 파싱해 태그 리스트를 반환한다."""
         try:
             return list(json.loads(self.tags_json or "[]"))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError):
             return []
 
     @tags.setter
@@ -126,10 +144,7 @@ class ApiParameter(Base):
     @property
     def schema(self) -> dict[str, Any]:
         """저장된 schema_json 을 dict 로 디코딩해 반환한다."""
-        try:
-            return dict(json.loads(self.schema_json or "{}"))
-        except json.JSONDecodeError:
-            return {}
+        return _decode_json_dict(self.schema_json)
 
     @schema.setter
     def schema(self, value: dict[str, Any]) -> None:
@@ -156,10 +171,7 @@ class ApiRequestBody(Base):
     @property
     def schema(self) -> dict[str, Any]:
         """저장된 schema_json 을 dict 로 디코딩해 반환한다."""
-        try:
-            return dict(json.loads(self.schema_json or "{}"))
-        except json.JSONDecodeError:
-            return {}
+        return _decode_json_dict(self.schema_json)
 
     @schema.setter
     def schema(self, value: dict[str, Any]) -> None:
@@ -169,12 +181,7 @@ class ApiRequestBody(Base):
     @property
     def example(self) -> Any:
         """저장된 example_json 을 디코딩해 반환한다."""
-        if self.example_json is None:
-            return None
-        try:
-            return json.loads(self.example_json)
-        except json.JSONDecodeError:
-            return None
+        return _decode_json_any(self.example_json)
 
     @example.setter
     def example(self, value: Any) -> None:
@@ -201,10 +208,7 @@ class ApiResponse(Base):
     @property
     def schema(self) -> dict[str, Any]:
         """저장된 schema_json 을 dict 로 디코딩해 반환한다."""
-        try:
-            return dict(json.loads(self.schema_json or "{}"))
-        except json.JSONDecodeError:
-            return {}
+        return _decode_json_dict(self.schema_json)
 
     @schema.setter
     def schema(self, value: dict[str, Any]) -> None:
@@ -214,12 +218,7 @@ class ApiResponse(Base):
     @property
     def example(self) -> Any:
         """저장된 example_json 을 디코딩해 반환한다."""
-        if self.example_json is None:
-            return None
-        try:
-            return json.loads(self.example_json)
-        except json.JSONDecodeError:
-            return None
+        return _decode_json_any(self.example_json)
 
     @example.setter
     def example(self, value: Any) -> None:
@@ -244,10 +243,7 @@ class ApiSchema(Base):
     @property
     def schema(self) -> dict[str, Any]:
         """저장된 json_schema 를 dict 로 디코딩해 반환한다."""
-        try:
-            return dict(json.loads(self.json_schema or "{}"))
-        except json.JSONDecodeError:
-            return {}
+        return _decode_json_dict(self.json_schema)
 
 
 class ApiChunk(Base):

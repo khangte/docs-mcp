@@ -109,80 +109,34 @@ def create_app(
     return app
 
 
+_DOMAIN_ERROR_STATUS: list[tuple[type[Exception], int]] = [
+    (RequestValidationError, 422),
+    (ValidationError, 422),
+    (DocumentNotFoundError, 404),
+    (EndpointNotFoundError, 404),
+    (DuplicateDocumentError, 409),
+    (DomainError, 400),
+    (IntegrationError, 502),
+    (RepositoryError, 500),
+]
+
+
 def _register_exception_handlers(app: FastAPI) -> None:
     """앱에 예외 → HTTP 상태코드 매핑 핸들러를 일괄 등록한다."""
 
-    @app.exception_handler(RequestValidationError)
-    async def on_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
-        """FastAPI 요청 검증 오류를 422 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=422,
-            content=_error_payload("validation_error", str(exc.errors()), trace_id),
-        )
+    def _make_handler(status: int):
+        async def handler(request: Request, exc: Exception) -> JSONResponse:
+            trace_id = getattr(request.state, "trace_id", "")
+            code = getattr(exc, "code", type(exc).__name__.lower())
+            if isinstance(exc, RequestValidationError):
+                msg = str(exc.errors())
+            else:
+                msg = str(exc)
+            return JSONResponse(status_code=status, content=_error_payload(code, msg, trace_id))
+        return handler
 
-    @app.exception_handler(ValidationError)
-    async def on_domain_validation(request: Request, exc: ValidationError) -> JSONResponse:
-        """도메인 검증 오류를 422 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=422,
-            content=_error_payload(exc.code, str(exc), trace_id),
-        )
-
-    @app.exception_handler(DocumentNotFoundError)
-    async def on_doc_not_found(request: Request, exc: DocumentNotFoundError) -> JSONResponse:
-        """문서 미존재 오류를 404 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=404,
-            content=_error_payload(exc.code, str(exc), trace_id),
-        )
-
-    @app.exception_handler(EndpointNotFoundError)
-    async def on_ep_not_found(request: Request, exc: EndpointNotFoundError) -> JSONResponse:
-        """엔드포인트 미존재 오류를 404 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=404,
-            content=_error_payload(exc.code, str(exc), trace_id),
-        )
-
-    @app.exception_handler(DuplicateDocumentError)
-    async def on_dup_doc(request: Request, exc: DuplicateDocumentError) -> JSONResponse:
-        """문서 중복 등록 오류를 409 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=409,
-            content=_error_payload(exc.code, str(exc), trace_id),
-        )
-
-    @app.exception_handler(DomainError)
-    async def on_domain(request: Request, exc: DomainError) -> JSONResponse:
-        """그 밖의 도메인 오류를 400 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=400,
-            content=_error_payload(exc.code, str(exc), trace_id),
-        )
-
-    @app.exception_handler(IntegrationError)
-    async def on_integration(request: Request, exc: IntegrationError) -> JSONResponse:
-        """외부 통합(HTTP/LLM 등) 실패를 502 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=502,
-            content=_error_payload("integration_error", str(exc), trace_id),
-        )
-
-    @app.exception_handler(RepositoryError)
-    async def on_repository(request: Request, exc: RepositoryError) -> JSONResponse:
-        """저장소 오류를 500 응답으로 변환한다."""
-        trace_id = getattr(request.state, "trace_id", "")
-        return JSONResponse(
-            status_code=500,
-            content=_error_payload("repository_error", str(exc), trace_id),
-        )
+    for exc_type, status in _DOMAIN_ERROR_STATUS:
+        app.add_exception_handler(exc_type, _make_handler(status))
 
     @app.exception_handler(APIError)
     async def on_api(request: Request, exc: APIError) -> JSONResponse:
