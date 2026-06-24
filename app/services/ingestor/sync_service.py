@@ -9,16 +9,17 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from sqlalchemy import delete as sa_delete
+
 from app.core.errors import (
     DocumentNotFoundError,
     DuplicateDocumentError,
     ValidationError,
 )
-from app.models.openapi import ApiDocument, DocumentSyncHistory
+from app.models.openapi import ApiDocument, ApiSchema, DocumentSyncHistory
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
-from app.repositories.schema_repository import SchemaRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.indexer.indexer_service import IndexerService
 from app.services.indexer.vector_index import InMemoryVectorIndex
@@ -48,7 +49,6 @@ class SyncService:
         document_repo: DocumentRepository,
         endpoint_repo: EndpointRepository,
         chunk_repo: ChunkRepository,
-        schema_repo: SchemaRepository,
         sync_history_repo: SyncHistoryRepository,
         indexer: IndexerService,
         fetcher: OpenAPIFetcher,
@@ -59,7 +59,6 @@ class SyncService:
         self._document_repo = document_repo
         self._endpoint_repo = endpoint_repo
         self._chunk_repo = chunk_repo
-        self._schema_repo = schema_repo
         self._sync_history_repo = sync_history_repo
         self._indexer = indexer
         self._fetcher = fetcher
@@ -174,7 +173,7 @@ class SyncService:
         existing_endpoints = list(self._endpoint_repo.list_by_document(document_id))
         for ep in existing_endpoints:
             self._session.delete(ep)
-        self._schema_repo.delete_by_document(document_id)
+        self._session.execute(sa_delete(ApiSchema).where(ApiSchema.document_id == document_id))
         self._session.flush()
 
         document.content_hash = new_hash

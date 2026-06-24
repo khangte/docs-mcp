@@ -29,9 +29,6 @@ class Settings:
     hybrid_alpha: float = field(
         default_factory=lambda: float(os.environ.get("DOCS_MCP_HYBRID_ALPHA", "0.4"))
     )
-    default_top_k: int = field(
-        default_factory=lambda: int(os.environ.get("DOCS_MCP_DEFAULT_TOP_K", "5"))
-    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )

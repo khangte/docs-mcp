@@ -15,11 +15,12 @@ from app.api.dependencies import AppState, build_services, rebuild_vector_index
 from app.bootstrap import bootstrap_app_state
 from app.core.db import managed_session
 from app.core.errors import EndpointNotFoundError
+from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.repositories.document_repository import DocumentRepository
 from app.services.search.search_service import SearchOptions
 
-_LOG = get_logger("docs_mcp.mcp")
+_LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
 
 
 def _run_bundle(app_state: AppState, fn):

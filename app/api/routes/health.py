@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy import text
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, select, text
 
 from app.api.dependencies import AppState
+from app.api.dependency_providers import get_app_state
+from app.models.openapi import ApiDocument
 
 router = APIRouter()
 
@@ -18,16 +20,8 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _get_state(request: Request) -> AppState:
-    """요청에서 AppState 를 꺼내 반환한다."""
-    state = getattr(request.app.state, "app_state", None)
-    if state is None:
-        raise RuntimeError("AppState is not configured on the application")
-    return state
-
-
 @router.get("/ready")
-def ready(state: AppState = Depends(_get_state)) -> dict[str, Any]:
+def ready(state: AppState = Depends(get_app_state)) -> dict[str, Any]:
     """DB 와 벡터 인덱스 동작 여부를 확인해 레디니스 상태를 반환한다."""
     db_ok = False
     documents = 0
@@ -35,9 +29,6 @@ def ready(state: AppState = Depends(_get_state)) -> dict[str, Any]:
         session = state.session_factory()
         try:
             session.execute(text("SELECT 1"))
-            from app.models.openapi import ApiDocument
-            from sqlalchemy import func, select
-
             count = session.execute(select(func.count()).select_from(ApiDocument)).scalar_one()
             documents = int(count or 0)
             db_ok = True

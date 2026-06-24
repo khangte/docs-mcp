@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+
 from app.models.openapi import (
     ApiChunk,
     ApiDocument,
@@ -124,9 +125,6 @@ def _to_endpoint_entity(
 
 def _to_parameter_entity(endpoint_id: str, parsed: object) -> ApiParameter:
     """ParsedParameter 를 ApiParameter ORM 엔티티로 변환한다."""
-    # parsed: ParsedParameter
-    from app.services.parser.openapi_parser import ParsedParameter
-
     assert isinstance(parsed, ParsedParameter)
     entity = ApiParameter(
         endpoint_id=endpoint_id,
@@ -142,8 +140,6 @@ def _to_parameter_entity(endpoint_id: str, parsed: object) -> ApiParameter:
 
 def _to_request_body_entity(endpoint_id: str, parsed: object) -> ApiRequestBody:
     """ParsedRequestBody 를 ApiRequestBody ORM 엔티티로 변환한다."""
-    from app.services.parser.openapi_parser import ParsedRequestBody
-
     assert isinstance(parsed, ParsedRequestBody)
     entity = ApiRequestBody(
         endpoint_id=endpoint_id,
@@ -158,8 +154,6 @@ def _to_request_body_entity(endpoint_id: str, parsed: object) -> ApiRequestBody:
 
 def _to_response_entity(endpoint_id: str, parsed: object) -> ApiResponse:
     """ParsedResponse 를 ApiResponse ORM 엔티티로 변환한다."""
-    from app.services.parser.openapi_parser import ParsedResponse
-
     assert isinstance(parsed, ParsedResponse)
     entity = ApiResponse(
         endpoint_id=endpoint_id,
@@ -182,8 +176,6 @@ def _make_endpoint_id(document_id: str, parsed: ParsedEndpoint, idx: int) -> str
 
 def _json_dumps_safe(obj: dict[str, object]) -> str:
     """객체를 JSON 으로 직렬화하되 실패 시 빈 객체 문자열을 반환한다."""
-    import json
-
     try:
         return json.dumps(obj)
     except (TypeError, ValueError):

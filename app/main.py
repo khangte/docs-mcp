@@ -33,7 +33,7 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher, OpenAPIFetcher
 
-_LOG = get_logger("docs_mcp.api")
+_LOG = get_logger("docs_mcp.api", level=get_settings().log_level)
 
 
 class TraceIdMiddleware(BaseHTTPMiddleware):
