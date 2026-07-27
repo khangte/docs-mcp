@@ -32,6 +32,14 @@ class Settings:
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )
+    gemini_api_key: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_GEMINI_API_KEY") or None
+    )
+    gemini_model: str = field(
+        default_factory=lambda: os.environ.get(
+            "DOCS_MCP_GEMINI_MODEL", "gemini-2.0-flash"
+        )
+    )
 
 
 def get_settings() -> Settings:
