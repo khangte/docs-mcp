@@ -9,7 +9,7 @@ import json
 from typing import Any
 
 import anyio
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from app.api.dependencies import AppState, build_services, rebuild_vector_index
 from app.bootstrap import bootstrap_app_state
