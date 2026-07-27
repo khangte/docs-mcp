@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.config import get_settings
 from app.core.db import create_session_factory
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
@@ -23,7 +24,7 @@ from app.services.indexer.indexer_service import IndexerService
 from app.services.indexer.vector_index import InMemoryVectorIndex
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
-from app.services.rag.llm_provider import LLMProvider, TemplateLLMProvider
+from app.services.rag.llm_provider import GeminiLLMProvider, LLMProvider, TemplateLLMProvider
 from app.services.rag.rag_service import RAGService
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.search_service import SearchService
@@ -56,10 +57,18 @@ class AppState:
             session_factory=create_session_factory(engine),
             vector_index=InMemoryVectorIndex(),
             embedding_provider=HashEmbeddingProvider(dim=embedding_dim),
-            llm_provider=TemplateLLMProvider(),
+            llm_provider=_build_llm_provider(),
             fetcher=fetcher,
             hybrid_alpha=hybrid_alpha,
         )
+
+
+def _build_llm_provider() -> LLMProvider:
+    """Gemini API 키가 설정돼 있으면 GeminiLLMProvider 를, 아니면 TemplateLLMProvider 로 폴백."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        return TemplateLLMProvider()
+    return GeminiLLMProvider(api_key=settings.gemini_api_key, model=settings.gemini_model)
 
 
 @dataclass
