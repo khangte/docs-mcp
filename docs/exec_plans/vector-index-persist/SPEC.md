@@ -121,3 +121,7 @@ Planner → Generator → Evaluator 순서로 진행한다.
 - **docker-compose.yml** 신규 추가: `pgvector/pgvector:pg16` 이미지 기반 postgres 단일 서비스.
 - `app/core/db.py`의 sqlite 분기 제거, `app/core/config.py`의 기본 `database_url`을
   postgres로 변경.
+- **refactor/260727 병합**: 이 작업과 병행 진행 중이던 Markdown/CSV 문서 지원(`ApiSection`,
+  `ApiDocument.doc_type`) 및 Gemini LLM/임베딩 프로바이더가 별도 브랜치에 있어, 병합 시
+  두 번째 alembic 리비전(`b336d80334c8_add_markdown_csv_section_support`)을 추가해
+  스키마를 맞췄다.

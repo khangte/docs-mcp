@@ -55,9 +55,10 @@
 ## 4. 핵심 데이터 흐름
 
 ### 4-1. 문서 등록 및 색인
-1. **Fetch**: 외부 OpenAPI Spec 수집 (해시 검사로 변경분 확인)
-2. **Parse**: 엔드포인트 및 스키마 정규화
-3. **Index**: 검색 단위로 청크화 및 벡터 임베딩 생성
+1. **Fetch**: 외부 문서(OpenAPI/Markdown/CSV) 수집 (해시 검사로 변경분 확인)
+2. **Detect & Parse**: `doc_type` 자동 판별(`document_router.py`) 후 엔드포인트/스키마(OpenAPI) 또는
+   섹션(Markdown/CSV)으로 정규화
+3. **Index**: 검색 단위로 청크화하고 임베딩 생성(Gemini API 또는 결정적 해시 폴백)
 4. **Store**: PostgreSQL 및 pgvector에 최종 저장
 
 ### 4-2. 검색 (Hybrid Search)
@@ -75,6 +76,8 @@
 ## 6. 기술 스택 및 보안
 - **Language/Framework**: Python 3.11+, FastAPI, `fastmcp`
 - **Database**: PostgreSQL + pgvector (HNSW index), Alembic 마이그레이션
+- **LLM/임베딩**: Gemini API(`GeminiLLMProvider`, `GeminiEmbeddingProvider`) 우선 사용,
+  API 키 미설정 시 `TemplateLLMProvider`/`HashEmbeddingProvider`로 자동 폴백
 - **Auth**: 현재 관리 API/MCP 모두 별도 인증 없음(로컬/신뢰 환경 전제, API Key 인증은 TODO)
 - **Observability**: JSON 구조화 로깅 기반 (trace_id 추적)
 

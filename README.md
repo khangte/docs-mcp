@@ -4,9 +4,9 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 
 ## 주요 기능
 
-- **OpenAPI 문서 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x 및 Swagger 2.0 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
-- **하이브리드 검색**: 키워드(토큰 매칭)와 벡터 유사도 검색을 결합하여 원하는 API 엔드포인트를 정확하게 찾아냅니다.
-- **RAG 질의응답**: 등록된 API 명세를 기반으로 사용자 질문에 답변하고, 근거가 되는 API 경로 및 요약 정보를 함께 제공합니다.
+- **다양한 문서 소스 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x/Swagger 2.0, Markdown, CSV 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
+- **하이브리드 검색**: 키워드(토큰 매칭)와 벡터 유사도 검색을 결합하여 원하는 API 엔드포인트 또는 문서 섹션을 정확하게 찾아냅니다.
+- **RAG 질의응답**: 등록된 문서를 기반으로 사용자 질문에 답변하고, 근거가 되는 API 경로/섹션 및 요약 정보를 함께 제공합니다. Gemini API 키가 설정되면 실제 LLM이 답변을 생성하고, 없으면 템플릿 기반으로 폴백합니다.
 - **코드 예시 생성**: 엔드포인트 상세 정보로부터 `curl`, `fetch`, `axios`, `python(requests)` 등 다양한 포맷의 호출 예시 코드를 즉시 생성합니다.
 - **자동 재색인**: 문서의 내용 변경을 감지(해시 비교)하여 변경된 경우에만 지능적으로 인덱스를 업데이트합니다.
 
@@ -17,8 +17,10 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 - **Database**: PostgreSQL(+`pgvector` 확장) — SQLAlchemy 2.0, Alembic 마이그레이션
 - **Search/RAG**:
   - pgvector 코사인 거리(`<=>`, HNSW 인덱스) 기반 벡터 검색
-  - 결정적 해시 기반 임베딩 (HashEmbeddingProvider)
+  - 임베딩: Gemini API(`google-genai`, `GeminiEmbeddingProvider`) 또는 결정적 해시 기반 폴백(`HashEmbeddingProvider`)
+  - LLM 답변: Gemini API(`GeminiLLMProvider`) 또는 템플릿 기반 폴백(`TemplateLLMProvider`)
   - 하이브리드 검색 엔진 (Keyword + Vector)
+- **문서 파서**: OpenAPI/Swagger, Markdown, CSV (`app/services/parser/document_router.py`가 자동 판별)
 - **MCP**: `fastmcp` 서드파티 패키지
 - **Documentation**: Pydantic v2 (Schema/DTO)
 <!-- /AUTO-GENERATED -->
@@ -75,6 +77,9 @@ uv run alembic upgrade head
 | `DOCS_MCP_EMBEDDING_DIM` | No | 임베딩 벡터 차원 (pgvector 컬럼 생성 시 고정됨) | `256` |
 | `DOCS_MCP_HYBRID_ALPHA` | No | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만) | `0.4` |
 | `DOCS_MCP_LOG_LEVEL` | No | 로그 레벨 | `INFO` |
+| `DOCS_MCP_GEMINI_API_KEY` | No | Gemini API 키. 비워두면 LLM/임베딩이 각각 템플릿·해시 기반으로 폴백 | (없음) |
+| `DOCS_MCP_GEMINI_MODEL` | No | Gemini 답변 생성 모델 | `gemini-2.0-flash` |
+| `DOCS_MCP_GEMINI_EMBEDDING_MODEL` | No | Gemini 임베딩 모델 | `gemini-embedding-001` |
 <!-- /AUTO-GENERATED -->
 
 ### 4. 서버 실행
@@ -123,9 +128,9 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 <!-- AUTO-GENERATED: app/mcp_server.py 도구 docstring 기준 -->
 | 도구 | 설명 | 반환 필드 |
 |------|------|-----------|
-| `list_documents` | 등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다 | document_id, title, version, source_url, endpoints_count, indexed_at |
-| `register_document` | 신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다 | document_id, title, version, endpoints_count, chunks_count, status |
-| `search_endpoints` | 자연어로 API 엔드포인트를 검색한다 (하이브리드/키워드/벡터 모드) | endpoint_id, method, path, summary, score, snippet |
+| `list_documents` | 등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다 | document_id, title, version, doc_type, source_url, endpoints_count, indexed_at |
+| `register_document` | 신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별) | document_id, title, version, doc_type, endpoints_count, sections_count, chunks_count, status |
+| `search_endpoints` | 자연어로 API 엔드포인트 또는 문서 섹션을 검색한다 (하이브리드/키워드/벡터 모드) | endpoint_id, chunk_type, method, path, summary, score, snippet |
 | `query_rag` | API 명세에 대해 자연어로 질문하고 RAG 기반 답변을 받는다 | answer, citations(method/path/snippet), is_grounded |
 | `get_endpoint_details` | 특정 엔드포인트의 상세 정보와 호출 예시 코드를 조회한다 | endpoint_id, method, path, summary, description, example_code |
 
