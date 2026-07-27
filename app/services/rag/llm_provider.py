@@ -67,10 +67,10 @@ class TemplateLLMProvider:
 
 
 _SYSTEM_INSTRUCTION = (
-    "당신은 OpenAPI 문서 기반 RAG 어시스턴트입니다. "
-    "아래에 주어지는 '관련 API' 컨텍스트에 근거해서만 답변하세요. "
+    "당신은 문서 기반 RAG 어시스턴트입니다. "
+    "아래에 주어지는 '관련 자료' 컨텍스트에 근거해서만 답변하세요. "
     "컨텍스트에 없는 내용을 추측하거나 지어내지 마세요. "
-    "답변에는 근거로 사용한 API 의 method, path 를 명시하세요."
+    "API 엔드포인트가 근거라면 method 와 path 를, 문서 섹션이 근거라면 제목을 명시하세요."
 )
 
 _RETRYABLE_STATUS_CODES = {429, 503}
@@ -80,10 +80,11 @@ _RETRY_BASE_DELAY_SECONDS = 1.0
 
 def _build_prompt(question: str, context: list[CitationCtx]) -> str:
     """질문과 인용 컨텍스트를 Gemini 프롬프트 문자열로 조립한다."""
-    lines = [f"질문: {question}", "", "관련 API:"]
+    lines = [f"질문: {question}", "", "관련 자료:"]
     for idx, ctx in enumerate(context, start=1):
         summary = ctx.summary or "(요약 없음)"
-        lines.append(f"{idx}. {ctx.method} {ctx.path} — {summary} [{ctx.endpoint_id}]")
+        label = f"{ctx.method} {ctx.path} — {summary}" if ctx.method else summary
+        lines.append(f"{idx}. {label} [{ctx.endpoint_id}]")
         if ctx.snippet:
             lines.append(f"   근거: {ctx.snippet[:500]}")
     return "\n".join(lines)
