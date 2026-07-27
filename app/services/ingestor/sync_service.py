@@ -22,7 +22,6 @@ from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.indexer.indexer_service import IndexerService
-from app.services.indexer.vector_index import InMemoryVectorIndex
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.parser.document_router import detect_doc_type, parse_document
 
@@ -53,9 +52,8 @@ class SyncService:
         sync_history_repo: SyncHistoryRepository,
         indexer: IndexerService,
         fetcher: OpenAPIFetcher,
-        vector_index: InMemoryVectorIndex,
     ) -> None:
-        """세션·저장소·인덱서·fetcher·벡터 인덱스 의존성을 보관한다."""
+        """세션·저장소·인덱서·fetcher 의존성을 보관한다."""
         self._session = session
         self._document_repo = document_repo
         self._endpoint_repo = endpoint_repo
@@ -63,7 +61,6 @@ class SyncService:
         self._sync_history_repo = sync_history_repo
         self._indexer = indexer
         self._fetcher = fetcher
-        self._vector_index = vector_index
 
     def register(
         self,
@@ -102,7 +99,7 @@ class SyncService:
         self._document_repo.add(document)
         self._session.flush()
 
-        endpoints_count, chunks_count, deferred = self._indexer.index_document(
+        endpoints_count, chunks_count = self._indexer.index_document(
             document=document, parsed=parsed, is_reindex=False
         )
         schemas_count = len(parsed.schemas)
@@ -116,7 +113,6 @@ class SyncService:
             )
         )
         self._session.commit()
-        self._vector_index.upsert_many(deferred)
 
         return RegistrationResult(
             document=document,
@@ -176,8 +172,6 @@ class SyncService:
         parsed = parse_document(raw, resolved_doc_type, title_hint=None)
 
         # 기존 청크 + 엔드포인트/스키마/섹션/파라미터/응답/요청바디 전부 제거 (cascade)
-        existing_chunks = self._chunk_repo.list_by_document(document_id)
-        chunk_ids_to_remove = [c.id for c in existing_chunks]
         self._chunk_repo.delete_by_document(document_id)
         existing_endpoints = list(self._endpoint_repo.list_by_document(document_id))
         for ep in existing_endpoints:
@@ -192,7 +186,7 @@ class SyncService:
         document.version = parsed.version or document.version
         document.indexed_at = datetime.now(timezone.utc)
 
-        endpoints_count, chunks_count, deferred = self._indexer.index_document(
+        endpoints_count, chunks_count = self._indexer.index_document(
             document=document, parsed=parsed, is_reindex=True
         )
         schemas_count = len(parsed.schemas)
@@ -206,9 +200,6 @@ class SyncService:
             )
         )
         self._session.commit()
-        # commit 성공 후 이전 청크 제거, 새 청크 upsert
-        self._vector_index.delete_many(chunk_ids_to_remove)
-        self._vector_index.upsert_many(deferred)
 
         return RegistrationResult(
             document=document,
@@ -222,14 +213,12 @@ class SyncService:
         )
 
     def delete(self, document_id: str) -> None:
-        """문서를 DB 에서 제거하고 벡터 인덱스에서도 관련 청크를 제거한다."""
+        """문서를 DB 에서 제거한다. 소속 청크는 cascade 로 함께 삭제된다."""
         document = self._document_repo.get(document_id)
         if document is None:
             raise DocumentNotFoundError(document_id)
-        chunk_ids = [c.id for c in self._chunk_repo.list_by_document(document_id)]
         self._document_repo.delete(document)
         self._session.commit()
-        self._vector_index.delete_many(chunk_ids)
 
 
 def _new_id() -> str:

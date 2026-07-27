@@ -73,23 +73,23 @@ def test_resync_not_found_raises(services_factory) -> None:
 
 
 def test_delete_document_removes_chunks(
-    services_factory, sample_openapi_3: str, app_state
+    services_factory, sample_openapi_3: str
 ) -> None:
     services = services_factory()
     result = services.sync_service.register(
         source_url=None, raw_document=sample_openapi_3
     )
     document_id = result.document.id
-    # 벡터 인덱스에 데이터가 들어있음
-    assert app_state.vector_index.size() > 0
+    # 청크가 DB 에 저장돼 있음
+    assert len(services.chunk_repo.list_by_document(document_id)) > 0
 
     services2 = services_factory()
     services2.sync_service.delete(document_id)
 
     services3 = services_factory()
     assert services3.document_repo.get(document_id) is None
-    # 벡터 인덱스에서도 제거
-    assert app_state.vector_index.size() == 0
+    # cascade 로 청크도 함께 제거됨
+    assert services3.chunk_repo.list_by_document(document_id) == []
 
 
 def test_delete_missing_raises(services_factory) -> None:

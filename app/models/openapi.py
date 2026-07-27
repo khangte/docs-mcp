@@ -10,10 +10,13 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     Integer,
+    MetaData,
     String,
     Text,
     UniqueConstraint,
@@ -25,9 +28,19 @@ from sqlalchemy.orm import (
     relationship,
 )
 
+EMBEDDING_DIM = 256
+
+# public 스키마는 pgvector 확장 전용으로 남겨두고, 애플리케이션 테이블은
+# 전용 스키마(app)에 둔다. public 에 동일 이름 테이블이 있으면 SQLAlchemy
+# create_all() 의 checkfirst 가 search_path 상의 다른 스키마 테이블을
+# "이미 존재"로 오판해 DDL을 건너뛰는 문제를 방지한다.
+SCHEMA = "app"
+
 
 class Base(DeclarativeBase):
     """모든 ORM 모델의 베이스 클래스."""
+
+    metadata = MetaData(schema=SCHEMA)
 
 
 def _decode_json_dict(raw: str | None) -> dict[str, Any]:
@@ -266,31 +279,30 @@ class ApiSection(Base):
 
 
 class ApiChunk(Base):
-    """검색용 청크(텍스트 + 임베딩) ORM 모델."""
+    """검색용 청크(텍스트 + 임베딩) ORM 모델.
+
+    embedding 컬럼 차원은 pgvector 제약상 테이블 생성 시 고정된다.
+    EMBEDDING_DIM 변경 시 새 마이그레이션(컬럼 재생성 + 데이터 재색인)이 필요하다.
+    """
 
     __tablename__ = "api_chunk"
+    __table_args__ = (
+        Index(
+            "ix_api_chunk_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     document_id: Mapped[str] = mapped_column(ForeignKey("api_document.id", ondelete="CASCADE"))
     chunk_type: Mapped[str] = mapped_column(String(32), nullable=False)  # endpoint|schema
     ref_id: Mapped[str] = mapped_column(String(64), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
     document: Mapped[ApiDocument] = relationship(back_populates="chunks")
-
-    @property
-    def embedding(self) -> list[float]:
-        """저장된 embedding_json 을 float 리스트로 디코딩해 반환한다."""
-        try:
-            return [float(x) for x in json.loads(self.embedding_json or "[]")]
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return []
-
-    @embedding.setter
-    def embedding(self, value: list[float]) -> None:
-        """임베딩 벡터를 JSON 문자열로 직렬화해 저장한다."""
-        self.embedding_json = json.dumps(list(value))
 
 
 class DocumentSyncHistory(Base):
@@ -309,5 +321,9 @@ class DocumentSyncHistory(Base):
 
 
 def create_all(engine: Any) -> None:
-    """테이블 전체 생성 (초기 기동·테스트용)."""
+    """스키마와 테이블 전체 생성 (초기 기동·테스트용)."""
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
     Base.metadata.create_all(engine)

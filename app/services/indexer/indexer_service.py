@@ -1,10 +1,10 @@
 """문서 색인/재색인 오케스트레이션.
 
 입력: ParsedDocument + ApiDocument (DB 엔티티)
-출력: (endpoints_count, chunks_count, deferred_upserts)
+출력: (endpoints_count, chunks_count)
 
-deferred_upserts 는 호출자가 session.commit() 이후에 vector_index.upsert_many() 로
-적용해야 한다. 이렇게 해야 DB 롤백 시 인메모리 인덱스가 발산하지 않는다.
+임베딩은 ApiChunk.embedding(pgvector 컬럼)에 직접 저장되며, 호출자의
+session.commit() 과 함께 영속화된다.
 """
 
 from __future__ import annotations
@@ -52,11 +52,10 @@ class IndexerService:
 
     def index_document(
         self, document: ApiDocument, parsed: ParsedDocument, is_reindex: bool
-    ) -> tuple[int, int, list[tuple[str, list[float]]]]:
-        """엔드포인트/스키마/청크를 DB 에 저장하고 벡터 upsert 대기 목록을 반환한다.
+    ) -> tuple[int, int]:
+        """엔드포인트/스키마/청크를 DB 에 저장한다.
 
-        반환: (endpoints_count, chunks_count, deferred_upserts)
-        deferred_upserts 는 호출자가 commit() 성공 후 vector_index.upsert_many() 로 적용한다.
+        반환: (endpoints_count, chunks_count)
         재색인일 경우 호출자가 이전 청크/엔드포인트/스키마를 먼저 지워야 한다.
         """
         endpoint_ids: dict[tuple[str, str], str] = {}
@@ -103,21 +102,18 @@ class IndexerService:
         built_chunks = build_chunks(parsed, endpoint_ids, section_ids)
         texts = [c.text for c in built_chunks]
         embeddings = self._embedding_provider.embed(texts) if texts else []
-        deferred: list[tuple[str, list[float]]] = []
         for idx, (built, vector) in enumerate(zip(built_chunks, embeddings, strict=True)):
-            chunk_id = f"{document.id}:chunk:{idx}"
             chunk = ApiChunk(
-                id=chunk_id,
+                id=f"{document.id}:chunk:{idx}",
                 document_id=document.id,
                 chunk_type=built.chunk_type,
                 ref_id=built.ref_id,
                 text=built.text,
+                embedding=vector,
             )
-            chunk.embedding = vector
             self._chunk_repo.add(chunk)
-            deferred.append((chunk_id, vector))
 
-        return len(parsed.endpoints), len(built_chunks), deferred
+        return len(parsed.endpoints), len(built_chunks)
 
 
 def _to_endpoint_entity(

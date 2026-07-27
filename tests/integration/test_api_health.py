@@ -21,7 +21,6 @@ async def test_ready_returns_ok_when_empty(async_client) -> None:
     body = response.json()
     assert body["status"] == "ok"
     assert body["db"] is True
-    assert body["vector_index"] is True
     assert body["documents"] == 0
 
 

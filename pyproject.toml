@@ -16,6 +16,9 @@ dependencies = [
     "fastmcp>=3.3.1",
     "anyio>=4.0",
     "google-genai>=1.47.0",
+    "alembic>=1.13",
+    "pgvector>=0.3",
+    "psycopg[binary]>=3.1",
 ]
 
 [project.optional-dependencies]

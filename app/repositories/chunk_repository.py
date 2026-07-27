@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.openapi import ApiChunk, ApiEndpoint
+
+
+@dataclass
+class ChunkVectorHit:
+    """벡터 검색 결과 한 건(청크 ID + 코사인 유사도 점수)."""
+
+    chunk_id: str
+    score: float
 
 
 class ChunkRepository:
@@ -87,3 +96,29 @@ class ChunkRepository:
         # method/tag 없고 document_id 만 있는 경우
         stmt = select(ApiChunk).where(ApiChunk.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
+
+    def search_by_vector(
+        self,
+        query_vector: list[float],
+        top_k: int,
+        candidate_ids: set[str] | None = None,
+    ) -> list[ChunkVectorHit]:
+        """pgvector 코사인 거리(`<=>`)로 top_k 를 유사도 내림차순으로 반환한다.
+
+        `candidate_ids` 가 주어지면 그 안의 청크만 고려한다.
+        코사인 거리는 [0, 2] 범위이므로 유사도 = 1 - 거리 로 변환한다.
+        """
+        if top_k <= 0:
+            return []
+        distance = ApiChunk.embedding.cosine_distance(query_vector)
+        stmt = (
+            select(ApiChunk.id, distance.label("distance"))
+            .where(ApiChunk.embedding.is_not(None))
+        )
+        if candidate_ids is not None:
+            if not candidate_ids:
+                return []
+            stmt = stmt.where(ApiChunk.id.in_(candidate_ids))
+        stmt = stmt.order_by(distance.asc()).limit(top_k)
+        rows = self._session.execute(stmt).all()
+        return [ChunkVectorHit(chunk_id=cid, score=1.0 - float(dist)) for cid, dist in rows]
