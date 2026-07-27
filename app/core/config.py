@@ -40,6 +40,11 @@ class Settings:
             "DOCS_MCP_GEMINI_MODEL", "gemini-2.0-flash"
         )
     )
+    gemini_embedding_model: str = field(
+        default_factory=lambda: os.environ.get(
+            "DOCS_MCP_GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"
+        )
+    )
 
 
 def get_settings() -> Settings:

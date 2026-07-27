@@ -19,7 +19,11 @@ from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.examples.request_example_service import RequestExampleService
-from app.services.indexer.embedding_provider import EmbeddingProvider, HashEmbeddingProvider
+from app.services.indexer.embedding_provider import (
+    EmbeddingProvider,
+    GeminiEmbeddingProvider,
+    HashEmbeddingProvider,
+)
 from app.services.indexer.indexer_service import IndexerService
 from app.services.indexer.vector_index import InMemoryVectorIndex
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
@@ -56,7 +60,7 @@ class AppState:
             engine=engine,
             session_factory=create_session_factory(engine),
             vector_index=InMemoryVectorIndex(),
-            embedding_provider=HashEmbeddingProvider(dim=embedding_dim),
+            embedding_provider=_build_embedding_provider(embedding_dim),
             llm_provider=_build_llm_provider(),
             fetcher=fetcher,
             hybrid_alpha=hybrid_alpha,
@@ -69,6 +73,18 @@ def _build_llm_provider() -> LLMProvider:
     if not settings.gemini_api_key:
         return TemplateLLMProvider()
     return GeminiLLMProvider(api_key=settings.gemini_api_key, model=settings.gemini_model)
+
+
+def _build_embedding_provider(embedding_dim: int) -> EmbeddingProvider:
+    """Gemini API 키가 있으면 GeminiEmbeddingProvider, 없으면 HashEmbeddingProvider 로 폴백."""
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        return HashEmbeddingProvider(dim=embedding_dim)
+    return GeminiEmbeddingProvider(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_embedding_model,
+        dim=embedding_dim,
+    )
 
 
 @dataclass
