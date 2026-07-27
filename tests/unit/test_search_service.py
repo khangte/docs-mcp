@@ -86,3 +86,14 @@ def test_search_respects_top_k(services_factory, sample_openapi_3: str) -> None:
         "pet", SearchOptions(top_k=1, mode="hybrid")
     )
     assert len(results) <= 1
+
+
+def test_search_finds_markdown_section(services_factory) -> None:
+    raw = "# 팀 온보딩\n환영합니다\n## 개발 환경 설정\nuv sync 를 실행해 의존성을 설치하세요\n"
+    services, _ = _register(services_factory, raw)
+    results = services.search_service.search(
+        "개발 환경 설정 uv sync 의존성", SearchOptions(top_k=5, mode="hybrid")
+    )
+    assert results
+    assert results[0].chunk_type == "section"
+    assert results[0].summary == "개발 환경 설정"

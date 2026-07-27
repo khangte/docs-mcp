@@ -96,3 +96,31 @@ def test_delete_missing_raises(services_factory) -> None:
     services = services_factory()
     with pytest.raises(DocumentNotFoundError):
         services.sync_service.delete("missing")
+
+
+def test_register_markdown_document_creates_sections(services_factory) -> None:
+    services = services_factory()
+    raw = "# 팀 온보딩\n환영합니다\n## 개발 환경 설정\nuv sync 를 실행하세요\n"
+    result = services.sync_service.register(source_url=None, raw_document=raw)
+    assert result.status == "registered"
+    assert result.document.doc_type == "markdown"
+    assert result.sections_count == 2
+    assert result.endpoints_count == 0
+
+
+def test_register_csv_document_creates_sections(services_factory) -> None:
+    services = services_factory()
+    raw = "name,role\nAlice,Engineer\nBob,Designer\n"
+    result = services.sync_service.register(source_url=None, raw_document=raw)
+    assert result.status == "registered"
+    assert result.document.doc_type == "csv"
+    assert result.sections_count == 2
+
+
+def test_register_with_explicit_doc_type_overrides_detection(services_factory) -> None:
+    services = services_factory()
+    raw = "just plain text, not obviously any type"
+    result = services.sync_service.register(
+        source_url=None, raw_document=raw, doc_type="markdown"
+    )
+    assert result.document.doc_type == "markdown"

@@ -21,6 +21,7 @@ from app.models.openapi import (
     ApiRequestBody,
     ApiResponse,
     ApiSchema,
+    ApiSection,
 )
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.endpoint_repository import EndpointRepository
@@ -86,7 +87,20 @@ class IndexerService:
             )
             self._endpoint_repo.add_schema(schema_entity)
 
-        built_chunks = build_chunks(parsed, endpoint_ids)
+        section_ids: dict[int, str] = {}
+        for idx, parsed_section in enumerate(parsed.sections):
+            section_id = f"{document.id}:section:{idx}"
+            section_ids[idx] = section_id
+            section_entity = ApiSection(
+                id=section_id,
+                document_id=document.id,
+                title=parsed_section.title,
+                content=parsed_section.content,
+                order_index=idx,
+            )
+            self._endpoint_repo.add_section(section_entity)
+
+        built_chunks = build_chunks(parsed, endpoint_ids, section_ids)
         texts = [c.text for c in built_chunks]
         embeddings = self._embedding_provider.embed(texts) if texts else []
         deferred: list[tuple[str, list[float]]] = []

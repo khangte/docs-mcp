@@ -14,6 +14,7 @@ class RegisterDocumentRequest(BaseModel):
     source_url: str | None = None
     raw_document: str | None = None
     title_override: str | None = None
+    doc_type: str | None = None  # openapi|markdown|csv, 생략 시 자동 판별
 
     @model_validator(mode="after")
     def _xor_source(self) -> "RegisterDocumentRequest":
@@ -32,8 +33,10 @@ class RegisterDocumentResponse(BaseModel):
     title: str
     version: str
     source_url: str | None
+    doc_type: str
     endpoints_count: int
     schemas_count: int
+    sections_count: int
     chunks_count: int
     content_hash: str
     indexed_at: datetime

@@ -76,13 +76,22 @@ class ParsedSchema:
 
 
 @dataclass
+class ParsedSection:
+    """파싱된 텍스트 문서(Markdown/CSV 등)의 제목+본문 섹션."""
+
+    title: str
+    content: str
+
+
+@dataclass
 class ParsedDocument:
-    """파싱된 OpenAPI 문서 중간 표현(엔드포인트·스키마 묶음)."""
+    """파싱된 문서 중간 표현(엔드포인트·스키마 또는 섹션 묶음)."""
 
     title: str
     version: str
     endpoints: list[ParsedEndpoint] = field(default_factory=list)
     schemas: list[ParsedSchema] = field(default_factory=list)
+    sections: list[ParsedSection] = field(default_factory=list)
 
 
 _HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}

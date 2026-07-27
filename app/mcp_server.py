@@ -43,7 +43,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
 
     @mcp.tool()
     async def list_documents() -> list[dict[str, Any]]:
-        """등록된 모든 OpenAPI 문서의 요약 목록을 반환한다."""
+        """등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다."""
         def _sync() -> list[dict[str, Any]]:
             with managed_session(session_factory) as session:
                 repo = DocumentRepository(session)
@@ -53,6 +53,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
                         "document_id": d.id,
                         "title": d.title,
                         "version": d.version,
+                        "doc_type": d.doc_type,
                         "source_url": d.source_url,
                         "endpoints_count": len(d.endpoints),
                         "indexed_at": d.indexed_at.isoformat() if d.indexed_at else None,
@@ -66,8 +67,12 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         source_url: str | None = None,
         raw_document: str | dict[str, Any] | None = None,
         title_override: str | None = None,
+        doc_type: str | None = None,
     ) -> dict[str, Any]:
-        """신규 OpenAPI 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다."""
+        """신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다.
+
+        doc_type: "openapi" | "markdown" | "csv" 중 하나, 생략 시 자동 판별한다.
+        """
         if isinstance(raw_document, dict):
             raw_document = json.dumps(raw_document)
         raw_doc_captured = raw_document
@@ -78,13 +83,16 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
                     source_url=source_url,
                     raw_document=raw_doc_captured,
                     title_override=title_override,
+                    doc_type=doc_type,
                 )
                 doc = result.document
                 return {
                     "document_id": doc.id,
                     "title": doc.title,
                     "version": doc.version,
+                    "doc_type": doc.doc_type,
                     "endpoints_count": result.endpoints_count,
+                    "sections_count": result.sections_count,
                     "chunks_count": result.chunks_count,
                     "status": result.status,
                 }
@@ -98,7 +106,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         mode: str = "hybrid",
         document_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        """자연어로 API 엔드포인트를 검색한다. 하이브리드/키워드/벡터 모드를 지원한다."""
+        """자연어로 API 엔드포인트 또는 문서 섹션을 검색한다. 하이브리드/키워드/벡터 모드를 지원한다."""
         def _sync() -> list[dict[str, Any]]:
             def _inner(bundle):
                 options = SearchOptions(top_k=top_k, mode=mode, document_id=document_id)
@@ -106,6 +114,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
                 return [
                     {
                         "endpoint_id": r.endpoint_id,
+                        "chunk_type": r.chunk_type,
                         "method": r.method,
                         "path": r.path,
                         "summary": r.summary,

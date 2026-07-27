@@ -62,6 +62,7 @@ class ApiDocument(Base):
     source_url: Mapped[str | None] = mapped_column(String(1024), unique=True, nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    doc_type: Mapped[str] = mapped_column(String(32), nullable=False, default="openapi")  # openapi|markdown|csv
     content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
@@ -75,6 +76,10 @@ class ApiDocument(Base):
         cascade="all, delete-orphan",
     )
     chunks: Mapped[list["ApiChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+    sections: Mapped[list["ApiSection"]] = relationship(
         back_populates="document",
         cascade="all, delete-orphan",
     )
@@ -244,6 +249,20 @@ class ApiSchema(Base):
     def schema(self) -> dict[str, Any]:
         """저장된 json_schema 를 dict 로 디코딩해 반환한다."""
         return _decode_json_dict(self.json_schema)
+
+
+class ApiSection(Base):
+    """텍스트 문서(Markdown/CSV 등)의 제목+본문 단위 ORM 모델."""
+
+    __tablename__ = "api_section"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    document_id: Mapped[str] = mapped_column(ForeignKey("api_document.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    document: Mapped[ApiDocument] = relationship(back_populates="sections")
 
 
 class ApiChunk(Base):

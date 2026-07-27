@@ -16,7 +16,7 @@ from app.core.errors import (
     DuplicateDocumentError,
     ValidationError,
 )
-from app.models.openapi import ApiDocument, ApiSchema, DocumentSyncHistory
+from app.models.openapi import ApiDocument, ApiSchema, ApiSection, DocumentSyncHistory
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
@@ -24,7 +24,7 @@ from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.indexer.indexer_service import IndexerService
 from app.services.indexer.vector_index import InMemoryVectorIndex
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
-from app.services.parser.openapi_parser import parse_document
+from app.services.parser.document_router import detect_doc_type, parse_document
 
 
 @dataclass
@@ -34,6 +34,7 @@ class RegistrationResult:
     document: ApiDocument
     endpoints_count: int
     schemas_count: int
+    sections_count: int
     chunks_count: int
     content_hash: str
     status: str  # "registered" | "reindexed" | "skipped"
@@ -70,6 +71,7 @@ class SyncService:
         source_url: str | None,
         raw_document: str | None,
         title_override: str | None = None,
+        doc_type: str | None = None,
     ) -> RegistrationResult:
         """원본 URL 또는 원문을 받아 수집·파싱·색인하고 신규 문서로 등록한다."""
         if (source_url is None) == (raw_document is None):
@@ -83,7 +85,8 @@ class SyncService:
         else:
             raw = raw_document or ""
 
-        parsed = parse_document(raw)
+        resolved_doc_type = doc_type or detect_doc_type(raw, source_url)
+        parsed = parse_document(raw, resolved_doc_type, title_hint=title_override)
         content_hash = _hash(raw)
 
         document = ApiDocument(
@@ -91,6 +94,7 @@ class SyncService:
             source_url=source_url,
             title=title_override or parsed.title,
             version=parsed.version,
+            doc_type=resolved_doc_type,
             content_hash=content_hash,
             raw_text=raw,
             indexed_at=datetime.now(timezone.utc),
@@ -102,6 +106,7 @@ class SyncService:
             document=document, parsed=parsed, is_reindex=False
         )
         schemas_count = len(parsed.schemas)
+        sections_count = len(parsed.sections)
 
         self._sync_history_repo.add(
             DocumentSyncHistory(
@@ -117,6 +122,7 @@ class SyncService:
             document=document,
             endpoints_count=endpoints_count,
             schemas_count=schemas_count,
+            sections_count=sections_count,
             chunks_count=chunks_count,
             content_hash=content_hash,
             status="registered",
@@ -154,19 +160,22 @@ class SyncService:
             self._session.commit()
             chunks = self._chunk_repo.list_by_document(document_id)
             endpoints = self._endpoint_repo.list_by_document(document_id)
+            sections = self._endpoint_repo.list_sections_by_document(document_id)
             return RegistrationResult(
                 document=document,
                 endpoints_count=len(endpoints),
                 schemas_count=0,
+                sections_count=len(sections),
                 chunks_count=len(chunks),
                 content_hash=new_hash,
                 previous_hash=previous_hash,
                 status="skipped",
             )
 
-        parsed = parse_document(raw)
+        resolved_doc_type = document.doc_type or detect_doc_type(raw, document.source_url)
+        parsed = parse_document(raw, resolved_doc_type, title_hint=None)
 
-        # 기존 청크 + 엔드포인트/스키마/파라미터/응답/요청바디 전부 제거 (cascade)
+        # 기존 청크 + 엔드포인트/스키마/섹션/파라미터/응답/요청바디 전부 제거 (cascade)
         existing_chunks = self._chunk_repo.list_by_document(document_id)
         chunk_ids_to_remove = [c.id for c in existing_chunks]
         self._chunk_repo.delete_by_document(document_id)
@@ -174,6 +183,7 @@ class SyncService:
         for ep in existing_endpoints:
             self._session.delete(ep)
         self._session.execute(sa_delete(ApiSchema).where(ApiSchema.document_id == document_id))
+        self._session.execute(sa_delete(ApiSection).where(ApiSection.document_id == document_id))
         self._session.flush()
 
         document.content_hash = new_hash
@@ -186,6 +196,7 @@ class SyncService:
             document=document, parsed=parsed, is_reindex=True
         )
         schemas_count = len(parsed.schemas)
+        sections_count = len(parsed.sections)
 
         self._sync_history_repo.add(
             DocumentSyncHistory(
@@ -203,6 +214,7 @@ class SyncService:
             document=document,
             endpoints_count=endpoints_count,
             schemas_count=schemas_count,
+            sections_count=sections_count,
             chunks_count=chunks_count,
             content_hash=new_hash,
             previous_hash=previous_hash,

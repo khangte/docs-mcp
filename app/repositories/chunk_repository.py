@@ -50,18 +50,11 @@ class ChunkRepository:
         """method/tag/document_id SQL 필터를 적용해 후보 청크를 반환한다.
 
         - endpoint 청크: 조건에 맞는 ApiEndpoint 와 JOIN 해 필터링
-        - schema 청크: method/tag 조건 없이 document_id 만 적용
+        - schema/section 청크: method/tag 조건 없이 document_id 만 적용
         필터가 모두 None 이면 전체 청크를 반환한다.
         """
         if method is None and tag is None and document_id is None:
             return self.list_all()
-
-        conditions_endpoint = []
-        conditions_schema = []
-
-        if document_id is not None:
-            conditions_endpoint.append(ApiChunk.document_id == document_id)
-            conditions_schema.append(ApiChunk.document_id == document_id)
 
         if method is not None or tag is not None:
             # endpoint 청크는 ApiEndpoint JOIN 필터
@@ -83,16 +76,14 @@ class ChunkRepository:
                 )
             endpoint_chunks = list(self._session.execute(endpoint_stmt).scalars().all())
 
-            # schema 청크는 method/tag 조건 없이 document_id 만 적용
-            schema_stmt = select(ApiChunk).where(ApiChunk.chunk_type == "schema")
+            # schema/section 청크는 method/tag 조건 없이 document_id 만 적용
+            other_stmt = select(ApiChunk).where(ApiChunk.chunk_type.in_(("schema", "section")))
             if document_id is not None:
-                schema_stmt = schema_stmt.where(ApiChunk.document_id == document_id)
-            schema_chunks = list(self._session.execute(schema_stmt).scalars().all())
+                other_stmt = other_stmt.where(ApiChunk.document_id == document_id)
+            other_chunks = list(self._session.execute(other_stmt).scalars().all())
 
-            return endpoint_chunks + schema_chunks
+            return endpoint_chunks + other_chunks
 
         # method/tag 없고 document_id 만 있는 경우
-        stmt = select(ApiChunk)
-        for cond in conditions_schema:
-            stmt = stmt.where(cond)
+        stmt = select(ApiChunk).where(ApiChunk.document_id == document_id)
         return self._session.execute(stmt).scalars().all()

@@ -46,12 +46,11 @@ class TemplateLLMProvider:
         """컨텍스트가 비면 안내 문구를, 있으면 결정적 템플릿으로 답변을 만들어 반환한다."""
         if not context:
             return LLMAnswer(text=NO_RESULT_MESSAGE, is_grounded=False)
-        lines = [f"질문: {question}", "관련 API:"]
+        lines = [f"질문: {question}", "관련 자료:"]
         for idx, ctx in enumerate(context, start=1):
             summary = ctx.summary or "(요약 없음)"
-            lines.append(
-                f"{idx}. {ctx.method} {ctx.path} — {summary} [{ctx.endpoint_id}]"
-            )
+            label = f"{ctx.method} {ctx.path} — {summary}" if ctx.method else summary
+            lines.append(f"{idx}. {label} [{ctx.endpoint_id}]")
             if ctx.snippet:
                 lines.append(f"   근거: {ctx.snippet[:140]}")
         return LLMAnswer(text="\n".join(lines), is_grounded=True)

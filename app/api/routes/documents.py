@@ -28,6 +28,7 @@ def register_document(
         source_url=body.source_url,
         raw_document=body.raw_document,
         title_override=body.title_override,
+        doc_type=body.doc_type,
     )
     doc = result.document
     return RegisterDocumentResponse(
@@ -35,8 +36,10 @@ def register_document(
         title=doc.title,
         version=doc.version,
         source_url=doc.source_url,
+        doc_type=doc.doc_type,
         endpoints_count=result.endpoints_count,
         schemas_count=result.schemas_count,
+        sections_count=result.sections_count,
         chunks_count=result.chunks_count,
         content_hash=result.content_hash,
         indexed_at=doc.indexed_at,

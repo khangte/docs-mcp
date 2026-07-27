@@ -14,10 +14,14 @@ from app.services.search.vector_search import VectorSearch
 
 @dataclass
 class SearchResultItem:
-    """검색 결과 항목(엔드포인트 메타 + 점수 + 스니펫)."""
+    """검색 결과 항목(엔드포인트/섹션 메타 + 점수 + 스니펫).
 
-    endpoint_id: str
+    엔드포인트 결과는 method/path/summary 를, 섹션 결과는 title 을 채운다.
+    """
+
+    endpoint_id: str  # endpoint 결과: endpoint_id / section 결과: section_id
     document_id: str
+    chunk_type: str  # "endpoint" | "section"
     method: str
     path: str
     summary: str
@@ -81,27 +85,48 @@ class SearchService:
 
         results: list[SearchResultItem] = []
         for chunk in candidate_chunks:
-            if chunk.chunk_type != "endpoint":
-                continue
-            endpoint = self._endpoint_repo.get(chunk.ref_id)
-            if endpoint is None:
-                continue
             k_score = float(keyword_hits.get(chunk.id, 0.0))
             v_score = float(vector_hits.get(chunk.id, 0.0))
             combined = _combine_score(k_score, v_score, options.mode, self._alpha)
-            results.append(
-                SearchResultItem(
-                    endpoint_id=endpoint.id,
-                    document_id=endpoint.document_id,
-                    method=endpoint.method,
-                    path=endpoint.path,
-                    summary=endpoint.summary,
-                    score=combined,
-                    keyword_score=k_score if options.mode != "vector" else 0.0,
-                    vector_score=v_score if options.mode != "keyword" else 0.0,
-                    snippet=_snippet(chunk),
+            keyword_score = k_score if options.mode != "vector" else 0.0
+            vector_score = v_score if options.mode != "keyword" else 0.0
+
+            if chunk.chunk_type == "endpoint":
+                endpoint = self._endpoint_repo.get(chunk.ref_id)
+                if endpoint is None:
+                    continue
+                results.append(
+                    SearchResultItem(
+                        endpoint_id=endpoint.id,
+                        document_id=endpoint.document_id,
+                        chunk_type="endpoint",
+                        method=endpoint.method,
+                        path=endpoint.path,
+                        summary=endpoint.summary,
+                        score=combined,
+                        keyword_score=keyword_score,
+                        vector_score=vector_score,
+                        snippet=_snippet(chunk),
+                    )
                 )
-            )
+            elif chunk.chunk_type == "section":
+                section = self._endpoint_repo.get_section(chunk.ref_id)
+                if section is None:
+                    continue
+                results.append(
+                    SearchResultItem(
+                        endpoint_id=section.id,
+                        document_id=section.document_id,
+                        chunk_type="section",
+                        method="",
+                        path="",
+                        summary=section.title,
+                        score=combined,
+                        keyword_score=keyword_score,
+                        vector_score=vector_score,
+                        snippet=_snippet(chunk),
+                    )
+                )
         results = [r for r in results if r.score > 0.0]
         results.sort(key=lambda r: r.score, reverse=True)
         return results[: options.top_k]

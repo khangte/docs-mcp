@@ -4,15 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.services.parser.openapi_parser import ParsedDocument, ParsedEndpoint, ParsedSchema
+from app.services.parser.openapi_parser import (
+    ParsedDocument,
+    ParsedEndpoint,
+    ParsedSchema,
+    ParsedSection,
+)
 
 
 @dataclass
 class BuiltChunk:
     """청크 텍스트 빌드 결과(타입/참조ID/텍스트)."""
 
-    chunk_type: str  # "endpoint" | "schema"
-    ref_id: str  # endpoint_id 또는 schema_name
+    chunk_type: str  # "endpoint" | "schema" | "section"
+    ref_id: str  # endpoint_id, schema_name 또는 section_id
     text: str
 
 
@@ -60,12 +65,25 @@ def build_schema_chunk_text(schema: ParsedSchema) -> str:
     return "\n".join(lines)
 
 
+def build_section_chunk_text(section: ParsedSection) -> str:
+    """섹션 단위 청크 텍스트.
+
+    포맷:
+        # TITLE
+        CONTENT
+    """
+    return f"# {section.title}\n{section.content}" if section.title else section.content
+
+
 def build_chunks(
-    document: ParsedDocument, endpoint_ids: dict[tuple[str, str], str]
+    document: ParsedDocument,
+    endpoint_ids: dict[tuple[str, str], str],
+    section_ids: dict[int, str] | None = None,
 ) -> list[BuiltChunk]:
-    """문서 내 모든 엔드포인트/스키마에 대해 청크를 생성한다.
+    """문서 내 모든 엔드포인트/스키마/섹션에 대해 청크를 생성한다.
 
     `endpoint_ids` 는 (method, path) → endpoint_id 매핑.
+    `section_ids` 는 섹션 순서 인덱스 → section_id 매핑.
     """
 
     chunks: list[BuiltChunk] = []
@@ -86,6 +104,17 @@ def build_chunks(
                 chunk_type="schema",
                 ref_id=schema.name,
                 text=build_schema_chunk_text(schema),
+            )
+        )
+    for idx, section in enumerate(document.sections):
+        sid = (section_ids or {}).get(idx)
+        if not sid:
+            continue
+        chunks.append(
+            BuiltChunk(
+                chunk_type="section",
+                ref_id=sid,
+                text=build_section_chunk_text(section),
             )
         )
     return chunks
