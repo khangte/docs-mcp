@@ -2,17 +2,32 @@
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import Iterator
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import AppState
 from app.core.db import create_db_engine, create_session_factory
 from app.main import create_app
-from app.models.openapi import create_all
+from app.models.openapi import EMBEDDING_DIM, create_all
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from tests.fixtures.samples import openapi_3_json, swagger_2_json
+
+_ADMIN_DATABASE_URL = os.environ.get(
+    "DOCS_MCP_TEST_DATABASE_URL",
+    "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp",
+)
+
+
+def _with_database(url: str, database: str) -> str:
+    """URL 의 database 이름만 교체한다."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, f"/{database}", parts.query, parts.fragment))
 
 
 @pytest.fixture()
@@ -26,25 +41,40 @@ def sample_swagger_2() -> str:
 
 
 @pytest.fixture()
-def sqlite_engine():
-    # StaticPool + in-memory: 모든 세션이 동일 DB 연결을 공유하게 만든다
-    # (sqlite3 는 커넥션마다 별도 메모리 DB 를 갖기 때문에 필요).
-    from sqlalchemy.pool import StaticPool
+def pg_engine():
+    """테스트마다 완전히 별도의 database 를 만들어 postgres(+pgvector)에 연결하는 엔진.
 
-    engine = create_db_engine(
-        "sqlite+pysqlite:///:memory:",
-        poolclass=StaticPool,
-    )
+    같은 database 안에서 스키마만 나누면 SQLAlchemy create_all() 의 존재 확인
+    (checkfirst) 이 다른 스키마(예: public)의 동일 이름 테이블을 "이미 존재"로
+    오판해 DDL을 건너뛸 수 있다. database 단위로 분리하면 이 문제가 원천 차단된다.
+    """
+    db_name = f"test_{uuid.uuid4().hex[:12]}"
+    admin_engine = create_db_engine(_ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
+    with admin_engine.connect() as conn:
+        conn.execute(text(f'CREATE DATABASE "{db_name}"'))
+    admin_engine.dispose()
+
+    test_url = _with_database(_ADMIN_DATABASE_URL, db_name)
+    setup_engine = create_db_engine(test_url)
+    with setup_engine.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    setup_engine.dispose()
+
+    engine = create_db_engine(test_url)
     create_all(engine)
     try:
         yield engine
     finally:
         engine.dispose()
+        admin_engine = create_db_engine(_ADMIN_DATABASE_URL, isolation_level="AUTOCOMMIT")
+        with admin_engine.connect() as conn:
+            conn.execute(text(f'DROP DATABASE "{db_name}" WITH (FORCE)'))
+        admin_engine.dispose()
 
 
 @pytest.fixture()
-def session_factory(sqlite_engine) -> sessionmaker[Session]:
-    return create_session_factory(sqlite_engine)
+def session_factory(pg_engine) -> sessionmaker[Session]:
+    return create_session_factory(pg_engine)
 
 
 @pytest.fixture()
@@ -62,11 +92,11 @@ def in_memory_fetcher() -> InMemoryFetcher:
 
 
 @pytest.fixture()
-def app_state(sqlite_engine, in_memory_fetcher):
+def app_state(pg_engine, in_memory_fetcher):
     state = AppState.from_engine(
-        engine=sqlite_engine,
+        engine=pg_engine,
         fetcher=in_memory_fetcher,
-        embedding_dim=128,
+        embedding_dim=EMBEDDING_DIM,
         hybrid_alpha=0.4,
     )
     return state

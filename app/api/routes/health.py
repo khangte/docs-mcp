@@ -22,7 +22,10 @@ def health() -> dict[str, str]:
 
 @router.get("/ready")
 def ready(state: AppState = Depends(get_app_state)) -> dict[str, Any]:
-    """DB 와 벡터 인덱스 동작 여부를 확인해 레디니스 상태를 반환한다."""
+    """DB 동작 여부를 확인해 레디니스 상태를 반환한다.
+
+    벡터 검색은 pgvector 로 DB 에 직접 쿼리하므로 별도 헬스체크가 없다.
+    """
     db_ok = False
     documents = 0
     try:
@@ -36,11 +39,9 @@ def ready(state: AppState = Depends(get_app_state)) -> dict[str, Any]:
             session.close()
     except Exception:
         db_ok = False
-    vector_ok = True  # 인메모리 구조는 객체가 살아있으면 OK
-    overall = "ok" if db_ok and vector_ok else "degraded"
+    overall = "ok" if db_ok else "degraded"
     return {
         "status": overall,
         "db": db_ok,
-        "vector_index": vector_ok,
         "documents": documents,
     }

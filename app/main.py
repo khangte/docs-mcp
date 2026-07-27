@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.dependencies import AppState, rebuild_vector_index
+from app.api.dependencies import AppState
 from app.api.routes import documents as documents_routes
 from app.api.routes import endpoints as endpoints_routes
 from app.api.routes import health as health_routes
@@ -92,7 +92,6 @@ def create_app(
             )
         else:
             app_state = bootstrap_app_state(cfg)
-        rebuild_vector_index(app_state)
 
     app = FastAPI(title="docs-mcp OpenAPI RAG")
     app.state.app_state = app_state

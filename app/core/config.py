@@ -20,7 +20,7 @@ class Settings:
     database_url: str = field(
         default_factory=lambda: os.environ.get(
             "DOCS_MCP_DATABASE_URL",
-            "sqlite+pysqlite:///./docs_mcp.db",
+            "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp",
         )
     )
     embedding_dim: int = field(

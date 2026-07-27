@@ -1,6 +1,6 @@
 """FastAPI 의존성 컨테이너.
 
-앱 시작 시 만들어진 엔진/벡터 인덱스/프로바이더를 요청 범위 객체와 합쳐 서비스 인스턴스를 만든다.
+앱 시작 시 만들어진 엔진/프로바이더를 요청 범위 객체와 합쳐 서비스 인스턴스를 만든다.
 테스트에서는 `app.dependency_overrides` 로 교체할 수 있게 함수 인터페이스로 제공.
 """
 
@@ -20,7 +20,6 @@ from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import EmbeddingProvider, HashEmbeddingProvider
 from app.services.indexer.indexer_service import IndexerService
-from app.services.indexer.vector_index import InMemoryVectorIndex
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
 from app.services.rag.llm_provider import LLMProvider, TemplateLLMProvider
@@ -32,11 +31,10 @@ from app.services.search.vector_search import VectorSearch
 
 @dataclass
 class AppState:
-    """앱 전역 상태(엔진/벡터 인덱스/프로바이더 등)를 보관하는 컨테이너."""
+    """앱 전역 상태(엔진/프로바이더 등)를 보관하는 컨테이너."""
 
     engine: Engine
     session_factory: sessionmaker[Session]
-    vector_index: InMemoryVectorIndex
     embedding_provider: EmbeddingProvider
     llm_provider: LLMProvider
     fetcher: OpenAPIFetcher
@@ -50,11 +48,10 @@ class AppState:
         embedding_dim: int = 256,
         hybrid_alpha: float = 0.4,
     ) -> "AppState":
-        """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·인덱스·프로바이더)을 채운 AppState 를 만든다."""
+        """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다."""
         return cls(
             engine=engine,
             session_factory=create_session_factory(engine),
-            vector_index=InMemoryVectorIndex(),
             embedding_provider=HashEmbeddingProvider(dim=embedding_dim),
             llm_provider=TemplateLLMProvider(),
             fetcher=fetcher,
@@ -101,10 +98,9 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             sync_history_repo=sync_history_repo,
             indexer=indexer,
             fetcher=state.fetcher,
-            vector_index=state.vector_index,
         )
         keyword_search = KeywordSearch(chunk_repo)
-        vector_search = VectorSearch(state.embedding_provider, state.vector_index)
+        vector_search = VectorSearch(state.embedding_provider, chunk_repo)
         search_service = SearchService(
             chunk_repo=chunk_repo,
             endpoint_repo=endpoint_repo,
@@ -127,21 +123,3 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         )
     finally:
         session.close()
-
-
-def rebuild_vector_index(state: AppState) -> None:
-    """앱 기동 시 DB 에 있는 청크로 인메모리 인덱스 복원.
-
-    replace_all 로 원자적 교체를 수행해 clear→upsert 사이의 빈 구간을 없앤다.
-    """
-    session = state.session_factory()
-    try:
-        chunk_repo = ChunkRepository(session)
-        pairs = [
-            (chunk.id, chunk.embedding)
-            for chunk in chunk_repo.list_all()
-            if chunk.embedding
-        ]
-    finally:
-        session.close()
-    state.vector_index.replace_all(pairs)
