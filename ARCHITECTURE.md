@@ -1,6 +1,6 @@
 # 아키텍처 문서 (Simplified)
 
-본 문서는 `docs-mcp`의 핵심 설계 원칙과 구조를 정의한다. 상세 기획은 `docs/product-specs/plan.md`를 참고한다.
+본 문서는 `docs-mcp`의 핵심 설계 원칙과 구조를 정의한다. 상세 기획은 `docs/product_specs/plan.md`를 참고한다.
 
 ## 1. 설계 원칙
 - **저장형 검색**: OpenAPI 문서를 실시간 프록시하지 않고, 로컬 DB(PostgreSQL + pgvector)에 색인하여 검색한다.
@@ -41,8 +41,8 @@
 ## 3. 레이어 정의 및 의존성
 
 ### 3-1. 레이어 역할
-- `entry points`: `src/main.py` (FastAPI), `src/mcp_server.py` (MCP Server)
-- `api`: HTTP 라우터 및 의존성 주입 (`src/api/routes`)
+- `entry points`: `app/main.py` (FastAPI), `app/mcp_server.py` (MCP Server)
+- `api`: HTTP 라우터 및 의존성 주입 (`app/api/routes`)
 - `services`: 도메인 로직 (수집, 파싱, 색인, 검색, 예시 생성)
 - `repositories`: DB 접근 (SQLAlchemy)
 - `models/schemas`: 데이터 모델 및 DTO (Pydantic)
@@ -61,9 +61,9 @@
 4. **Store**: PostgreSQL 및 pgvector에 최종 저장
 
 ### 4-2. 검색 (Hybrid Search)
-- **Vector Search**: pgvector(cosine similarity)를 이용한 의미론적 검색
-- **Keyword Search**: Full-text search(tsvector)를 이용한 키워드 매칭
-- **Rerank**: 두 결과를 가중 합산하여 최종 순위 결정
+- **Vector Search**: pgvector(cosine similarity, HNSW 인덱스)를 이용한 의미론적 검색
+- **Keyword Search**: 토큰 매칭(현재는 애플리케이션 레벨 구현, tsvector 전환은 TODO) 기반 키워드 검색
+- **Rerank**: 두 결과를 가중 합산(`hybrid_alpha`)하여 최종 순위 결정
 
 ## 5. MCP 도구 계약 (Interface)
 1. `search_endpoints`: 자연어 질의 기반 API 검색 (Hybrid)
@@ -73,9 +73,9 @@
 5. `register_document`: 신규 OpenAPI 문서 등록 및 색인
 
 ## 6. 기술 스택 및 보안
-- **Language/Framework**: Python 3.12+, FastAPI
-- **Database**: PostgreSQL + pgvector (HNSW index)
-- **Auth**: 관리 API는 API Key(`X-API-Key`) 인증, MCP는 읽기 전용으로 제한
+- **Language/Framework**: Python 3.11+, FastAPI, `fastmcp`
+- **Database**: PostgreSQL + pgvector (HNSW index), Alembic 마이그레이션
+- **Auth**: 현재 관리 API/MCP 모두 별도 인증 없음(로컬/신뢰 환경 전제, API Key 인증은 TODO)
 - **Observability**: JSON 구조화 로깅 기반 (trace_id 추적)
 
 ## 7. ADR (Architecture Decision Records)
