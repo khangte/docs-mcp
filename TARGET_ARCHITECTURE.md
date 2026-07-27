@@ -1,5 +1,10 @@
 # docs-mcp 목표 아키텍처 설계
 
+> **상태: 완료 (historical)** — 아래 Phase 1~5는 모두 적용되었다. 이후 pgvector
+> 전환(ADR-0002 실현)으로 `InMemoryVectorIndex` 자체가 제거되었으므로,
+> 이 문서의 "SQLite + sync SQLAlchemy 유지"·"vector_index RLock" 관련 내용은
+> 더 이상 유효하지 않다. 현재 아키텍처는 `ARCHITECTURE.md`를 참고할 것.
+
 두 에이전트(아키텍처 설계 + 리스크 검토)의 결과를 교차 검증하여 통합한 문서입니다.
 
 ---

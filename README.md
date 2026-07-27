@@ -12,13 +12,16 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 
 ## 기술 스택
 
-- **Backend**: Python 3.10+, FastAPI
-- **Database**: SQLAlchemy 2.0 (기본 SQLite)
+<!-- AUTO-GENERATED: pyproject.toml, docker-compose.yml, app/core/config.py 기준 -->
+- **Backend**: Python 3.11+, FastAPI
+- **Database**: PostgreSQL(+`pgvector` 확장) — SQLAlchemy 2.0, Alembic 마이그레이션
 - **Search/RAG**:
-  - 인메모리 벡터 인덱스 (InMemoryVectorIndex)
+  - pgvector 코사인 거리(`<=>`, HNSW 인덱스) 기반 벡터 검색
   - 결정적 해시 기반 임베딩 (HashEmbeddingProvider)
   - 하이브리드 검색 엔진 (Keyword + Vector)
+- **MCP**: `fastmcp` 서드파티 패키지
 - **Documentation**: Pydantic v2 (Schema/DTO)
+<!-- /AUTO-GENERATED -->
 
 ## 프로젝트 구조
 
@@ -27,6 +30,7 @@ app/
 ├── bootstrap.py     # AppState 팩토리 (main/mcp_server 공유)
 ├── main.py          # FastAPI 앱 팩토리 + uvicorn 진입점
 ├── mcp_server.py    # MCP 서버 (Claude Desktop 통합)
+├── mcp_types.py     # MCP 도구 응답 TypedDict 스키마
 ├── api/             # FastAPI 라우트 및 의존성 주입
 ├── core/            # 공통 설정, DB 엔진, 예외 및 로깅
 ├── models/          # SQLAlchemy ORM 모델 (Base, ApiDocument 등)
@@ -45,27 +49,38 @@ app/
 
 ### 1. 의존성 설치
 
+이 프로젝트는 [uv](https://docs.astral.sh/uv/)로 의존성을 관리합니다.
+
 ```bash
-pip install -r requirements.txt
+uv sync --extra test
 ```
 
-### 2. 환경 설정
+### 2. 데이터베이스 준비
 
-`.env` 파일 또는 환경변수를 통해 설정을 조절할 수 있습니다. (기본값은 `app/core/config.py` 참고)
-
-- `DOCS_MCP_DATABASE_URL`: 데이터베이스 연결 URL (기본: `sqlite:///./docs_mcp.db`)
-- `DOCS_MCP_LOG_LEVEL`: 로그 레벨 (기본: `INFO`)
-
-### 3. 서버 실행
+PostgreSQL(+`pgvector` 확장)이 필요합니다. `docker-compose.yml`로 로컬 인스턴스를 띄울 수 있습니다.
 
 ```bash
-uvicorn app.main:app --reload
+docker compose up -d postgres
+uv run alembic upgrade head
 ```
 
-또는 팩토리 패턴 사용:
+### 3. 환경 설정
+
+<!-- AUTO-GENERATED: app/core/config.py 기준 -->
+`.env.example`을 참고해 `.env` 파일 또는 환경변수로 설정을 조절할 수 있습니다.
+
+| 변수 | 필수 | 설명 | 기본값 |
+|------|------|------|--------|
+| `DOCS_MCP_DATABASE_URL` | No | PostgreSQL(+pgvector) 연결 URL | `postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp` |
+| `DOCS_MCP_EMBEDDING_DIM` | No | 임베딩 벡터 차원 (pgvector 컬럼 생성 시 고정됨) | `256` |
+| `DOCS_MCP_HYBRID_ALPHA` | No | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만) | `0.4` |
+| `DOCS_MCP_LOG_LEVEL` | No | 로그 레벨 | `INFO` |
+<!-- /AUTO-GENERATED -->
+
+### 4. 서버 실행
 
 ```bash
-uvicorn app.main:create_app --factory --reload
+uv run uvicorn app.main:create_app --factory --reload
 ```
 
 서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI를 통해 API를 테스트할 수 있습니다.
@@ -92,11 +107,11 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 {
   "mcpServers": {
     "docs-mcp": {
-      "command": "python",
-      "args": ["-m", "app.mcp_server"],
+      "command": "uv",
+      "args": ["run", "python", "-m", "app.mcp_server"],
       "cwd": "/path/to/docs-mcp",
       "env": {
-        "DOCS_MCP_DATABASE_URL": "sqlite:///./docs_mcp.db"
+        "DOCS_MCP_DATABASE_URL": "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
       }
     }
   }
@@ -105,11 +120,19 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 
 ### 2. 제공되는 도구 (Tools)
 
-- `list_documents`: 등록된 문서 목록 확인
-- `register_document`: 새 OpenAPI 문서 등록 (URL/텍스트)
-- `search_endpoints`: API 엔드포인트 검색
-- `query_rag`: 자연어 질의응답 (RAG)
-- `get_endpoint_details`: 엔드포인트 상세 정보 및 코드 예시 조회
+<!-- AUTO-GENERATED: app/mcp_server.py 도구 docstring 기준 -->
+| 도구 | 설명 | 반환 필드 |
+|------|------|-----------|
+| `list_documents` | 등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다 | document_id, title, version, source_url, endpoints_count, indexed_at |
+| `register_document` | 신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다 | document_id, title, version, endpoints_count, chunks_count, status |
+| `search_endpoints` | 자연어로 API 엔드포인트를 검색한다 (하이브리드/키워드/벡터 모드) | endpoint_id, method, path, summary, score, snippet |
+| `query_rag` | API 명세에 대해 자연어로 질문하고 RAG 기반 답변을 받는다 | answer, citations(method/path/snippet), is_grounded |
+| `get_endpoint_details` | 특정 엔드포인트의 상세 정보와 호출 예시 코드를 조회한다 | endpoint_id, method, path, summary, description, example_code |
+
+모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
+`{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
+(응답 스키마는 `app/mcp_types.py` 참고).
+<!-- /AUTO-GENERATED -->
 
 ### 3. 제공되는 리소스 (Resources)
 
@@ -118,5 +141,10 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 ## 테스트 실행
 
 ```bash
-pytest tests/
+docker compose up -d postgres
+DOCS_MCP_TEST_DATABASE_URL=postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp \
+  uv run pytest
 ```
+
+테스트는 매번 격리된 PostgreSQL database를 생성/삭제하므로(`tests/conftest.py`),
+`postgres` 서비스가 실행 중이어야 합니다.
