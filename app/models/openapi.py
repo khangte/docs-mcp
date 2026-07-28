@@ -321,8 +321,14 @@ class DocumentSyncHistory(Base):
 
 
 def create_all(engine: Any) -> None:
-    """스키마와 테이블 전체 생성 (초기 기동·테스트용)."""
+    """스키마와 테이블 전체 생성 (초기 기동·테스트용).
+
+    `Base.metadata` 에 모든 테이블이 등록돼 있어야 하므로, 별도 모듈로 분리된
+    모델(`document_meta`)을 여기서 import 해 메타데이터 등록을 보장한다.
+    """
     from sqlalchemy import text
+
+    import app.models.document_meta  # noqa: F401  (Base.metadata 등록 목적)
 
     with engine.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))

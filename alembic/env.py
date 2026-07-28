@@ -9,6 +9,9 @@ from alembic import context
 from app.core.config import get_settings
 from app.models.openapi import SCHEMA, Base
 
+# Base.metadata 에 document_meta 테이블을 등록해 autogenerate 대상에 포함시킨다.
+import app.models.document_meta  # noqa: F401,E402
+
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
