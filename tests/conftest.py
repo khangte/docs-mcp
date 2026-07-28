@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api.dependencies import AppState
 from app.core.db import create_db_engine, create_session_factory
 from app.main import create_app
+from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import EMBEDDING_DIM, create_all
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from tests.fixtures.samples import openapi_3_json, swagger_2_json
@@ -92,13 +93,41 @@ def in_memory_fetcher() -> InMemoryFetcher:
 
 
 @pytest.fixture()
-def app_state(pg_engine, in_memory_fetcher):
+def fake_drive_source():
+    """Drive 를 대신하는 페이크 문서 소스(실제 HTTP 호출 없음)."""
+    from tests.fixtures.document_sources import FakeDocumentSource
+
+    return FakeDocumentSource(SOURCE_DRIVE)
+
+
+@pytest.fixture()
+def fake_notion_source():
+    """Notion 을 대신하는 페이크 문서 소스(실제 HTTP 호출 없음)."""
+    from tests.fixtures.document_sources import FakeDocumentSource
+
+    return FakeDocumentSource(SOURCE_NOTION)
+
+
+@pytest.fixture()
+def fake_document_sources(fake_drive_source, fake_notion_source):
+    """AppState 에 주입할 `drive`/`notion` 페이크 어댑터 매핑."""
+    return {
+        SOURCE_DRIVE: fake_drive_source,
+        SOURCE_NOTION: fake_notion_source,
+    }
+
+
+@pytest.fixture()
+def app_state(pg_engine, in_memory_fetcher, fake_document_sources):
     """테스트용 AppState.
 
     `vector_fallback_enabled` 를 True 로 고정해 벡터 보조 경로가 실행 환경의
     Gemini 키 유무에 좌우되지 않게 한다(키가 없으면 HashEmbeddingProvider 로
     폴백되므로 외부 호출은 발생하지 않는다). 보조 비활성 동작을 검증하는
     테스트는 이 값을 명시적으로 False 로 바꾼다.
+
+    `document_sources` 는 페이크로 고정해, 실행 환경에 Drive/Notion 자격증명이
+    설정돼 있어도 테스트가 실제 외부 API 를 호출하지 않게 한다.
     """
     state = AppState.from_engine(
         engine=pg_engine,
@@ -106,6 +135,7 @@ def app_state(pg_engine, in_memory_fetcher):
         embedding_dim=EMBEDDING_DIM,
         hybrid_alpha=0.4,
         vector_fallback_enabled=True,
+        document_sources=fake_document_sources,
     )
     return state
 
