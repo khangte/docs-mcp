@@ -15,13 +15,16 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.core.errors import IntegrationError, ValidationError
 from app.core.logging import get_logger
 from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
 from app.repositories.document_meta_repository import DocumentMetaRepository
-from app.services.documents.document_source import DocumentSource
+from app.services.documents.document_source import (
+    NO_SOURCE_CONFIGURED_MESSAGE,
+    DocumentSource,
+)
 
 _LOG = get_logger("docs_mcp.documents.search")
 
@@ -107,13 +110,20 @@ class DocumentSearchService:
 
         Raises:
             ValidationError: 질의가 비었거나 top_k/source 값이 잘못된 경우.
+            IntegrationError: 검색 대상 소스가 하나도 구성돼 있지 않은 경우.
+                "결과 없음"(빈 리스트)과 "서버 미설정"을 구별하기 위해
+                조용히 빈 리스트를 돌려주지 않는다.
         """
         normalized_query = self._validate(query, options)
+        normalized_source = self._validate_source(options.source, allow_none=True)
+        self._require_configured(normalized_source)
         query_tokens = set(tokenize(normalized_query))
         if not query_tokens:
             raise ValidationError("query must contain at least one searchable token")
 
-        candidates = self._select_candidates(query_tokens, options)
+        candidates = self._select_candidates(
+            query_tokens, replace(options, source=normalized_source)
+        )
         if not candidates:
             # 2단계를 건너뛴다: 후보가 없으면 외부 API 를 한 번도 호출하지 않는다.
             _LOG.debug("1단계 후보 0건 — 본문 fetch 생략: query=%s", normalized_query)
@@ -158,10 +168,14 @@ class DocumentSearchService:
     ) -> list[tuple[DocumentMeta, float]]:
         """제목/URL 토큰 매칭으로 상위 top_k 후보만 추린다.
 
+        1차 필터(어떤 토큰이라도 포함하는 행)는 SQL 로 내리고, 점수 계산과
+        순위 결정만 Python 이 한다. 전체 행을 적재하지 않으므로 캐시 규모가
+        커져도 1단계가 가볍게 유지된다.
+
         2단계에서 fetch 하는 문서 수가 top_k 를 넘지 않도록, 여기서 이미
         top_k 로 잘라 반환한다.
         """
-        rows = self._meta_repo.list_all(source=options.source)
+        rows = self._meta_repo.search_by_tokens(sorted(query_tokens), source=options.source)
         scored = [
             (row, score)
             for row, score in ((row, _title_score(row, query_tokens)) for row in rows)
@@ -238,6 +252,21 @@ class DocumentSearchService:
                 f"unknown source: {source} (allowed: {', '.join(sorted(ALLOWED_SOURCES))})"
             )
         return normalized
+
+    def _require_configured(self, source: str | None) -> None:
+        """검색 대상 소스가 구성돼 있는지 확인한다.
+
+        "구성은 됐는데 결과가 0건"인 정상 케이스와 "서버에 소스가 아예 설정되지
+        않음"을 구별하기 위한 검사다. 전자는 계속 빈 리스트를 돌려줘야 하므로
+        여기서는 **구성 여부만** 보고 캐시 내용은 보지 않는다.
+
+        Raises:
+            IntegrationError: 소스가 하나도 없거나, 지정한 source 가 미구성인 경우.
+        """
+        if not self._sources:
+            raise IntegrationError(NO_SOURCE_CONFIGURED_MESSAGE)
+        if source is not None and source not in self._sources:
+            raise IntegrationError(f"document source is not configured: {source}")
 
     def _require_source(self, source: str) -> DocumentSource:
         """구성된 어댑터를 반환하고, 없으면 IntegrationError 를 던진다."""
