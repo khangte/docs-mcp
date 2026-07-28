@@ -323,3 +323,130 @@
 - **리포지토리에 이미 존재하던 lint 위반 12건**(`app/models/openapi.py`,
   `app/services/parser/openapi_parser.py` 등 이번 범위 밖 파일)은 수정하지
   않았다. 이번에 추가한 파일의 위반은 0건이다.
+
+---
+
+## QA 지적 반영 (QA_REPORT_DRIVE_NOTION.md, 조건부 합격 6.9/10)
+
+### 1. [필수] `_refresh_source()` 커밋 경계를 배치 단위로 낮춤 — SPEC 위반 해소
+
+**지적**: 두 루프가 전부 끝난 뒤 맨 마지막에 한 번만 `commit()` 해서, 소스 내부
+중간 실패 시 전량 롤백됐다. 프로브 실측 `committed_rows=0`. SPEC 기능 6 의
+"갱신 중 예외가 나도 이미 처리된 행은 커밋되어 있고" 를 충족하지 못했다.
+
+**인정한다.** 내 자기보고("source별 커밋 경계")는 source 가 2개 이상일 때만
+성립했고, source 1개 환경과 소스 내부 중간 실패는 커버하지 못했다. 자기보고가
+실제 보장 범위보다 넓게 읽히도록 쓰여 있었다.
+
+**수정**: `BATCH_SIZE = 100` 상수를 두고 변경 건수가 그만큼 쌓일 때마다 커밋한다.
+- `_commit_batch()` 가 **커밋에 성공한 뒤에야** 미커밋 집계를 확정 집계로 옮긴다.
+  롤백된 배치는 집계에 절대 들어가지 않으므로 반환값과 DB 상태가 항상 일치한다.
+- `_PartialRefreshError` 내부 예외로 "확정된 집계"를 `refresh()` 까지 실어 보내,
+  실패한 소스라도 이미 커밋된 분이 집계에 반영된다.
+- 모든 소스가 실패했어도 **커밋된 변경이 있으면** 예외 대신 정상 반환하고
+  `failed_sources` 로 실패를 알린다. 커밋된 게 전혀 없을 때만 `IntegrationError`
+  를 던져 "조용한 무동작"을 막는다.
+
+**재현 검증**: 프로브 2와 동일 시나리오(source 1개, 205건 중 201번째에서 실패)
+결과가 `committed_rows=0` → **`committed_rows=200, added=200`** 로 바뀌었다.
+집계와 실제 커밋 행 수가 정확히 일치한다.
+
+### 2. [필수] 소스 내부 중간 실패를 실제로 검증하는 테스트 추가
+
+**지적**: 기존 `test_partial_failure_commits_already_processed_source` 는
+`list_files()` **단계**에서 실패시켜, 그 시점엔 아무 행도 안 건드렸으므로
+"source 간 격리"만 검증했다. 테스트는 통과하는데 SPEC 은 위반인 상태를 위장했다.
+
+**인정한다.** 검증 대상을 잘못 잡은 테스트였다.
+
+**수정**:
+- 기존 테스트는 `test_source_level_isolation_when_list_files_fails` 로 이름을
+  바꾸고, docstring 에 "이 시나리오는 소스 간 격리만 검증하며 내부 중간 실패는
+  별도 테스트가 담당한다"를 명시했다.
+- `_FailingFileList` 페이크를 추가했다. `len()`/인덱싱은 정상 리스트처럼 동작해
+  서비스가 목록 조회 성공으로 판단하고 저장 루프에 진입하지만, 순회 중 N 번째
+  항목에서 `IntegrationError` 가 터진다(페이지네이션 중 rate limit 재현).
+- 신규 테스트 6건:
+  - `test_mid_save_failure_keeps_already_committed_rows` — 실패 후 **DB 를 직접
+    조회해** 행이 남아 있는지 단언
+  - `test_mid_save_failure_with_single_source_still_commits` — source 1개
+    사각지대
+  - `test_mid_save_failure_counts_match_committed_rows` — 집계 == 실제 커밋 행 수
+  - `test_mid_save_failure_is_reported_not_silently_succeeded` — 실패 보고
+  - `test_failed_items_are_retried_on_next_refresh` — 재시도로 최종 전건 반영
+  - `test_mid_save_failure_before_first_batch_commits_nothing` — 첫 배치 전 실패
+    경계 조건
+
+### 3. [필수] 미구성 소스에서 `search_documents` 침묵 해소
+
+**지적**: `get_document`/`refresh_index` 는 명확한 `IntegrationError` 를 내는데
+`search_documents` 만 빈 리스트를 조용히 반환해, "결과 없음"과 "서버 미설정"이
+구별되지 않았다.
+
+**수정**: `search()` 에 `_require_configured()` 를 추가해 소스가 하나도 없거나
+지정한 source 가 미구성이면 `IntegrationError` 를 던진다. 메시지는
+`document_source.py` 의 `NO_SOURCE_CONFIGURED_MESSAGE` 상수로 한 곳에 모아
+세 도구가 **완전히 동일한 문구**를 쓰게 했다(`test_unconfigured_message_matches_refresh_index`,
+`test_unconfigured_error_is_consistent_across_tools` 로 고정).
+
+**과잉 교정 방지**: 구성은 됐는데 결과만 0건인 정상 케이스는 계속 빈 리스트다.
+`_require_configured()` 는 **구성 여부만** 보고 캐시 내용은 보지 않는다.
+`test_configured_but_empty_cache_still_returns_empty_list`,
+`test_configured_with_no_matching_document_returns_empty_list`,
+그리고 기존 `test_search_documents_before_refresh_returns_empty` 가 이를 지킨다.
+
+### 4. [필수] `README.md` 정정
+
+3번 수정으로 "세 도구 모두 미구성 시 `IntegrationError`" 가 사실이 됐다. 더해
+**"소스 미설정"과 "검색 결과 0건"이 구별된다**는 점을 명시적으로 덧붙였다.
+독자가 빈 `items` 를 보고 설정 문제로 오해하지 않도록 하기 위해서다.
+
+### 5. [권장, 반영함] 1단계 후보 조회를 SQL 로 내림
+
+**지적**: `_select_candidates()` 가 `list_all()` 로 `document_meta` 전량을
+Python 에 적재한다(O(N)). 같은 브랜치의 `chunk_repository.list_endpoint_chunks()`
+가 정확히 이 문제를 SQL 로 이미 고쳤는데 일관성이 없다.
+
+**반영했다.** "과설계면 근거를 남기고 넘어가도 된다"는 선택지가 있었으나,
+**이미 같은 브랜치에 확립된 원칙이 있는데 한쪽만 예외로 두는 것이 오히려
+유지보수 부채**라고 판단했다. 후임자가 두 경로를 비교하며 "왜 여기만 다르지"를
+매번 되묻게 된다.
+
+`DocumentMetaRepository.search_by_tokens(tokens, source)` 를 추가해
+`WHERE (title ILIKE ANY OR url ILIKE ANY)` 로 1차 필터를 DB 에 내렸다. 점수
+계산과 최종 순위는 여전히 Python 이 담당한다(SQL 은 후보를 좁히기만 한다).
+
+구현 중 발견한 함정 하나를 함께 막았다: 내 토크나이저는 `auth_v2` 처럼 `_` 를
+토큰 문자로 취급하는데, `_` 는 LIKE 에서 "임의의 한 문자" 와일드카드다.
+이스케이프하지 않으면 `auth_v2` 가 `authXv2` 까지 잘못 매칭한다.
+`_escape_like()` 로 `\`, `%`, `_` 를 모두 이스케이프하고
+`test_search_by_tokens_matches_underscore_literally`,
+`test_search_by_tokens_escapes_like_wildcards` 로 고정했다.
+
+### 6. [권장, 반영함] 교차 소스 삭제 회귀 테스트
+
+Evaluator 프로브로 "버그 없음"이 확인됐지만 이를 고정하는 테스트가 없었다.
+`test_refreshing_one_source_never_deletes_another_sources_rows` 를 추가했다.
+notion 이 **이미 캐시된 상태에서** drive 만 갱신하며 drive 파일을 삭제하는
+시나리오로, `list_by_source()` → `list_all()` 같은 실수로 다른 출처 데이터가
+통째로 날아가는 회귀를 막는다.
+
+### 미반영 (근거 명시)
+
+- **[권장 7] `conftest.py` 테스트 종료 로그 소음**: `pg_engine` 은 OpenAPI
+  트랙과 공유하는 픽스처다. 이번 범위(Drive/Notion)를 벗어나고, 테스트 결과에
+  영향이 없는 로그 소음이라 손대지 않았다. 별도 정리 태스크가 적절하다.
+- **[권장 8] 429 재시도 부재**: 아래 "알려진 제약"에 추가했다. SPEC 이 요구하지
+  않았고, 백오프 정책은 실환경 rate limit 실측 없이 정하면 추측이 된다.
+
+## 알려진 제약 (추가)
+
+- **Drive/Notion 429 자동 재시도(백오프)가 없다.** 에러 메시지로 "retry later"
+  를 안내할 뿐 서버가 스스로 재시도하지 않는다. `refresh_index` 는 배치 커밋
+  덕분에 재실행하면 실패 지점부터 이어서 진행되므로 수동 재시도로 복구된다.
+- **`BATCH_SIZE = 100` 은 실측이 아닌 기본값이다.** 커밋 횟수(내구성)와 트랜잭션
+  오버헤드(속도)의 절충점으로 잡았다. 실환경 문서 규모가 확인되면 조정 여지가 있다.
+- **`search_by_tokens` 의 `ILIKE` 는 인덱스를 타지 않는다.** 선행 와일드카드
+  (`%token%`) 패턴이라 순차 스캔이다. 전량 적재보다는 명백히 낫지만(ORM 객체
+  생성과 네트워크 전송이 사라진다), 캐시가 수만 건을 넘으면 `pg_trgm` GIN
+  인덱스가 필요하다. 현재 협업 문서 규모(수천 건)에서는 과설계로 판단해 두지 않았다.

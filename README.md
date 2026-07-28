@@ -161,8 +161,13 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 OpenAPI 는 사전 색인하지만, 수시로 바뀌는 협업 문서는 본문을 저장하지 않고
 `search_documents` 호출 시점에 실시간으로 가져온다. `document_meta` 에는
 제목·URL·수정일만 캐시하며, 새로 만든 문서가 검색되지 않으면 `refresh_index`
-를 먼저 실행한다. Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만
-호출 시 "미구성" `IntegrationError` 를 반환하고, OpenAPI 경로는 영향받지 않는다.
+를 먼저 실행한다.
+
+Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호출 시 "미구성"
+`IntegrationError`(`no document source is configured: ...`)를 반환한다.
+**"소스 미설정"과 "검색 결과 0건"은 구별된다** — 소스가 정상 구성됐는데 질의에
+맞는 문서가 없으면 `search_documents` 는 오류가 아니라 빈 `items` 를 돌려준다.
+어느 경우든 OpenAPI 경로는 영향받지 않는다.
 
 > `query_rag`(서버 내부 답변생성)는 MCP 도구 등록에서 제외됐다. 구현 코드
 > (`RAGService`, `GeminiLLMProvider`, `TemplateLLMProvider`)는 삭제하지 않고
