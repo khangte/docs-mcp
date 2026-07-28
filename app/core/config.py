@@ -45,6 +45,37 @@ class Settings:
             "DOCS_MCP_GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"
         )
     )
+    # --- Google Drive (문서 검색 소스) ---
+    drive_folder_id: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_DRIVE_FOLDER_ID") or None
+    )
+    drive_service_account_file: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE") or None
+    )
+    drive_service_account_json: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON") or None
+    )
+    # --- Notion (문서 검색 소스) ---
+    notion_token: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_NOTION_TOKEN") or None
+    )
+    notion_database_id: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_NOTION_DATABASE_ID") or None
+    )
+    notion_version: str = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_NOTION_VERSION", "2022-06-28")
+    )
+    # --- 문서 소스 공통 ---
+    document_source_timeout_seconds: float = field(
+        default_factory=lambda: float(
+            os.environ.get("DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS", "15.0")
+        )
+    )
+    document_fetch_max_chars: int = field(
+        default_factory=lambda: int(
+            os.environ.get("DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS", "200000")
+        )
+    )
 
 
 def get_settings() -> Settings:

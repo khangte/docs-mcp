@@ -16,6 +16,9 @@ dependencies = [
     "fastmcp>=3.3.1",
     "anyio>=4.0",
     "google-genai>=1.47.0",
+    # Drive 서비스 계정 JWT 서명/토큰 발급 전용. Drive REST 호출 자체는 httpx 로 직접 수행하므로
+    # google-api-python-client 는 도입하지 않는다.
+    "google-auth>=2.30",
     "alembic>=1.13",
     "pgvector>=0.3",
     "psycopg[binary]>=3.1",
