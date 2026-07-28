@@ -16,6 +16,28 @@ from app.core.errors import IntegrationError
 from app.services.documents.document_source import FileMeta
 
 
+class _FailingFileList(list):
+    """N 번째 항목을 순회하는 순간 IntegrationError 를 던지는 리스트.
+
+    `len()` 과 인덱싱은 정상 리스트처럼 동작하므로 서비스가 목록 조회에는
+    성공했다고 판단하고 저장 루프에 진입한다. 그 루프 도중에 외부 연동이
+    끊기는 상황(페이지네이션 중 rate limit 등)을 재현한다.
+    """
+
+    def __init__(self, items: list[FileMeta], fail_at: int, message: str) -> None:
+        """원본 항목과 실패 인덱스·메시지를 보관한다."""
+        super().__init__(items)
+        self._fail_at = fail_at
+        self._message = message
+
+    def __iter__(self):
+        """설정된 인덱스에 도달하면 IntegrationError 를 발생시키며 순회한다."""
+        for index, item in enumerate(list.__iter__(self)):
+            if index == self._fail_at:
+                raise IntegrationError(self._message)
+            yield item
+
+
 class FakeDocumentSource:
     """메모리 딕셔너리로 동작하는 문서 소스 페이크."""
 
@@ -38,10 +60,14 @@ class FakeDocumentSource:
         self.list_call_count = 0
         self.fetch_call_count = 0
         self.fetched_ids: list[str] = []
-        #: True 로 두면 `list_files()` 가 IntegrationError 를 던진다(부분 실패 시나리오).
+        #: True 로 두면 `list_files()` 가 IntegrationError 를 던진다(소스 간 격리 시나리오).
         self.list_should_fail = False
         #: 이 집합에 든 external_id 는 fetch 시 IntegrationError 를 던진다.
         self.failing_fetch_ids: set[str] = set()
+        #: 0 보다 크면 `list_files()` 는 성공하되 반환 목록의 N 번째(0-based) 항목을
+        #: 소비하는 순간 IntegrationError 를 던진다. "목록 조회는 됐는데 저장
+        #: 도중 끊긴" 상황을 재현해 배치 커밋 경계를 검증하는 데 쓴다.
+        self.fail_listing_at_index: int | None = None
 
     @property
     def source_name(self) -> str:
@@ -49,10 +75,20 @@ class FakeDocumentSource:
         return self._source_name
 
     def list_files(self) -> list[FileMeta]:
-        """등록된 메타데이터 목록을 반환하고 호출 횟수를 기록한다."""
+        """등록된 메타데이터 목록을 반환하고 호출 횟수를 기록한다.
+
+        `fail_listing_at_index` 가 설정돼 있으면 목록 조회 자체는 성공하되,
+        반환된 목록을 순회하다 해당 인덱스에서 IntegrationError 가 터진다.
+        """
         self.list_call_count += 1
         if self.list_should_fail:
             raise IntegrationError(f"fake {self._source_name} list failure")
+        if self.fail_listing_at_index is not None:
+            return _FailingFileList(
+                list(self.files),
+                self.fail_listing_at_index,
+                f"fake {self._source_name} failure while saving",
+            )
         return list(self.files)
 
     def fetch(self, external_id: str) -> str:

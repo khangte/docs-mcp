@@ -254,10 +254,38 @@ async def test_search_documents_unknown_source_returns_error_payload(
 
 @pytest.mark.asyncio()
 async def test_search_documents_before_refresh_returns_empty(mcp_server: FastMCP) -> None:
-    """캐시가 비어 있으면(갱신 전) 결과가 없다 — 제약을 계약으로 고정한다."""
+    """캐시가 비어 있으면(갱신 전) 결과가 없다 — 제약을 계약으로 고정한다.
+
+    소스는 구성돼 있으므로 오류가 아니라 빈 items 여야 한다(미구성과 구별).
+    """
     result = _result(await mcp_server.call_tool("search_documents", {"query": "로그인"}))
 
     assert result["items"] == []
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_unconfigured_returns_error_payload(app_state) -> None:
+    """소스가 하나도 구성되지 않았으면 침묵하지 않고 표준 에러 포맷을 반환한다."""
+    app_state.document_sources = {}
+    server = create_mcp_server(app_state)
+
+    payload = _result(await server.call_tool("search_documents", {"query": "로그인"}))
+
+    assert payload["error"] is True
+    assert payload["code"] == "integration_error"
+    assert "no document source is configured" in payload["message"]
+
+
+@pytest.mark.asyncio()
+async def test_unconfigured_error_is_consistent_across_tools(app_state) -> None:
+    """미구성 시 search_documents 와 refresh_index 가 같은 메시지를 돌려준다."""
+    app_state.document_sources = {}
+    server = create_mcp_server(app_state)
+
+    search = _result(await server.call_tool("search_documents", {"query": "로그인"}))
+    refresh = _result(await server.call_tool("refresh_index", arguments={}))
+
+    assert search["message"] == refresh["message"]
 
 
 # --- 기능 8: get_document ------------------------------------------------------

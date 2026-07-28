@@ -120,3 +120,95 @@ def test_empty_repository_returns_empty_lists(repo: DocumentMetaRepository) -> N
     """행이 없으면 빈 시퀀스를 돌려준다."""
     assert list(repo.list_all()) == []
     assert list(repo.list_by_source(SOURCE_NOTION)) == []
+
+
+# --- search_by_tokens (1단계 후보 SQL 필터) --------------------------------------
+
+
+def test_search_by_tokens_matches_title(db_session, repo: DocumentMetaRepository) -> None:
+    """제목에 토큰이 포함된 행만 반환한다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 인증 설계"))
+    repo.add(_row(SOURCE_DRIVE, "d2", "배포 가이드"))
+    db_session.commit()
+
+    assert [m.external_id for m in repo.search_by_tokens(["로그인"])] == ["d1"]
+
+
+def test_search_by_tokens_is_case_insensitive(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """대소문자를 무시하고 매칭한다(토큰은 소문자로 정규화돼 들어온다)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "OAuth Design"))
+    db_session.commit()
+
+    assert [m.external_id for m in repo.search_by_tokens(["oauth"])] == ["d1"]
+
+
+def test_search_by_tokens_matches_any_token(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """토큰 중 하나라도 걸리면 후보에 포함된다(OR 조건)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서"))
+    repo.add(_row(SOURCE_DRIVE, "d2", "배포 문서"))
+    db_session.commit()
+
+    found = {m.external_id for m in repo.search_by_tokens(["로그인", "배포"])}
+
+    assert found == {"d1", "d2"}
+
+
+def test_search_by_tokens_respects_source_filter(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """source 를 주면 해당 출처의 행만 후보가 된다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서"))
+    repo.add(_row(SOURCE_NOTION, "n1", "로그인 문서"))
+    db_session.commit()
+
+    found = repo.search_by_tokens(["로그인"], source=SOURCE_NOTION)
+
+    assert [m.external_id for m in found] == ["n1"]
+
+
+def test_search_by_tokens_empty_tokens_returns_empty(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """토큰이 비면 전체를 긁어오지 않고 빈 결과를 돌려준다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서"))
+    db_session.commit()
+
+    assert list(repo.search_by_tokens([])) == []
+
+
+def test_search_by_tokens_escapes_like_wildcards(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """토큰의 `%` 와 `_` 가 LIKE 와일드카드로 해석되지 않는다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "배포 가이드"))
+    db_session.commit()
+
+    # 이스케이프가 없으면 '%' 가 "아무 문자열"이 되어 모든 행이 걸린다.
+    assert list(repo.search_by_tokens(["%"])) == []
+    assert list(repo.search_by_tokens(["_"])) == []
+
+
+def test_search_by_tokens_matches_underscore_literally(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """`auth_v2` 처럼 밑줄이 든 토큰은 문자 그대로 매칭된다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "auth_v2 스펙"))
+    repo.add(_row(SOURCE_DRIVE, "d2", "authXv2 스펙"))
+    db_session.commit()
+
+    assert [m.external_id for m in repo.search_by_tokens(["auth_v2"])] == ["d1"]
+
+
+def test_search_by_tokens_is_deterministically_ordered(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """후보 순서가 (source, external_id) 로 결정적이다."""
+    for external_id in ("d3", "d1", "d2"):
+        repo.add(_row(SOURCE_DRIVE, external_id, "로그인 문서"))
+    db_session.commit()
+
+    assert [m.external_id for m in repo.search_by_tokens(["로그인"])] == ["d1", "d2", "d3"]

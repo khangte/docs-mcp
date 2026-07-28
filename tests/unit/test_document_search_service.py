@@ -262,6 +262,66 @@ def test_unknown_source_raises_validation_error(search_service) -> None:
         search_service.search("로그인", DocumentSearchOptions(source="dropbox"))
 
 
+# --- 미구성 vs 결과 없음 구별 ---------------------------------------------------
+
+
+def test_unconfigured_sources_raise_integration_error(db_session) -> None:
+    """소스가 하나도 구성돼 있지 않으면 침묵하지 않고 IntegrationError 를 낸다.
+
+    빈 리스트로 응답하면 호출 LLM 이 "관련 문서 없음"과 "서버 미설정"을
+    구별할 수 없다.
+    """
+    service = DocumentSearchService(meta_repo=DocumentMetaRepository(db_session), sources={})
+
+    with pytest.raises(IntegrationError, match="no document source is configured"):
+        service.search("로그인", DocumentSearchOptions())
+
+
+def test_unconfigured_specific_source_raises_integration_error(
+    db_session, fake_drive_source
+) -> None:
+    """Drive 만 구성된 상태에서 notion 을 지정하면 IntegrationError 다."""
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        sources={SOURCE_DRIVE: fake_drive_source},
+    )
+
+    with pytest.raises(IntegrationError, match="not configured"):
+        service.search("로그인", DocumentSearchOptions(source=SOURCE_NOTION))
+
+
+def test_configured_but_empty_cache_still_returns_empty_list(search_service) -> None:
+    """소스는 구성됐고 캐시만 비어 있으면 오류가 아니라 빈 리스트다(과잉 교정 방지)."""
+    assert search_service.search("로그인", DocumentSearchOptions()) == []
+
+
+def test_configured_with_no_matching_document_returns_empty_list(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """구성도 되고 캐시도 찼는데 매칭만 없으면 빈 리스트다(오류 아님)."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "배포 운영 가이드")
+    fake_drive_source.bodies["d1"] = "본문"
+
+    assert search_service.search("전혀무관한질의", DocumentSearchOptions()) == []
+
+
+def test_unconfigured_message_matches_refresh_index(db_session, fake_drive_source) -> None:
+    """미구성 메시지가 refresh_index 경로와 동일해 사용자 혼선을 줄인다."""
+    from app.services.documents.document_index_service import DocumentIndexService
+
+    search = DocumentSearchService(meta_repo=DocumentMetaRepository(db_session), sources={})
+    index = DocumentIndexService(
+        session=db_session, meta_repo=DocumentMetaRepository(db_session), sources=[]
+    )
+
+    with pytest.raises(IntegrationError) as search_error:
+        search.search("로그인", DocumentSearchOptions())
+    with pytest.raises(IntegrationError) as index_error:
+        index.refresh()
+
+    assert str(search_error.value) == str(index_error.value)
+
+
 # --- 기능 8: get_document ------------------------------------------------------
 
 

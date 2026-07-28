@@ -13,7 +13,7 @@ import pytest
 from app.core.errors import IntegrationError
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.repositories.document_meta_repository import DocumentMetaRepository
-from app.services.documents.document_index_service import DocumentIndexService
+from app.services.documents.document_index_service import BATCH_SIZE, DocumentIndexService
 
 _T1 = datetime(2026, 7, 1, 9, 0, 0)
 _T2 = datetime(2026, 7, 2, 9, 0, 0)
@@ -175,10 +175,15 @@ def test_no_configured_source_raises_integration_error(db_session, meta_repo) ->
 # --- 부분 실패 허용 -------------------------------------------------------------
 
 
-def test_partial_failure_commits_already_processed_source(
+def test_source_level_isolation_when_list_files_fails(
     index_service, meta_repo, fake_drive_source, fake_notion_source
 ) -> None:
-    """한 소스가 실패해도 앞서 처리된 소스의 변경분은 커밋된 채로 남는다."""
+    """소스 간 격리: 한 소스의 `list_files()` 가 실패해도 다른 소스 결과는 남는다.
+
+    이 시나리오는 실패한 소스가 아직 아무 행도 건드리지 않은 상태이므로
+    "소스 간 격리"만 검증한다. 한 소스 **내부** 중간 실패는 아래
+    `test_mid_save_failure_*` 가 담당한다.
+    """
     fake_drive_source.put("d1", "드라이브 문서", "본문", modified_at=_T1)
     fake_notion_source.put("n1", "노션 문서", "본문", modified_at=_T1)
     fake_notion_source.list_should_fail = True
@@ -188,6 +193,151 @@ def test_partial_failure_commits_already_processed_source(
     assert result.added == 1
     assert result.failed_sources == (SOURCE_NOTION,)
     assert meta_repo.find(SOURCE_DRIVE, "d1") is not None
+
+
+# --- 소스 내부 중간 실패 (SPEC 기능 6: "이미 처리된 행은 커밋") ------------------
+
+
+def _seed_many(source, count: int, prefix: str = "d") -> None:
+    """페이크 소스에 문서 여러 건을 채운다."""
+    for index in range(count):
+        source.put(f"{prefix}{index}", f"문서 {index}", "본문", modified_at=_T1)
+
+
+def test_mid_save_failure_keeps_already_committed_rows(
+    db_session, index_service, meta_repo, fake_drive_source
+) -> None:
+    """저장 도중 실패해도 이미 커밋된 배치의 행은 DB 에 실제로 남는다.
+
+    `list_files()` 는 성공하고 저장 루프 도중에 끊기는 시나리오다. 커밋
+    경계가 소스 단위라면 전량 롤백돼 0건이 되므로, 이 테스트가 회귀를 막는다.
+    """
+    _seed_many(fake_drive_source, BATCH_SIZE * 2 + 5)
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE * 2 + 1
+
+    index_service.refresh()
+
+    db_session.expire_all()
+    committed = meta_repo.list_by_source(SOURCE_DRIVE)
+    assert len(committed) == BATCH_SIZE * 2
+
+
+def test_mid_save_failure_with_single_source_still_commits(
+    db_session, meta_repo, fake_drive_source
+) -> None:
+    """소스가 1개뿐이어도 중간 실패 시 이미 처리된 행이 남는다.
+
+    소스별 커밋 경계만으로는 커버되지 않던 사각지대(Drive 만 설정한 팀)다.
+    """
+    service = DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, sources=[fake_drive_source]
+    )
+    _seed_many(fake_drive_source, BATCH_SIZE + 3)
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE + 1
+
+    result = service.refresh()
+
+    db_session.expire_all()
+    assert len(meta_repo.list_by_source(SOURCE_DRIVE)) == BATCH_SIZE
+    assert result.failed_sources == (SOURCE_DRIVE,)
+
+
+def test_mid_save_failure_counts_match_committed_rows(
+    db_session, meta_repo, fake_drive_source
+) -> None:
+    """반환 집계가 롤백분을 세지 않고 실제 커밋된 행 수와 일치한다."""
+    service = DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, sources=[fake_drive_source]
+    )
+    _seed_many(fake_drive_source, BATCH_SIZE * 2)
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE + 7
+
+    result = service.refresh()
+
+    db_session.expire_all()
+    assert result.added == len(meta_repo.list_by_source(SOURCE_DRIVE))
+    assert result.added == BATCH_SIZE
+
+
+def test_mid_save_failure_is_reported_not_silently_succeeded(
+    db_session, meta_repo, fake_drive_source
+) -> None:
+    """부분 실패를 조용히 성공으로 위장하지 않고 failed_sources 로 알린다."""
+    service = DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, sources=[fake_drive_source]
+    )
+    _seed_many(fake_drive_source, BATCH_SIZE + 2)
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE + 1
+
+    result = service.refresh()
+
+    assert result.failed_sources == (SOURCE_DRIVE,)
+
+
+def test_failed_items_are_retried_on_next_refresh(
+    db_session, meta_repo, fake_drive_source
+) -> None:
+    """실패 지점 이후 항목은 다음 갱신에서 재시도돼 최종적으로 모두 반영된다."""
+    service = DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, sources=[fake_drive_source]
+    )
+    total = BATCH_SIZE + 4
+    _seed_many(fake_drive_source, total)
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE + 1
+    service.refresh()
+
+    fake_drive_source.fail_listing_at_index = None
+    result = service.refresh()
+
+    db_session.expire_all()
+    assert len(meta_repo.list_by_source(SOURCE_DRIVE)) == total
+    assert result.failed_sources == ()
+
+
+def test_mid_save_failure_before_first_batch_commits_nothing(
+    db_session, meta_repo, fake_drive_source
+) -> None:
+    """첫 배치를 채우기 전에 실패하면 커밋된 행이 없고 예외로 알린다.
+
+    커밋할 게 아무것도 없는데 성공으로 위장하면 안 된다는 경계 조건이다.
+    """
+    service = DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, sources=[fake_drive_source]
+    )
+    _seed_many(fake_drive_source, 5)
+    fake_drive_source.fail_listing_at_index = 2
+
+    with pytest.raises(IntegrationError):
+        service.refresh()
+
+    db_session.expire_all()
+    assert list(meta_repo.list_by_source(SOURCE_DRIVE)) == []
+
+
+# --- 교차 소스 삭제 회귀 방지 ----------------------------------------------------
+
+
+def test_refreshing_one_source_never_deletes_another_sources_rows(
+    db_session, index_service, meta_repo, fake_drive_source, fake_notion_source
+) -> None:
+    """이미 캐시된 다른 source 의 행이 한 source 갱신 때문에 삭제되지 않는다.
+
+    `_refresh_source` 가 `list_by_source()` 대신 `list_all()` 을 쓰면 다른
+    출처의 행이 "원본에서 사라진 것"으로 오인돼 통째로 삭제된다. 데이터 유실로
+    직결되는 지점이라 회귀 테스트로 고정한다.
+    """
+    fake_drive_source.put("d1", "드라이브 문서", "본문", modified_at=_T1)
+    fake_notion_source.put("n1", "노션 문서", "본문", modified_at=_T1)
+    index_service.refresh()
+
+    # drive 에서 파일이 삭제된 뒤 drive 만 갱신한다.
+    fake_drive_source.remove("d1")
+    result = index_service.refresh(source=SOURCE_DRIVE)
+
+    db_session.expire_all()
+    assert result.removed == 1
+    assert meta_repo.find(SOURCE_DRIVE, "d1") is None
+    assert meta_repo.find(SOURCE_NOTION, "n1") is not None
 
 
 def test_failed_source_is_retryable_on_next_refresh(
