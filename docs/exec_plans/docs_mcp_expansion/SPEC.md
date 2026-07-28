@@ -236,6 +236,12 @@ Notion API에서 실시간으로 가져온다.
   (Phase 0 결정 7번)
 - 출력: 기존과 동일 + `schema_ref` 필드 명시적 노출(참조 문자열 그대로).
   `include_example=True`일 때만 `example_code` 키가 포함된다.
+- **범위 외 — `security`(인증 요구사항)**: 위 데이터 흐름 다이어그램(A 경로
+  4단계)에는 "Responses/Security 반환"이라 적혀 있으나, 현재 파서
+  (`openapi_parser.py`)가 `security`를 추출하지 않고 ORM(`ApiEndpoint`)에도
+  컬럼이 없다. 지원하려면 파서 확장 + 모델 컬럼 추가 + Alembic 마이그레이션이
+  필요하므로 **이번 기능 2의 범위에서 제외하고 별도 후속 태스크로 분리한다.**
+  아래 검증 기준에도 포함하지 않는다.
 - 검증 기준:
   - 존재하지 않는 `endpoint_id`는 `EndpointNotFoundError` → 표준 에러 포맷.
   - 응답에 스키마 본문이 미리 펼쳐져 들어가지 않는다.

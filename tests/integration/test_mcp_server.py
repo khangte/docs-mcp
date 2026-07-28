@@ -223,6 +223,20 @@ async def test_resolve_ref_expands_schema(seeded_mcp: FastMCP) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_resolve_ref_exposes_document_id(seeded_mcp: FastMCP) -> None:
+    """resolve_ref 응답이 스키마가 속한 document_id 를 밝힌다."""
+    docs = await seeded_mcp.call_tool("list_documents", arguments={})
+    document_id = docs.structured_content["result"][0]["document_id"]
+
+    result = await seeded_mcp.call_tool(
+        "resolve_ref", arguments={"ref": "#/components/schemas/Pet"}
+    )
+    resolved = result.structured_content["result"]
+
+    assert resolved["document_id"] == document_id
+
+
+@pytest.mark.asyncio()
 async def test_resolve_ref_is_deterministic(seeded_mcp: FastMCP) -> None:
     """같은 ref 를 두 번 호출하면 동일한 응답을 반환한다."""
     first = await seeded_mcp.call_tool(
@@ -289,6 +303,33 @@ async def test_list_tags_unknown_document_returns_error_payload(
 
     assert payload["error"] is True
     assert payload["code"] == "document_not_found"
+
+
+# --- 도구 간 에러 계약 일관성 -------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("search_endpoints", {"query": "pet", "document_id": "no-such-doc"}),
+        ("resolve_ref", {"ref": "#/components/schemas/Pet", "document_id": "no-such-doc"}),
+        ("list_tags", {"document_id": "no-such-doc"}),
+    ],
+)
+async def test_unknown_document_id_is_document_not_found_everywhere(
+    seeded_mcp: FastMCP, tool_name: str, arguments: dict
+) -> None:
+    """세 도구 모두 미등록 document_id 에 대해 동일한 오류 코드를 반환한다.
+
+    빈 결과로 흘려보내면 호출 LLM 이 "문서 없음"과 "결과 없음"을 구분할 수 없다.
+    """
+    result = await seeded_mcp.call_tool(tool_name, arguments=arguments)
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "document_not_found"
+    assert "no-such-doc" in payload["message"]
 
 
 # --- 기존 도구 회귀 -----------------------------------------------------------

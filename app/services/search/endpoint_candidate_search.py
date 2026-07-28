@@ -16,10 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from app.core.errors import ValidationError
+from app.core.errors import DocumentNotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.models.openapi import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
@@ -61,6 +62,7 @@ class EndpointCandidateSearch:
         keyword_search: KeywordSearch,
         vector_search: VectorSearch,
         vector_fallback_enabled: bool = True,
+        document_repo: DocumentRepository | None = None,
     ) -> None:
         """저장소·검색기와 벡터 보조 활성화 여부를 보관한다.
 
@@ -70,12 +72,15 @@ class EndpointCandidateSearch:
             keyword_search: 1차 키워드 검색기.
             vector_search: 키워드 0건일 때만 쓰는 보조 벡터 검색기.
             vector_fallback_enabled: False 면 벡터 보조 단계를 통째로 생략한다.
+            document_repo: document_id 존재 검증용 저장소. 주입하면 미등록
+                문서 ID 를 빈 결과가 아니라 DocumentNotFoundError 로 구분한다.
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
         self._keyword_search = keyword_search
         self._vector_search = vector_search
         self._vector_fallback_enabled = vector_fallback_enabled
+        self._document_repo = document_repo
 
     def search(self, query: str, options: CandidateSearchOptions) -> list[EndpointCandidate]:
         """질의에 대한 엔드포인트 후보 목록을 반환한다.
@@ -91,6 +96,7 @@ class EndpointCandidateSearch:
 
         Raises:
             ValidationError: 질의가 비었거나 top_k 가 허용 범위를 벗어난 경우.
+            DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
         """
         normalized_query = self._validate(query, options)
 
@@ -107,7 +113,11 @@ class EndpointCandidateSearch:
         return self._search_by_vector(normalized_query, candidate_chunks, options.top_k)
 
     def _validate(self, query: str, options: CandidateSearchOptions) -> str:
-        """질의·top_k 를 검증하고 공백을 제거한 질의를 반환한다."""
+        """질의·top_k·document_id 를 검증하고 공백을 제거한 질의를 반환한다.
+
+        미등록 document_id 를 빈 결과로 흘려보내면 호출 LLM 이 "문서가 없음"과
+        "결과가 없음"을 구분할 수 없으므로 명시적으로 오류를 낸다.
+        """
         normalized_query = (query or "").strip()
         if not normalized_query:
             raise ValidationError("query must not be empty")
@@ -115,12 +125,17 @@ class EndpointCandidateSearch:
             raise ValidationError(
                 f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}: {options.top_k}"
             )
+        if (
+            options.document_id is not None
+            and self._document_repo is not None
+            and self._document_repo.get(options.document_id) is None
+        ):
+            raise DocumentNotFoundError(options.document_id)
         return normalized_query
 
     def _endpoint_chunks(self, document_id: str | None) -> list[ApiChunk]:
         """검색 대상이 되는 endpoint 타입 청크만 SQL 필터로 조회한다."""
-        chunks = self._chunk_repo.list_by_endpoint_filter(document_id=document_id)
-        return [c for c in chunks if c.chunk_type == "endpoint"]
+        return list(self._chunk_repo.list_endpoint_chunks(document_id=document_id))
 
     def _search_by_keyword(
         self, query: str, chunks: list[ApiChunk], top_k: int

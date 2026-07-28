@@ -127,15 +127,199 @@
    페이로드 변환 시점에 키 존재 여부를 결정**했다. 서비스 계층은 dict 조립을
    모르게 하고, "키가 아예 없어야 한다"는 도구 계약은 변환 함수가 책임진다.
 
+## QA 피드백 반영 (QA_REPORT.md, 조건부 합격 6.9/10)
+
+지적 6건을 모두 반영했다. 방향 판단은 "현재 방향 유지"였으므로 아키텍처는
+그대로 두고 지적된 결함만 고쳤다.
+
+1. **[치명] 공허 참 테스트 제거** — `test_vector_fallback_results_are_marked_as_vector`가
+   빈 리스트에 `all()`을 걸어 통과하던 문제. 근본 원인은 `HashEmbeddingProvider`의
+   코사인 유사도가 서로 다른 텍스트에 대해 정확히 `0.0`이라(직접 재현 확인)
+   `score > 0.0` 필터가 후보를 전량 제거한 것이다.
+   `tests/fixtures/fakes.py`에 `StubVectorSearch`(양수 점수 고정)를 추가하고
+   테스트 3건으로 교체했다: `test_vector_fallback_actually_produces_candidates`
+   (`assert candidates`를 **먼저** 단언), `test_vector_fallback_respects_top_k`,
+   `test_zero_score_vector_hits_are_discarded`(현행 필터를 의도된 사양으로 고정).
+   **검증**: `_search_by_vector`의 `"vector"`를 `"keyword"`로 바꾸는 회귀를
+   일부러 주입해 새 테스트 2건이 실패함을 확인했다(구 테스트는 통과했을 것).
+   같은 패턴을 전수 점검해 `test_missing_endpoint_row_is_skipped`에도
+   `assert candidates` 가드를 추가했다.
+2. **[중대] `_endpoint_chunks()` SQL 필터화** — `ChunkRepository.list_endpoint_chunks()`를
+   신설해 `WHERE chunk_type = 'endpoint'`를 SQL 로 내렸다. 기존
+   `list_by_endpoint_filter`의 시그니처·동작은 `SearchService`/FastAPI 라우트가
+   쓰므로 건드리지 않았다. docstring 과 실제 동작의 불일치도 함께 해소됐다.
+3. **[중대] `document_id` 에러 계약 통일** — 세 도구 모두 미등록 `document_id`에
+   대해 `DocumentNotFoundError`(`code="document_not_found"`)를 낸다.
+   `EndpointCandidateSearch._validate()`와 `SchemaRefResolver._find_schema()`에
+   문서 존재 검증을 추가했다. `resolve_ref`는 이제 "문서 없음"과 "문서는 있으나
+   스키마 없음"이 서로 다른 코드로 구분된다. 세 도구를 한 번에 검증하는
+   파라미터화 통합 테스트를 추가했다.
+4. **`resolve_ref` 모호성 해소** — `ResolvedSchema`/`ResolvedSchemaResult`에
+   `document_id`를 추가해 어느 문서의 스키마인지 밝힌다. 아울러
+   `DocumentRepository.list_all()`의 정렬에 2차 키(`ApiDocument.id`)를 추가해
+   `indexed_at` 동률 시에도 완전 결정성을 확보했다.
+5. **`_run_bundle` 제네릭 타입 힌트** — `TypeVar("_T")` + `Callable[[ServiceBundle], _T]`로
+   반환 타입이 전파되게 했다. 내 담당 도구의 `_inner(bundle: ServiceBundle) -> ...`도
+   모두 명시했다.
+6. **문서 정정** — lint 위반 6건 → **12건**으로 정정, `security` 미지원을
+   SPEC 기능 2에 "범위 외"로 명기했다.
+
 ## 알려진 제약
 
-- `security`(인증 요구사항) 필드는 상세 응답에 포함하지 않았다. 현재 파서·ORM
-  어디에도 저장되지 않아 노출하려면 스키마 마이그레이션이 필요하고, 이는 기능
-  2의 "기존과 동일 + `schema_ref` 명시 노출" 범위를 넘어선다.
-- `resolve_ref`에서 `document_id`를 생략하면 등록 문서를 색인 시각 내림차순으로
-  훑어 첫 매칭 스키마를 쓴다. 서로 다른 문서에 동명 스키마가 있으면 최신 문서
-  것이 선택된다(결정적이지만 문서 간 모호성은 남는다). `document_id`를 넘기면
-  해소된다.
-- 리포지토리에 이미 존재하던 lint 위반(E501 등, `app/models/openapi.py`
-  `app/services/parser/openapi_parser.py` 등 6건)은 이번 변경 범위 밖이라
-  수정하지 않았다.
+- **`security`(인증 요구사항) 필드는 이번 범위 외다.** 현재 파서(`openapi_parser.py`)가
+  `security`를 추출하지 않고 ORM(`ApiEndpoint`)에도 컬럼이 없어, 노출하려면
+  파서 확장 + 모델 컬럼 추가 + Alembic 마이그레이션이 필요하다. 이는 기능 2의
+  출력 정의("기존과 동일 + `schema_ref` 명시 노출")와 검증 기준 3개를 모두
+  넘어선다.
+  **SPEC 불일치 주의**: SPEC 데이터 흐름 다이어그램(A 경로 4단계)에는
+  "Responses/Security 반환"이라 적혀 있으나 기능 2의 출력 정의·검증 기준에는
+  `security`가 없다. 이 불일치는 SPEC 기능 2에 "범위 외" 주석으로 명기했으며,
+  실제 지원은 **별도 후속 태스크**로 분리한다.
+- `resolve_ref`에서 `document_id`를 생략하면 등록 문서를 색인 시각 내림차순
+  (동률 시 `id` 오름차순)으로 훑어 첫 매칭 스키마를 쓴다. 서로 다른 문서에
+  동명 스키마가 있으면 가장 최근 등록 문서 것이 선택된다. 이제 응답에
+  `document_id`가 포함되므로 호출 LLM 이 어느 문서의 스키마를 받았는지 확인할
+  수 있고, `document_id`를 넘기면 모호성 자체가 사라진다.
+- **임베딩 컬럼 지연 로딩(`load_only`/`defer`)은 도입하지 않았다.** `chunk_type`
+  SQL 필터로 전송량 문제의 주된 원인(불필요한 section/schema 청크)을 이미
+  제거했고, 남은 endpoint 청크의 임베딩은 벡터 보조 경로에서 실제로 쓰일 수
+  있다. 측정 없이 컬럼 지연 로딩까지 넣는 것은 과설계라고 판단했다. 대규모
+  문서에서 병목이 실측되면 그때 도입한다.
+- 리포지토리에 이미 존재하던 lint 위반은 이번 변경 범위 밖이라 수정하지 않았다.
+  실측 **12건**(E501 5건 / I001 4건 / F401 2건 + `main.py` F401 1건):
+  `app/main.py`, `app/models/openapi.py`, `app/services/examples/`,
+  `app/services/indexer/`, `app/services/ingestor/`, `app/services/parser/`,
+  `app/services/search/keyword_search.py`, `app/services/search/search_service.py`.
+  변경 전 베이스라인은 15건이었고 내 변경이 3건을 줄였다(신규 위반 0건).
+
+---
+
+# 자체 점검 — Drive/Notion 문서 검색 (SPEC 기능 5~8 + 기능 9 도구 등록)
+
+> 위 섹션(OpenAPI 재구조화, 기능 1~4)과는 별개 작업 단위다. 기능 1~4 는 커밋
+> `5870f90` 에서 이미 완료됐고, 이 섹션은 그 위에 Drive/Notion 경로를 추가한
+> 작업을 기록한다. OpenAPI 관련 코드는 건드리지 않았다.
+
+## SPEC 기능 체크
+
+- [x] **기능 5: Drive/Notion 소스 어댑터**
+  - 인터페이스: `app/services/documents/document_source.py`
+    (`DocumentSource` Protocol + `FileMeta` DTO)
+  - 구현: `app/services/documents/google_drive_source.py`,
+    `app/services/documents/notion_source.py`
+  - 구성 팩토리: `app/services/documents/source_factory.py`
+  - 공통 시각 파싱: `app/services/documents/time_parsing.py`
+  - 테스트: `tests/unit/test_document_sources.py` (39건),
+    `tests/unit/test_document_source_factory.py` (9건)
+- [x] **기능 6: 메타데이터 캐시 및 갱신**
+  - 모델: `app/models/document_meta.py` (`UNIQUE(source, external_id)`, 본문 미저장)
+  - 저장소: `app/repositories/document_meta_repository.py`
+  - 서비스: `app/services/documents/document_index_service.py`
+  - 마이그레이션: `alembic/versions/059294da406f_add_document_meta_cache_for_drive_notion.py`
+    (down_revision `b336d80334c8`)
+  - 테스트: `tests/unit/test_document_index_service.py` (17건),
+    `tests/unit/test_document_meta_repository.py` (9건)
+- [x] **기능 7: 2단계 후보 압축 문서 검색**
+  - 구현: `app/services/documents/document_search_service.py`
+    (`DocumentSearchService.search`)
+  - 테스트: `tests/unit/test_document_search_service.py` (28건)
+- [x] **기능 8: 문서 원문 조회**
+  - 구현: `DocumentSearchService.get_document` (같은 파일)
+  - 테스트: 위 파일 내 `get_document` 섹션 6건
+- [x] **기능 9(Drive/Notion 범위): MCP 도구 3개 등록**
+  - `search_documents` / `get_document` / `refresh_index` (`app/mcp_server.py`)
+  - 반환 TypedDict: `app/mcp_types.py`
+    (`DocumentSearchResponse`, `DocumentContentPayload`, `RefreshIndexResult`)
+  - 테스트: `tests/integration/test_mcp_documents.py` (21건)
+
+## SPEC 검증 기준 → 테스트 대응
+
+| SPEC 검증 기준 | 테스트 |
+|---|---|
+| 1단계 후보 0건이면 본문 fetch 없이 빈 리스트 | `test_returns_empty_without_fetch_when_no_candidate` (fetch 카운트 0), `test_no_candidate_never_touches_source` (폭발 페이크) |
+| 한 번의 검색이 fetch 하는 수 ≤ `top_k` | `test_fetch_count_never_exceeds_top_k`, `test_search_documents_fetch_count_respects_top_k` |
+| 제목에 쿼리 단어가 있으면 후보 포함 | `test_title_match_document_is_included` |
+| `source` 필터 지정 시 해당 source 만 | `test_source_filter_restricts_results`, `test_search_documents_source_filter` |
+| 삭제된 파일이 캐시에서 제거되고 `removed` 집계 | `test_deleted_file_is_removed_from_cache` |
+| `modified_at` 동일하면 `updated` 미포함 | `test_unchanged_modified_at_is_not_counted_as_updated` |
+| 부분 실패 시 처리된 행은 커밋됨 | `test_partial_failure_commits_already_processed_source`, `test_failed_source_is_retryable_on_next_refresh` |
+| 갱신이 본문을 가져오지 않음 | `test_refresh_does_not_fetch_document_bodies` |
+| 없는 `external_id` → `IntegrationError` | `test_get_document_unknown_id_raises_integration_error`, `test_get_document_unknown_id_returns_error_payload` |
+| 인증 실패를 스택트레이스 없이 변환 | `test_drive_http_errors_become_integration_error`, `test_notion_http_errors_become_integration_error` |
+| 반복 fetch 결정성 | `test_drive_fetch_is_deterministic`, `test_results_are_deterministic` |
+| 표준 에러 포맷 | `test_mcp_documents.py` 의 `*_returns_error_payload` 6건 |
+
+## 코드 자체 평가
+
+- **금지 패턴 사용 여부**: 없음.
+  - 전역 변수 상태 없음(어댑터는 `AppState.document_sources` 로 주입).
+  - 빈 `except` 없음. 모든 예외는 로깅하거나 `IntegrationError` 로 변환한다.
+  - 하드코딩 없음. API 베이스 URL·타임아웃·상한값은 모듈 상수 또는
+    `DOCS_MCP_` 접두사 환경변수로 관리한다.
+  - 최장 함수는 `GoogleDriveSource.list_files` 로 약 25줄이다. 100줄 초과 없음.
+- **타입 힌트 적용률**: 신규 코드 100%. `uv run mypy app/` → `No issues found`.
+  `Any` 는 외부 JSON 응답 dict 등 본질적으로 임의 타입인 경계에만 썼다.
+- **테스트 케이스 수**: 신규 125건 (전체 336건 통과, 기존 211건 무회귀).
+- **검증 방식**: 실제 자격증명이 없으므로 두 층으로 나눠 검증했다.
+  - `DocumentSource` Protocol 을 구현한 페이크(`tests/fixtures/document_sources.py`)를
+    주입해 검색·캐시·도구 배선 로직을 완전히 덮었다.
+  - 어댑터 자체의 응답 파싱과 오류 변환은 `httpx.MockTransport` 로 검증했다.
+    실제 네트워크로 나가는 테스트는 만들지 않았다.
+
+## 주요 설계 결정
+
+1. **`google-api-python-client` 를 쓰지 않고 httpx 로 REST 를 직접 호출했다.**
+   기존 `HttpOpenAPIFetcher` 와 동일한 방식으로 통일하고 의존성 트리를
+   가볍게 유지하기 위해서다. `google-auth` 만 추가했는데, 서비스 계정 JWT
+   서명·토큰 갱신은 직접 구현하면 보안 위험이 크기 때문이다. 이미
+   `google-genai` 의 전이 의존성으로 설치돼 있던 패키지라 실질적인 신규
+   설치는 없고, 직접 import 하므로 `pyproject.toml` 에 명시만 했다.
+2. **본문을 캐시하지 않는다.** `document_meta` 는 메타만 담는다. 협업 문서는
+   수시로 바뀌므로 최신성이 정확도보다 중요하고, 본문 저장은 저장 비용과
+   무효화 로직을 함께 불러온다. 대신 1단계 제목 매칭으로 후보를 압축해
+   실시간 fetch 횟수를 `top_k` 로 묶었다.
+3. **`top_k` 절단을 1단계(후보 선별) 시점에 수행했다.** 2단계에서 자르면
+   이미 fetch 한 뒤 버리는 셈이라 "fetch 수 ≤ `top_k`" 불변식이 깨진다.
+   `_select_candidates()` 가 `[: options.top_k]` 로 자른 뒤에야 fetch 가 시작된다.
+4. **부분 실패 허용을 소스 단위 커밋 경계로 구현했다.** `_refresh_source()` 가
+   소스 하나를 끝낼 때마다 `commit()` 하고, 실패하면 그 소스만 `rollback()` 한다.
+   전체가 실패했을 때만 `IntegrationError` 를 올려 "조용한 무동작"을 막았다.
+   개별 소스 실패는 `failed_sources` 로 보고해 호출 LLM 이 재시도를 판단할 수 있다.
+5. **검색 중 개별 문서 fetch 실패는 그 문서만 건너뛴다.** 문서 한 건의 권한
+   오류가 검색 전체를 죽이면 협업 환경에서 사용 불가능해진다.
+6. **한글 토크나이저를 별도로 뒀다.** 기존 `keyword_search.tokenize` 는
+   `[A-Za-z0-9_]+` 만 인식해 "로그인 설계서" 같은 한국어 제목을 전혀 자르지
+   못한다. 협업 문서 제목은 대부분 한국어이므로 `document_search_service.tokenize`
+   에서 한글 음절 범위를 함께 인식하게 했다. OpenAPI 쪽 토크나이저는 영문
+   `operationId`/`path` 매칭용이라 그대로 두는 편이 맞다고 판단했다.
+7. **자격증명이 없어도 서버가 기동된다.** `build_document_sources()` 가 구성
+   가능한 소스만 담고, 없으면 빈 dict 를 돌려준다. Drive 만 쓰는 팀, Notion 만
+   쓰는 팀 모두 지원하기 위해서다. 미구성 상태에서 도구를 호출하면
+   `IntegrationError` 로 "미구성"임을 명확히 알린다.
+8. **어댑터를 `AppState` 에, 서비스를 `ServiceBundle` 에 두었다.**
+   어댑터는 프로세스 수명 동안 재사용(토큰 캐싱)하고, 서비스는 요청 스코프
+   세션에 묶여야 하기 때문이다. `OpenAPIFetcher` 와 동일한 배치다.
+
+## 알려진 제약
+
+- **캐시에 없는 신규 문서는 검색되지 않는다.** SPEC 기능 7 에 명시된 제약이며,
+  `refresh_index` 재실행으로 해소한다. README 와 도구 docstring 에 명시했고
+  `test_search_documents_before_refresh_returns_empty` 로 계약을 고정했다.
+- **1단계 매칭은 제목·URL 토큰 겹침만 본다.** 제목에 질의어가 전혀 없고 본문에만
+  있는 문서는 후보에 들지 못한다. 이는 "본문 fetch 수를 `top_k` 로 제한한다"는
+  SPEC 불변식과 맞바꾼 결과다. 본문 기반 1단계를 하려면 본문을 색인해야 하는데,
+  그것은 "실시간 조회로 최신성 우선"이라는 설계 전제와 충돌한다.
+- **Drive 폴더 재귀 탐색에 `MAX_FOLDERS = 500` 상한이 있다.** 초과 시 경고
+  로그를 남기고 남은 하위 폴더를 건너뛴다. 무한 루프·API 폭주 방지가 목적이며,
+  실제로 넘는 팀이 나오면 상수를 설정값으로 올리면 된다.
+- **Notion 블록 순회에 깊이 4, 블록 2000 상한이 있다.** 같은 이유다. 상한을
+  넘는 문서는 앞부분만 반환된다.
+- **`refresh_index` 는 수동 트리거만 지원한다.** SPEC 이 "MCP 도구 또는 주기
+  실행"이라 했으나 주기 실행 스케줄러는 이번 범위에서 제외했다. 서버 프로세스
+  모델(MCP stdio) 상 스케줄러를 두려면 별도 워커가 필요하다.
+- **실제 Drive/Notion API 를 상대로는 검증하지 못했다.** 자격증명이 없어
+  `httpx.MockTransport` 로 응답 스키마를 흉내 냈다. 실환경 연동 시
+  `webViewLink` 부재나 공유 드라이브 권한 등에서 조정이 필요할 수 있다.
+- **리포지토리에 이미 존재하던 lint 위반 12건**(`app/models/openapi.py`,
+  `app/services/parser/openapi_parser.py` 등 이번 범위 밖 파일)은 수정하지
+  않았다. 이번에 추가한 파일의 위반은 0건이다.

@@ -8,14 +8,14 @@ from __future__ import annotations
 import pytest
 
 from app.api.dependencies import build_services
-from app.core.errors import ValidationError
+from app.core.errors import DocumentNotFoundError, ValidationError
 from app.services.search.endpoint_candidate_search import (
     CandidateSearchOptions,
     EndpointCandidateSearch,
 )
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
-from tests.fixtures.fakes import ExplodingEmbeddingProvider
+from tests.fixtures.fakes import ExplodingEmbeddingProvider, StubVectorSearch
 
 NO_MATCH_QUERY = "zzzzz_nothing_matches_here_xxx"
 
@@ -172,17 +172,65 @@ def test_vector_fallback_triggers_only_when_keyword_returns_zero(
     assert counting_embedding_provider.embed_call_count == 1
 
 
-def test_vector_fallback_results_are_marked_as_vector(
+def _search_with_stub_vector(
+    app_state, stub_score: float, top_k: int, stub_chunk_limit: int | None = None
+) -> tuple[list, "StubVectorSearch"]:
+    """스텁 벡터 검색기를 주입한 검색기로 키워드 0건 질의를 수행한다.
+
+    `HashEmbeddingProvider` 는 서로 다른 텍스트의 유사도가 정확히 0.0 이라
+    실제 임베딩으로는 벡터 분기가 후보를 만들지 못한다. 양수 점수를 내는
+    스텁을 주입해야만 분기가 실증된다.
+    """
+    bundle = _bundle(app_state)
+    endpoint_chunk_ids = [
+        c.id for c in bundle.chunk_repo.list_endpoint_chunks()
+    ]
+    assert endpoint_chunk_ids, "엔드포인트 청크가 있어야 스텁 검증이 의미 있다"
+    stub = StubVectorSearch(endpoint_chunk_ids[:stub_chunk_limit], score=stub_score)
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=KeywordSearch(bundle.chunk_repo),
+        vector_search=stub,
+        document_repo=bundle.document_repo,
+    )
+    candidates = search.search(NO_MATCH_QUERY, CandidateSearchOptions(top_k=top_k))
+    return candidates, stub
+
+
+def test_vector_fallback_actually_produces_candidates(
     app_state, sample_openapi_3: str
 ) -> None:
-    """벡터 보조로 찾은 후보는 match_type="vector" 로 표시된다."""
+    """벡터 보조가 실제로 후보를 만들고 전부 match_type="vector" 로 표시된다."""
     _register(app_state, sample_openapi_3)
 
-    candidates = _bundle(app_state).candidate_search.search(
-        NO_MATCH_QUERY, CandidateSearchOptions(top_k=5)
-    )
+    candidates, stub = _search_with_stub_vector(app_state, stub_score=0.9, top_k=5)
 
+    # 공허 참 방지: 비어 있지 않음을 먼저 단언한 뒤 match_type 을 검증한다.
+    assert candidates
+    assert stub.call_count == 1
     assert all(c.match_type == "vector" for c in candidates)
+    assert all(c.endpoint_id for c in candidates)
+
+
+def test_vector_fallback_respects_top_k(app_state, sample_openapi_3: str) -> None:
+    """스텁이 더 많이 내놓아도 top_k 만큼만 잘라 반환한다."""
+    _register(app_state, sample_openapi_3)
+
+    candidates, _ = _search_with_stub_vector(app_state, stub_score=0.9, top_k=2)
+
+    assert len(candidates) == 2
+    assert all(c.match_type == "vector" for c in candidates)
+
+
+def test_zero_score_vector_hits_are_discarded(app_state, sample_openapi_3: str) -> None:
+    """점수가 0.0 인 벡터 후보는 의미 없는 매칭으로 보고 폐기한다(의도된 사양)."""
+    _register(app_state, sample_openapi_3)
+
+    candidates, stub = _search_with_stub_vector(app_state, stub_score=0.0, top_k=5)
+
+    assert stub.call_count == 1
+    assert candidates == []
 
 
 def test_vector_fallback_skipped_when_disabled(app_state, sample_openapi_3: str) -> None:
@@ -254,6 +302,18 @@ def test_out_of_range_top_k_raises_validation_error(
         )
 
 
+def test_unknown_document_id_raises_not_found(app_state, sample_openapi_3: str) -> None:
+    """미등록 document_id 는 빈 결과가 아니라 DocumentNotFoundError 로 구분된다."""
+    _register(app_state, sample_openapi_3)
+
+    with pytest.raises(DocumentNotFoundError) as exc_info:
+        _bundle(app_state).candidate_search.search(
+            "pet", CandidateSearchOptions(top_k=5, document_id="no-such-doc")
+        )
+
+    assert exc_info.value.code == "document_not_found"
+
+
 def test_boundary_top_k_values_are_accepted(app_state, sample_openapi_3: str) -> None:
     """경계값 top_k=1 과 top_k=50 은 허용된다."""
     _register(app_state, sample_openapi_3)
@@ -302,4 +362,6 @@ def test_missing_endpoint_row_is_skipped(app_state, sample_openapi_3: str) -> No
     )
     candidates = search.search("pet", CandidateSearchOptions(top_k=10))
 
+    # 공허 참 방지: 나머지 후보가 실제로 남아 있어야 "건너뛰기"가 검증된다.
+    assert candidates
     assert all(c.endpoint_id != "missing-endpoint-id" for c in candidates)

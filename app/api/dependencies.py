@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -15,9 +15,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import get_settings
 from app.core.db import create_session_factory
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
+from app.services.documents.document_index_service import DocumentIndexService
+from app.services.documents.document_search_service import DocumentSearchService
+from app.services.documents.document_source import DocumentSource
+from app.services.documents.source_factory import build_document_sources
 from app.services.endpoints.endpoint_details_service import EndpointDetailsService
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import (
@@ -49,6 +54,8 @@ class AppState:
     fetcher: OpenAPIFetcher
     hybrid_alpha: float = 0.4
     vector_fallback_enabled: bool = True
+    #: Drive/Notion 어댑터 매핑(`drive`/`notion` → 어댑터). 자격증명이 없으면 빈 dict.
+    document_sources: dict[str, DocumentSource] = field(default_factory=dict)
 
     @classmethod
     def from_engine(
@@ -58,10 +65,13 @@ class AppState:
         embedding_dim: int = 256,
         hybrid_alpha: float = 0.4,
         vector_fallback_enabled: bool | None = None,
+        document_sources: dict[str, DocumentSource] | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
         `vector_fallback_enabled` 를 생략하면 설정의 Gemini API 키 유무로 결정한다.
+        `document_sources` 를 생략하면 설정값에서 구성 가능한 Drive/Notion
+        어댑터만 자동으로 채운다(테스트에서는 페이크를 명시 주입한다).
         """
         return cls(
             engine=engine,
@@ -74,6 +84,11 @@ class AppState:
                 is_vector_fallback_available()
                 if vector_fallback_enabled is None
                 else vector_fallback_enabled
+            ),
+            document_sources=(
+                build_document_sources(get_settings())
+                if document_sources is None
+                else dict(document_sources)
             ),
         )
 
@@ -118,6 +133,7 @@ class ServiceBundle:
     endpoint_repo: EndpointRepository
     chunk_repo: ChunkRepository
     sync_history_repo: SyncHistoryRepository
+    document_meta_repo: DocumentMetaRepository
     sync_service: SyncService
     search_service: SearchService
     rag_service: RAGService
@@ -126,6 +142,8 @@ class ServiceBundle:
     endpoint_details_service: EndpointDetailsService
     schema_ref_resolver: SchemaRefResolver
     tag_catalog_service: TagCatalogService
+    document_search_service: DocumentSearchService
+    document_index_service: DocumentIndexService
 
 
 def build_services(state: AppState) -> Iterator[ServiceBundle]:
@@ -139,6 +157,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         endpoint_repo = EndpointRepository(session)
         chunk_repo = ChunkRepository(session)
         sync_history_repo = SyncHistoryRepository(session)
+        document_meta_repo = DocumentMetaRepository(session)
         indexer = IndexerService(
             endpoint_repo=endpoint_repo,
             chunk_repo=chunk_repo,
@@ -170,6 +189,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             keyword_search=keyword_search,
             vector_search=vector_search,
             vector_fallback_enabled=state.vector_fallback_enabled,
+            document_repo=document_repo,
         )
         endpoint_details_service = EndpointDetailsService(
             endpoint_repo=endpoint_repo,
@@ -183,12 +203,22 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             endpoint_repo=endpoint_repo,
             document_repo=document_repo,
         )
+        document_search_service = DocumentSearchService(
+            meta_repo=document_meta_repo,
+            sources=state.document_sources,
+        )
+        document_index_service = DocumentIndexService(
+            session=session,
+            meta_repo=document_meta_repo,
+            sources=list(state.document_sources.values()),
+        )
         yield ServiceBundle(
             session=session,
             document_repo=document_repo,
             endpoint_repo=endpoint_repo,
             chunk_repo=chunk_repo,
             sync_history_repo=sync_history_repo,
+            document_meta_repo=document_meta_repo,
             sync_service=sync_service,
             search_service=search_service,
             rag_service=rag_service,
@@ -197,6 +227,8 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             endpoint_details_service=endpoint_details_service,
             schema_ref_resolver=schema_ref_resolver,
             tag_catalog_service=tag_catalog_service,
+            document_search_service=document_search_service,
+            document_index_service=document_index_service,
         )
     finally:
         session.close()

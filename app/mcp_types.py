@@ -144,9 +144,14 @@ class SchemaFieldItem(TypedDict):
 
 
 class ResolvedSchemaResult(TypedDict):
-    """resolve_ref 의 반환 타입."""
+    """resolve_ref 의 반환 타입.
+
+    `document_id` 는 스키마가 속한 문서를 밝혀, 여러 문서에 동명 스키마가 있을 때
+    어느 문서의 것을 받았는지 확인할 수 있게 한다.
+    """
 
     name: str
+    document_id: str
     fields: list[SchemaFieldItem]
 
 
@@ -161,3 +166,44 @@ class TagListResult(TypedDict):
     """list_tags 의 반환 타입."""
 
     tags: list[TagItem]
+
+
+class DocumentSearchItemPayload(TypedDict):
+    """search_documents 가 반환하는 결과 한 건.
+
+    score 는 제목 매칭(1단계)과 본문 매칭(2단계)을 합산한 0.0~1.0 값이다.
+    """
+
+    title: str
+    source: Literal["drive", "notion"]
+    url: str
+    snippet: str
+    score: float
+
+
+class DocumentSearchResponse(TypedDict):
+    """search_documents 의 반환 타입."""
+
+    items: list[DocumentSearchItemPayload]
+
+
+class DocumentContentPayload(TypedDict):
+    """get_document 의 반환 타입(fetch 시점의 최신 원문)."""
+
+    title: str
+    source: Literal["drive", "notion"]
+    url: str
+    content: str
+
+
+class RefreshIndexResult(TypedDict):
+    """refresh_index 의 반환 타입.
+
+    `failed_sources` 는 부분 실패한 소스 이름 목록이다. 비어 있으면 전부 성공.
+    """
+
+    synced: int
+    added: int
+    updated: int
+    removed: int
+    failed_sources: list[str]

@@ -10,6 +10,7 @@ from typing import Any
 
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import EmbeddingProvider
+from app.services.search.vector_search import VectorSearchHit
 
 
 class CountingEmbeddingProvider:
@@ -78,3 +79,36 @@ class CountingExampleService:
         """호출 횟수를 기록한 뒤 위임 서비스로 예시를 생성한다."""
         self.generate_call_count += 1
         return self._delegate.generate(endpoint_id, fmt)
+
+
+class StubVectorSearch:
+    """고정된 점수를 내는 페이크 벡터 검색기.
+
+    `HashEmbeddingProvider` 는 서로 다른 텍스트의 코사인 유사도가 정확히 0.0 이라
+    실제 벡터 보조 분기를 재현할 수 없다(점수 0 후보가 전량 폐기되어 결과가 항상
+    빈 리스트가 된다). 이 페이크로 양수 점수를 강제해 벡터 분기를 실증한다.
+    """
+
+    def __init__(self, chunk_ids: list[str], score: float = 0.9) -> None:
+        """반환할 청크 ID 목록과 고정 점수를 보관하고 호출 카운터를 초기화한다."""
+        self._chunk_ids = list(chunk_ids)
+        self._score = score
+        self.call_count = 0
+
+    def search(
+        self,
+        query: str,
+        top_k: int,
+        candidates: set[str] | None = None,
+    ) -> list[VectorSearchHit]:
+        """보관한 청크 ID 를 고정 점수로 top_k 만큼 반환한다."""
+        self.call_count += 1
+        allowed = [
+            chunk_id
+            for chunk_id in self._chunk_ids
+            if candidates is None or chunk_id in candidates
+        ]
+        return [
+            VectorSearchHit(chunk_id=chunk_id, score=self._score)
+            for chunk_id in allowed[:top_k]
+        ]

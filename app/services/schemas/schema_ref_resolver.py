@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.errors import ValidationError
+from app.core.errors import DocumentNotFoundError, ValidationError
 from app.models.openapi import ApiSchema
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
@@ -31,9 +31,14 @@ class ResolvedField:
 
 @dataclass(frozen=True)
 class ResolvedSchema:
-    """펼쳐진 스키마 전체(이름 + 필드 목록)."""
+    """펼쳐진 스키마 전체(이름 + 소속 문서 + 필드 목록).
+
+    `document_id` 를 함께 담아, 여러 문서에 동명 스키마가 있을 때 호출 LLM 이
+    어느 문서의 스키마를 받았는지 확인할 수 있게 한다.
+    """
 
     name: str
+    document_id: str
     fields: list[ResolvedField]
 
 
@@ -66,13 +71,17 @@ class SchemaRefResolver:
             ref: `#/components/schemas/Product` 형태의 로컬 참조.
                 Swagger 2.0 의 `#/definitions/Product` 도 허용한다.
             document_id: 특정 문서로 조회 범위를 제한할 때 지정. 생략하면
-                등록된 모든 문서에서 같은 이름의 스키마를 찾는다.
+                등록된 모든 문서에서 같은 이름의 스키마를 찾는다. 여러 문서에
+                동명 스키마가 있으면 가장 최근 등록 문서가 선택되므로,
+                모호성을 없애려면 document_id 지정을 권장한다.
 
         Returns:
-            스키마 이름과 필드 목록. 동일 입력에 대해 항상 동일 결과(결정성).
+            스키마 이름·소속 document_id·필드 목록. 동일 입력에 대해 항상
+            동일 결과(결정성).
 
         Raises:
             ValidationError: 지원하지 않는 참조 형식인 경우.
+            DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
             SchemaRefNotFoundError: 해당 이름의 컴포넌트 스키마가 없는 경우.
         """
         schema_name = parse_local_schema_ref(ref)
@@ -81,16 +90,24 @@ class SchemaRefResolver:
             raise SchemaRefNotFoundError(ref)
         return ResolvedSchema(
             name=schema.name,
+            document_id=schema.document_id,
             fields=extract_fields(schema.schema),
         )
 
     def _find_schema(self, schema_name: str, document_id: str | None) -> ApiSchema | None:
         """문서 범위에 따라 컴포넌트 스키마를 조회한다.
 
-        document_id 가 없으면 등록 문서를 색인 시각 내림차순으로 훑어
-        가장 먼저 매칭되는 스키마를 쓴다(문서 목록 순서가 결정적이므로 결과도 결정적).
+        document_id 가 주어지면 먼저 문서 존재를 검증해, "문서 자체가 없음"과
+        "문서는 있으나 스키마가 없음"이 서로 다른 오류로 구분되게 한다.
+        생략하면 등록 문서를 색인 시각 내림차순(동률 시 id 오름차순)으로 훑어
+        가장 먼저 매칭되는 스키마를 쓴다.
+
+        Raises:
+            DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
         """
         if document_id is not None:
+            if self._document_repo.get(document_id) is None:
+                raise DocumentNotFoundError(document_id)
             return self._endpoint_repo.get_schema_by_name(document_id, schema_name)
         for document in self._document_repo.list_all():
             found = self._endpoint_repo.get_schema_by_name(document.id, schema_name)

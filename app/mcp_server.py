@@ -6,12 +6,13 @@ FastMCP를 사용하여 기존 RAG 및 검색 서비스를 Claude와 같은 LLM�
 from __future__ import annotations
 
 import json
-from typing import Any
+from collections.abc import Callable
+from typing import Any, Literal, TypeVar, cast
 
 import anyio
 from fastmcp import FastMCP
 
-from app.api.dependencies import AppState, build_services
+from app.api.dependencies import AppState, ServiceBundle, build_services
 from app.bootstrap import bootstrap_app_state
 from app.core.config import get_settings
 from app.core.db import managed_session
@@ -23,6 +24,9 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.mcp_types import (
     Citation,
+    DocumentContentPayload,
+    DocumentSearchItemPayload,
+    DocumentSearchResponse,
     DocumentSummary,
     EndpointCandidateItem,
     EndpointDetails,
@@ -30,6 +34,7 @@ from app.mcp_types import (
     ErrorPayload,
     ParameterItem,
     RagAnswer,
+    RefreshIndexResult,
     RegisterDocumentResult,
     RequestBodyItem,
     ResolvedSchemaResult,
@@ -39,6 +44,12 @@ from app.mcp_types import (
     TagListResult,
 )
 from app.repositories.document_repository import DocumentRepository
+from app.services.documents.document_index_service import RefreshResult
+from app.services.documents.document_search_service import (
+    DocumentContent,
+    DocumentSearchItem,
+    DocumentSearchOptions,
+)
 from app.services.endpoints.endpoint_details_service import EndpointDetailsResult
 from app.services.schemas.schema_ref_resolver import ResolvedSchema
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
@@ -46,8 +57,11 @@ from app.services.tags.tag_catalog_service import TagSummary
 
 _LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
 
+# _run_bundle 이 내부 함수의 반환 타입을 그대로 전파하도록 하는 제네릭 타입 변수.
+_T = TypeVar("_T")
 
-def _run_bundle(app_state: AppState, fn):
+
+def _run_bundle(app_state: AppState, fn: Callable[[ServiceBundle], _T]) -> _T:
     """build_services 번들을 열고 fn(bundle)을 실행한 뒤 세션을 닫는다."""
     bundle_iter = build_services(app_state)
     bundle = next(bundle_iter)
@@ -133,7 +147,11 @@ def _to_resolved_schema_payload(resolved: ResolvedSchema) -> ResolvedSchemaResul
         }
         for f in resolved.fields
     ]
-    return {"name": resolved.name, "fields": fields}
+    return {
+        "name": resolved.name,
+        "document_id": resolved.document_id,
+        "fields": fields,
+    }
 
 
 def _to_tag_list_payload(summaries: list[TagSummary]) -> TagListResult:
@@ -142,6 +160,42 @@ def _to_tag_list_payload(summaries: list[TagSummary]) -> TagListResult:
         {"name": s.name, "endpoint_count": s.endpoint_count} for s in summaries
     ]
     return {"tags": tags}
+
+
+def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSearchResponse:
+    """협업 문서 검색 결과를 MCP 응답 dict 로 변환한다."""
+    payload_items: list[DocumentSearchItemPayload] = [
+        {
+            "title": item.title,
+            "source": cast(Literal["drive", "notion"], item.source),
+            "url": item.url,
+            "snippet": item.snippet,
+            "score": item.score,
+        }
+        for item in items
+    ]
+    return {"items": payload_items}
+
+
+def _to_document_content_payload(content: DocumentContent) -> DocumentContentPayload:
+    """협업 문서 원문 조회 결과를 MCP 응답 dict 로 변환한다."""
+    return {
+        "title": content.title,
+        "source": cast(Literal["drive", "notion"], content.source),
+        "url": content.url,
+        "content": content.content,
+    }
+
+
+def _to_refresh_payload(result: RefreshResult) -> RefreshIndexResult:
+    """메타 캐시 갱신 집계를 MCP 응답 dict 로 변환한다."""
+    return {
+        "synced": result.synced,
+        "added": result.added,
+        "updated": result.updated,
+        "removed": result.removed,
+        "failed_sources": list(result.failed_sources),
+    }
 
 
 def create_mcp_server(app_state: AppState) -> FastMCP:
@@ -252,11 +306,12 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         Returns:
             items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,
             path, summary, match_type("keyword" 또는 "vector") 필드를 갖는다.
-            검색 중 도메인/외부 연동 오류가 발생하면 error/code/message 필드를
-            담은 ErrorPayload를 대신 반환한다.
+            매칭이 없으면 items 는 빈 리스트다. document_id가 등록되지 않은
+            문서이면(빈 결과와 구분해) code="document_not_found" 에러
+            페이로드를 반환한다.
         """
         def _sync() -> EndpointSearchResponse | ErrorPayload:
-            def _inner(bundle) -> EndpointSearchResponse:
+            def _inner(bundle: ServiceBundle) -> EndpointSearchResponse:
                 options = CandidateSearchOptions(top_k=top_k, document_id=document_id)
                 candidates = bundle.candidate_search.search(query, options)
                 items: list[EndpointCandidateItem] = [
@@ -300,7 +355,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
             대신 반환한다.
         """
         def _sync() -> EndpointDetails | ErrorPayload:
-            def _inner(bundle) -> EndpointDetails:
+            def _inner(bundle: ServiceBundle) -> EndpointDetails:
                 result = bundle.endpoint_details_service.get_details(
                     endpoint_id, include_example=include_example
                 )
@@ -324,15 +379,18 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         Args:
             ref: `#/components/schemas/Product` 형태의 로컬 참조 문자열.
             document_id: 특정 문서의 스키마로 한정하고 싶을 때 지정. 생략하면
-                등록된 문서 전체에서 같은 이름의 스키마를 찾는다.
+                등록된 문서 전체에서 같은 이름의 스키마를 찾으며, 여러 문서에
+                동명 스키마가 있으면 **가장 최근 등록 문서**가 선택된다.
+                모호성을 없애려면 document_id 지정을 권장한다.
 
         Returns:
-            name(스키마 이름)과 fields(name/type/required/description 목록)를
-            담은 dict. 참조 형식이 잘못됐거나 해당 스키마가 없으면
-            error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
+            name(스키마 이름), document_id(스키마가 속한 문서),
+            fields(name/type/required/description 목록)를 담은 dict.
+            참조 형식이 잘못됐거나, document_id가 미등록이거나, 해당 스키마가
+            없으면 error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
         def _sync() -> ResolvedSchemaResult | ErrorPayload:
-            def _inner(bundle) -> ResolvedSchemaResult:
+            def _inner(bundle: ServiceBundle) -> ResolvedSchemaResult:
                 resolved = bundle.schema_ref_resolver.resolve(ref, document_id=document_id)
                 return _to_resolved_schema_payload(resolved)
             try:
@@ -358,9 +416,99 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
             ErrorPayload를 대신 반환한다.
         """
         def _sync() -> TagListResult | ErrorPayload:
-            def _inner(bundle) -> TagListResult:
+            def _inner(bundle: ServiceBundle) -> TagListResult:
                 summaries = bundle.tag_catalog_service.list_tags(document_id=document_id)
                 return _to_tag_list_payload(summaries)
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def search_documents(
+        query: str,
+        top_k: int = 5,
+        source: str | None = None,
+    ) -> DocumentSearchResponse | ErrorPayload:
+        """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
+
+        2단계로 동작한다. 먼저 메타 캐시의 제목으로 후보를 추리고, 그 후보
+        본문만 원본 API 에서 실시간으로 가져와 스니펫과 점수를 만든다. 따라서
+        캐시에 없는 신규 문서는 검색되지 않을 수 있으며, 그럴 때는
+        refresh_index 를 먼저 실행한다. OpenAPI 명세 검색은 이 도구가 아니라
+        search_endpoints 를 쓴다.
+
+        Args:
+            query: 검색할 자연어 또는 키워드 질의.
+            top_k: 반환할 최대 결과 수(1~50). 실시간으로 본문을 가져오는 문서
+                수의 상한이기도 하다.
+            source: "drive" 또는 "notion" 으로 출처를 한정할 때 지정.
+
+        Returns:
+            items 키에 결과 리스트를 담은 dict. 각 항목은 title, source, url,
+            snippet, score 필드를 갖는다. 관련 문서가 없으면 빈 리스트다.
+            검색 중 도메인/외부 연동 오류가 발생하면 error/code/message 필드를
+            담은 ErrorPayload를 대신 반환한다.
+        """
+        def _sync() -> DocumentSearchResponse | ErrorPayload:
+            def _inner(bundle) -> DocumentSearchResponse:
+                options = DocumentSearchOptions(top_k=top_k, source=source)
+                items = bundle.document_search_service.search(query, options)
+                return _to_document_search_payload(items)
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def get_document(source: str, external_id: str) -> DocumentContentPayload | ErrorPayload:
+        """협업 문서 한 건의 전체 원문을 조회한다.
+
+        search_documents 로 찾은 문서의 스니펫만으로 부족할 때 쓴다. 본문은
+        캐시하지 않으므로 항상 호출 시점의 최신 내용을 돌려준다.
+
+        Args:
+            source: "drive" 또는 "notion".
+            external_id: Drive file ID 또는 Notion page ID.
+
+        Returns:
+            title, source, url, content 필드를 갖는 dict. 존재하지 않는
+            external_id 이거나 권한이 없으면 error/code/message 필드를 담은
+            ErrorPayload를 대신 반환한다.
+        """
+        def _sync() -> DocumentContentPayload | ErrorPayload:
+            def _inner(bundle) -> DocumentContentPayload:
+                content = bundle.document_search_service.get_document(source, external_id)
+                return _to_document_content_payload(content)
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def refresh_index(source: str | None = None) -> RefreshIndexResult | ErrorPayload:
+        """협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다.
+
+        문서 목록과 메타데이터만 갱신하고 본문은 저장하지 않는다. 새로 만든
+        문서가 search_documents 에 잡히지 않을 때 실행한다.
+
+        Args:
+            source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
+                모든 소스를 갱신한다.
+
+        Returns:
+            synced(조회 건수), added, updated, removed, failed_sources 를 담은
+            dict. 일부 소스만 실패하면 성공한 소스의 변경분은 그대로 반영되고
+            실패한 소스 이름이 failed_sources 에 담긴다. 소스가 하나도 구성돼
+            있지 않거나 전부 실패하면 error/code/message 필드를 담은
+            ErrorPayload를 대신 반환한다.
+        """
+        def _sync() -> RefreshIndexResult | ErrorPayload:
+            def _inner(bundle) -> RefreshIndexResult:
+                return _to_refresh_payload(bundle.document_index_service.refresh(source=source))
             try:
                 return _run_bundle(app_state, _inner)
             except (DomainError, IntegrationError) as e:
@@ -408,7 +556,7 @@ async def query_rag(
         필드를 담은 ErrorPayload를 대신 반환한다.
     """
     def _sync() -> RagAnswer | ErrorPayload:
-        def _inner(bundle) -> RagAnswer:
+        def _inner(bundle: ServiceBundle) -> RagAnswer:
             result = bundle.rag_service.answer(
                 question=question,
                 top_k=top_k,

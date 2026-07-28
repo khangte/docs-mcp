@@ -39,6 +39,7 @@ app/
 ├── repositories/    # 데이터베이스 액세스 레이어 (CRUD)
 ├── schemas/         # Pydantic DTO (요청/응답 모델)
 └── services/        # 비즈니스 로직
+    ├── documents/   # Drive/Notion 협업 문서 소스 어댑터·메타 캐시·검색
     ├── examples/    # 호출 예시 코드 생성 서비스
     ├── indexer/     # 청크 생성 및 벡터 색인 서비스
     ├── ingestor/    # 문서 수집 및 동기화 서비스
@@ -80,7 +81,20 @@ uv run alembic upgrade head
 | `DOCS_MCP_GEMINI_API_KEY` | No | Gemini API 키. 비워두면 LLM/임베딩이 각각 템플릿·해시 기반으로 폴백 | (없음) |
 | `DOCS_MCP_GEMINI_MODEL` | No | Gemini 답변 생성 모델 | `gemini-2.0-flash` |
 | `DOCS_MCP_GEMINI_EMBEDDING_MODEL` | No | Gemini 임베딩 모델 | `gemini-embedding-001` |
+| `DOCS_MCP_DRIVE_FOLDER_ID` | No | 검색 범위로 고정할 Google Drive 폴더 ID(하위 폴더 재귀 포함). 비우면 Drive 소스 비활성 | (없음) |
+| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE` | No | 서비스 계정 키 파일 경로 | (없음) |
+| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON` | No | 서비스 계정 키 JSON 문자열(파일 경로보다 우선) | (없음) |
+| `DOCS_MCP_NOTION_TOKEN` | No | Notion Integration Token. 비우면 Notion 소스 비활성 | (없음) |
+| `DOCS_MCP_NOTION_DATABASE_ID` | No | 검색 범위를 특정 Notion 데이터베이스 하위로 한정 | (없음) |
+| `DOCS_MCP_NOTION_VERSION` | No | Notion REST API 버전(`Notion-Version` 헤더) | `2022-06-28` |
+| `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | No | Drive/Notion HTTP 타임아웃(초) | `15.0` |
+| `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS` | No | 문서 본문 fetch 시 잘라낼 최대 문자 수 | `200000` |
 <!-- /AUTO-GENERATED -->
+
+Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 폴더를 그 서비스
+계정 이메일에 **뷰어로 공유**합니다. 팀원 개별 OAuth 로그인은 필요 없습니다.
+Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
+해당 Integration 에 연결합니다.
 
 ### 4. 서버 실행
 
@@ -132,13 +146,23 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 | `register_document` | 신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별) | document_id, title, version, doc_type, endpoints_count, sections_count, chunks_count, status |
 | `search_endpoints` | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조) | items[{endpoint_id, method, path, summary, match_type}] |
 | `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함) | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
-| `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기) | name, fields[{name, type, required, description}] |
+| `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기) | name, document_id, fields[{name, type, required, description}] |
 | `list_tags` | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다 | tags[{name, endpoint_count}] |
+| `search_documents` | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회) | items[{title, source, url, snippet, score}] |
+| `get_document` | 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님) | title, source, url, content |
+| `refresh_index` | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음) | synced, added, updated, removed, failed_sources |
 
 검색은 **후보 압축**과 **상세 조회**를 분리한다. `search_endpoints`로 후보를
 추린 뒤, 필요한 것만 `get_endpoint_details`로 상세를 보고, 스키마가 더
 필요하면 `resolve_ref`로 한 단계씩 펼친다. 최종 자연어 답변 생성은 서버가
 아니라 호출 LLM(Claude/ChatGPT)이 담당한다.
+
+협업 문서(Drive/Notion)는 성격이 달라 **별도 경로**로 병존한다. 정형 스펙인
+OpenAPI 는 사전 색인하지만, 수시로 바뀌는 협업 문서는 본문을 저장하지 않고
+`search_documents` 호출 시점에 실시간으로 가져온다. `document_meta` 에는
+제목·URL·수정일만 캐시하며, 새로 만든 문서가 검색되지 않으면 `refresh_index`
+를 먼저 실행한다. Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만
+호출 시 "미구성" `IntegrationError` 를 반환하고, OpenAPI 경로는 영향받지 않는다.
 
 > `query_rag`(서버 내부 답변생성)는 MCP 도구 등록에서 제외됐다. 구현 코드
 > (`RAGService`, `GeminiLLMProvider`, `TemplateLLMProvider`)는 삭제하지 않고

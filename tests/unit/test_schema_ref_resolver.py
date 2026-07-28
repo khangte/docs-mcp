@@ -10,7 +10,7 @@ import json
 import pytest
 
 from app.api.dependencies import build_services
-from app.core.errors import ValidationError
+from app.core.errors import DocumentNotFoundError, ValidationError
 from app.services.schemas.schema_ref_resolver import (
     SchemaRefNotFoundError,
     describe_type,
@@ -238,6 +238,128 @@ def test_unknown_ref_without_any_document_raises_not_found(app_state) -> None:
     """등록된 문서가 없으면 조회 자체가 실패해 SchemaRefNotFoundError 가 난다."""
     with pytest.raises(SchemaRefNotFoundError):
         _bundle(app_state).schema_ref_resolver.resolve("#/components/schemas/Pet")
+
+
+def test_unknown_document_id_raises_document_not_found(nested_doc_state) -> None:
+    """미등록 document_id 는 스키마 없음이 아니라 DocumentNotFoundError 로 구분된다."""
+    app_state, _ = nested_doc_state
+
+    with pytest.raises(DocumentNotFoundError) as exc_info:
+        _bundle(app_state).schema_ref_resolver.resolve(
+            "#/components/schemas/Order", document_id="no-such-doc"
+        )
+
+    assert exc_info.value.code == "document_not_found"
+
+
+def test_existing_document_missing_schema_is_distinct_error(nested_doc_state) -> None:
+    """문서는 있으나 스키마가 없으면 schema_ref_not_found 로 구분된다."""
+    app_state, document_id = nested_doc_state
+
+    with pytest.raises(SchemaRefNotFoundError) as exc_info:
+        _bundle(app_state).schema_ref_resolver.resolve(
+            "#/components/schemas/NoSuchSchema", document_id=document_id
+        )
+
+    assert exc_info.value.code == "schema_ref_not_found"
+
+
+# --- 소속 문서 노출 -----------------------------------------------------------
+
+
+def test_resolved_schema_exposes_document_id(nested_doc_state) -> None:
+    """펼쳐진 스키마가 어느 문서 소속인지 document_id 로 밝힌다."""
+    app_state, document_id = nested_doc_state
+
+    resolved = _bundle(app_state).schema_ref_resolver.resolve(
+        "#/components/schemas/Order", document_id=document_id
+    )
+
+    assert resolved.document_id == document_id
+
+
+def test_same_name_schema_in_two_documents_reveals_source(app_state) -> None:
+    """동명 스키마가 여러 문서에 있으면 어느 문서 것을 받았는지 알 수 있다."""
+    first_id = _register(
+        app_state,
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "info": {"title": "First", "version": "1.0.0"},
+                "paths": {},
+                "components": {
+                    "schemas": {
+                        "Pet": {
+                            "type": "object",
+                            "properties": {"first_only": {"type": "string"}},
+                        }
+                    }
+                },
+            }
+        ),
+    )
+    second_id = _register(
+        app_state,
+        json.dumps(
+            {
+                "openapi": "3.0.3",
+                "info": {"title": "Second", "version": "1.0.0"},
+                "paths": {},
+                "components": {
+                    "schemas": {
+                        "Pet": {
+                            "type": "object",
+                            "properties": {"second_only": {"type": "string"}},
+                        }
+                    }
+                },
+            }
+        ),
+    )
+    resolver = _bundle(app_state).schema_ref_resolver
+
+    # document_id 를 지정하면 정확히 그 문서의 스키마를 받는다.
+    from_first = resolver.resolve("#/components/schemas/Pet", document_id=first_id)
+    from_second = resolver.resolve("#/components/schemas/Pet", document_id=second_id)
+
+    assert from_first.document_id == first_id
+    assert [f.name for f in from_first.fields] == ["first_only"]
+    assert from_second.document_id == second_id
+    assert [f.name for f in from_second.fields] == ["second_only"]
+
+    # 생략 시에도 어느 문서에서 왔는지 응답으로 확인 가능하다.
+    ambiguous = resolver.resolve("#/components/schemas/Pet")
+    assert ambiguous.document_id in {first_id, second_id}
+
+
+def test_resolution_without_document_id_is_stable_across_calls(app_state) -> None:
+    """document_id 생략 시에도 반복 호출 간 선택되는 문서가 흔들리지 않는다."""
+    for title in ("A", "B", "C"):
+        _register(
+            app_state,
+            json.dumps(
+                {
+                    "openapi": "3.0.3",
+                    "info": {"title": title, "version": "1.0.0"},
+                    "paths": {},
+                    "components": {
+                        "schemas": {
+                            "Shared": {
+                                "type": "object",
+                                "properties": {"x": {"type": "string"}},
+                            }
+                        }
+                    },
+                }
+            ),
+        )
+    resolver = _bundle(app_state).schema_ref_resolver
+
+    picked = {
+        resolver.resolve("#/components/schemas/Shared").document_id for _ in range(5)
+    }
+
+    assert len(picked) == 1
 
 
 @pytest.mark.parametrize(

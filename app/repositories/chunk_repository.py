@@ -50,6 +50,18 @@ class ChunkRepository:
         stmt = select(ApiChunk).where(ApiChunk.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
 
+    def list_endpoint_chunks(self, document_id: str | None = None) -> Sequence[ApiChunk]:
+        """endpoint 타입 청크만 SQL 로 필터링해 반환한다.
+
+        후보 검색은 endpoint 청크만 사용하므로 section/schema 청크를 DB 단계에서
+        걸러낸다. 전체 청크를 적재한 뒤 Python 에서 버리면 쓰이지도 않을
+        임베딩 벡터 컬럼까지 매 검색마다 전송된다.
+        """
+        stmt = select(ApiChunk).where(ApiChunk.chunk_type == "endpoint")
+        if document_id is not None:
+            stmt = stmt.where(ApiChunk.document_id == document_id)
+        return self._session.execute(stmt).scalars().all()
+
     def list_by_endpoint_filter(
         self,
         method: str | None = None,

@@ -31,8 +31,12 @@ class DocumentRepository:
         return self._session.execute(stmt).scalar_one_or_none()
 
     def list_all(self) -> Sequence[ApiDocument]:
-        """색인 시각 내림차순으로 전체 문서를 반환한다."""
-        stmt = select(ApiDocument).order_by(desc(ApiDocument.indexed_at))
+        """색인 시각 내림차순으로 전체 문서를 반환한다.
+
+        `indexed_at` 이 동률일 때(동일 트랜잭션 내 대량 등록 등) 순서가
+        흔들리지 않도록 id 를 2차 정렬 키로 사용해 완전 결정성을 보장한다.
+        """
+        stmt = select(ApiDocument).order_by(desc(ApiDocument.indexed_at), ApiDocument.id)
         return self._session.execute(stmt).scalars().all()
 
     def delete(self, document: ApiDocument) -> None:
