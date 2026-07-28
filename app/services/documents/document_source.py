@@ -11,6 +11,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+#: 소스가 하나도 구성되지 않았을 때 모든 도구가 공유하는 오류 메시지.
+#: `search_documents`/`get_document`/`refresh_index` 가 같은 문구를 쓰도록
+#: 한 곳에 모아, "결과 없음"과 "서버 미설정"을 사용자가 구별할 수 있게 한다.
+NO_SOURCE_CONFIGURED_MESSAGE = (
+    "no document source is configured: set google drive or notion credentials"
+)
+
 
 @dataclass(frozen=True)
 class FileMeta:

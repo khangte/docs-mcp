@@ -3,9 +3,15 @@
 `refresh_index` 도구가 호출하는 진입점이다. 각 소스의 `list_files()` 로 얻은
 메타데이터만 `document_meta` 에 upsert 하고, **본문은 가져오지 않는다.**
 
-부분 실패 허용이 핵심 요구사항이다. 소스 하나가 실패해도 그 앞에서 이미
-처리된 소스의 변경분은 커밋된 상태로 남아야 하고, 실패한 소스는 다음 갱신에서
-재시도할 수 있어야 한다. 그래서 소스 단위로 커밋 경계를 나눈다.
+부분 실패 허용이 핵심 요구사항이다. 갱신 도중 예외가 나도 **이미 처리된 행은
+커밋된 상태로 남아야** 하고, 실패한 항목만 다음 갱신에서 재시도할 수 있어야
+한다. 그래서 커밋 경계를 **배치 단위**로 낮춘다(`BATCH_SIZE` 건마다 커밋).
+
+소스 단위로만 커밋하면 소스가 1개인 환경이나 한 소스 처리 도중의 실패에서
+전량 롤백돼 위 요구사항을 충족하지 못한다.
+
+집계(`added`/`updated`/`removed`)는 **실제로 커밋된 행만** 센다. 커밋에
+실패해 롤백된 배치는 집계에 넣지 않으므로, 반환값과 DB 상태가 항상 일치한다.
 """
 
 from __future__ import annotations
@@ -19,9 +25,17 @@ from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import DocumentMeta
 from app.repositories.document_meta_repository import DocumentMetaRepository
-from app.services.documents.document_source import DocumentSource, FileMeta
+from app.services.documents.document_source import (
+    NO_SOURCE_CONFIGURED_MESSAGE,
+    DocumentSource,
+    FileMeta,
+)
 
 _LOG = get_logger("docs_mcp.documents.index")
+
+#: 커밋 경계. 이 건수만큼 변경이 쌓일 때마다 커밋해, 도중에 실패해도 직전
+#: 배치까지는 DB 에 남게 한다(SPEC 기능 6 "부분 실패 허용").
+BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -51,6 +65,25 @@ class _SourceCounts:
     added: int = 0
     updated: int = 0
     removed: int = 0
+
+    @property
+    def total_changes(self) -> int:
+        """커밋 경계 판정에 쓰는 실제 변경 건수(`synced` 는 조회 수라 제외)."""
+        return self.added + self.updated + self.removed
+
+
+class _PartialRefreshError(Exception):
+    """소스 갱신이 중단됐지만 일부 배치는 커밋된 상태임을 알리는 내부 예외.
+
+    호출자(`refresh`)가 "이미 커밋된 분"을 집계에 반영할 수 있도록 원인 예외와
+    확정 집계를 함께 실어 나른다. 서비스 밖으로는 노출되지 않는다.
+    """
+
+    def __init__(self, cause: Exception, committed: _SourceCounts) -> None:
+        """원인 예외와 커밋 완료된 집계를 보관한다."""
+        super().__init__(str(cause))
+        self.cause = cause
+        self.committed = committed
 
 
 class DocumentIndexService:
@@ -95,18 +128,19 @@ class DocumentIndexService:
             name = document_source.source_name
             try:
                 counts = self._refresh_source(document_source)
-            except IntegrationError as exc:
-                # 부분 실패 허용: 이 소스만 롤백하고 앞선 소스의 커밋은 유지한다.
-                self._session.rollback()
+            except _PartialRefreshError as exc:
+                # 부분 실패 허용: 실패한 소스라도 이미 커밋된 배치는 집계에 넣는다.
+                # (`_refresh_source` 가 미커밋 배치만 롤백하고 확정분을 실어 보낸다)
+                _merge_counts(totals, exc.committed)
                 _LOG.warning("문서 소스 갱신 실패(다음 갱신에서 재시도 가능): %s (%s)", name, exc)
                 failed.append(name)
                 continue
-            totals.synced += counts.synced
-            totals.added += counts.added
-            totals.updated += counts.updated
-            totals.removed += counts.removed
+            _merge_counts(totals, counts)
 
-        if failed and len(failed) == len(targets):
+        # 모든 소스가 실패했고 커밋된 변경도 전혀 없으면 "조용한 무동작"이 되므로
+        # 예외로 알린다. 반대로 일부라도 커밋됐다면 그 사실이 집계와
+        # `failed_sources` 로 전달되어야 하므로 정상 반환한다.
+        if failed and len(failed) == len(targets) and totals.total_changes == 0:
             raise IntegrationError(
                 f"failed to refresh every document source: {', '.join(failed)}"
             )
@@ -122,9 +156,7 @@ class DocumentIndexService:
     def _resolve_targets(self, source: str | None) -> list[DocumentSource]:
         """갱신 대상 소스 목록을 결정하고 비어 있으면 예외를 던진다."""
         if not self._sources:
-            raise IntegrationError(
-                "no document source is configured: set google drive or notion credentials"
-            )
+            raise IntegrationError(NO_SOURCE_CONFIGURED_MESSAGE)
         if source is None:
             return self._sources
         targets = [s for s in self._sources if s.source_name == source]
@@ -133,40 +165,108 @@ class DocumentIndexService:
         return targets
 
     def _refresh_source(self, document_source: DocumentSource) -> _SourceCounts:
-        """소스 하나의 목록을 반영하고 성공 시에만 커밋한다."""
+        """소스 하나의 목록을 배치 단위로 커밋하며 반영한다.
+
+        `BATCH_SIZE` 건마다 커밋하므로, 도중에 예외가 나도 직전 배치까지는
+        DB 에 남는다. 실패 지점 이후 항목은 다음 갱신에서 재시도된다.
+
+        Returns:
+            **실제로 커밋된** 변경만 반영한 집계.
+
+        Raises:
+            _PartialRefreshError: 목록 조회나 배치 처리 중 실패한 경우. 직전까지
+                커밋된 배치는 보존되며 그 집계가 예외에 실려 전달된다.
+        """
         source_name = document_source.source_name
-        remote_files = document_source.list_files()
+        try:
+            remote_files = document_source.list_files()
+        except Exception as exc:
+            # 목록 조회 실패: 이 소스는 아무 행도 건드리지 않았다(확정분 0건).
+            raise _PartialRefreshError(exc, _SourceCounts()) from exc
         existing = {m.external_id: m for m in self._meta_repo.list_by_source(source_name)}
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        counts = _SourceCounts(synced=len(remote_files))
+        committed = _SourceCounts(synced=len(remote_files))
+        pending = _SourceCounts()
         seen: set[str] = set()
-        for meta in remote_files:
-            if not meta.external_id or meta.external_id in seen:
-                continue
-            seen.add(meta.external_id)
-            current = existing.get(meta.external_id)
-            if current is None:
-                self._meta_repo.add(_new_row(source_name, meta, now))
-                counts.added += 1
-            elif _apply_changes(current, meta, now):
-                counts.updated += 1
+        try:
+            for meta in remote_files:
+                if not meta.external_id or meta.external_id in seen:
+                    continue
+                seen.add(meta.external_id)
+                self._stage_upsert(source_name, meta, existing, now, pending)
+                if pending.total_changes >= BATCH_SIZE:
+                    pending = self._commit_batch(committed, pending)
 
-        for external_id, row in existing.items():
-            if external_id not in seen:
-                self._meta_repo.delete(row)
-                counts.removed += 1
+            for external_id, row in existing.items():
+                if external_id not in seen:
+                    self._meta_repo.delete(row)
+                    pending.removed += 1
+                    if pending.total_changes >= BATCH_SIZE:
+                        pending = self._commit_batch(committed, pending)
+        except Exception as exc:
+            # 마지막 배치는 미완성이므로 버리고, 이미 커밋된 배치만 남긴다.
+            self._session.rollback()
+            _LOG.warning(
+                "메타 캐시 갱신 중단(직전 배치까지 보존): source=%s added=%d updated=%d removed=%d",
+                source_name,
+                committed.added,
+                committed.updated,
+                committed.removed,
+            )
+            raise _PartialRefreshError(exc, committed) from exc
 
-        self._session.commit()
+        self._commit_batch(committed, pending)
         _LOG.info(
             "메타 캐시 갱신 완료: source=%s synced=%d added=%d updated=%d removed=%d",
             source_name,
-            counts.synced,
-            counts.added,
-            counts.updated,
-            counts.removed,
+            committed.synced,
+            committed.added,
+            committed.updated,
+            committed.removed,
         )
-        return counts
+        return committed
+
+    def _stage_upsert(
+        self,
+        source_name: str,
+        meta: FileMeta,
+        existing: dict[str, DocumentMeta],
+        now: datetime,
+        pending: _SourceCounts,
+    ) -> None:
+        """문서 한 건의 신규 생성/갱신을 세션에 올리고 미커밋 집계에 반영한다."""
+        current = existing.get(meta.external_id)
+        if current is None:
+            self._meta_repo.add(_new_row(source_name, meta, now))
+            pending.added += 1
+        elif _apply_changes(current, meta, now):
+            pending.updated += 1
+
+    def _commit_batch(
+        self, committed: _SourceCounts, pending: _SourceCounts
+    ) -> _SourceCounts:
+        """미커밋 변경을 커밋하고 그만큼만 확정 집계로 옮긴다.
+
+        커밋이 성공한 뒤에야 `committed` 에 더하므로, 반환되는 집계는 항상
+        DB 에 실재하는 변경만 센다.
+
+        Returns:
+            비워진 새 미커밋 집계.
+        """
+        self._session.commit()
+        committed.added += pending.added
+        committed.updated += pending.updated
+        committed.removed += pending.removed
+        return _SourceCounts()
+
+
+def _merge_counts(totals: _SourceCounts, counts: _SourceCounts) -> None:
+    """소스 하나의 집계를 전체 집계에 누적한다."""
+    totals.synced += counts.synced
+    totals.added += counts.added
+    totals.updated += counts.updated
+    totals.removed += counts.removed
 
 
 def _new_row(source_name: str, meta: FileMeta, now: datetime) -> DocumentMeta:
