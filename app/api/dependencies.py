@@ -18,6 +18,7 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
+from app.services.endpoints.endpoint_details_service import EndpointDetailsService
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import (
     EmbeddingProvider,
@@ -29,9 +30,12 @@ from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
 from app.services.rag.llm_provider import GeminiLLMProvider, LLMProvider, TemplateLLMProvider
 from app.services.rag.rag_service import RAGService
+from app.services.schemas.schema_ref_resolver import SchemaRefResolver
+from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.search_service import SearchService
 from app.services.search.vector_search import VectorSearch
+from app.services.tags.tag_catalog_service import TagCatalogService
 
 
 @dataclass
@@ -44,6 +48,7 @@ class AppState:
     llm_provider: LLMProvider
     fetcher: OpenAPIFetcher
     hybrid_alpha: float = 0.4
+    vector_fallback_enabled: bool = True
 
     @classmethod
     def from_engine(
@@ -52,8 +57,12 @@ class AppState:
         fetcher: OpenAPIFetcher,
         embedding_dim: int = 256,
         hybrid_alpha: float = 0.4,
+        vector_fallback_enabled: bool | None = None,
     ) -> "AppState":
-        """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다."""
+        """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
+
+        `vector_fallback_enabled` 를 생략하면 설정의 Gemini API 키 유무로 결정한다.
+        """
         return cls(
             engine=engine,
             session_factory=create_session_factory(engine),
@@ -61,7 +70,23 @@ class AppState:
             llm_provider=_build_llm_provider(),
             fetcher=fetcher,
             hybrid_alpha=hybrid_alpha,
+            vector_fallback_enabled=(
+                is_vector_fallback_available()
+                if vector_fallback_enabled is None
+                else vector_fallback_enabled
+            ),
         )
+
+
+def is_vector_fallback_available() -> bool:
+    """search_endpoints 의 벡터 보조 단계를 쓸 수 있는지 설정으로 판별한다.
+
+    Gemini API 키가 없으면 임베딩 프로바이더가 HashEmbeddingProvider 로
+    폴백되는데, 해시 임베딩은 의미 유사도가 없어 벡터 보조로서 의미가 없다.
+    프로바이더 클래스 종류가 아니라 설정값(키 유무)을 판별 기준으로 삼아
+    폴백 구현이 바뀌어도 이 판단이 흔들리지 않게 한다.
+    """
+    return bool(get_settings().gemini_api_key)
 
 
 def _build_llm_provider() -> LLMProvider:
@@ -97,6 +122,10 @@ class ServiceBundle:
     search_service: SearchService
     rag_service: RAGService
     example_service: RequestExampleService
+    candidate_search: EndpointCandidateSearch
+    endpoint_details_service: EndpointDetailsService
+    schema_ref_resolver: SchemaRefResolver
+    tag_catalog_service: TagCatalogService
 
 
 def build_services(state: AppState) -> Iterator[ServiceBundle]:
@@ -135,6 +164,25 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         )
         rag_service = RAGService(search_service, state.llm_provider)
         example_service = RequestExampleService(endpoint_repo)
+        candidate_search = EndpointCandidateSearch(
+            chunk_repo=chunk_repo,
+            endpoint_repo=endpoint_repo,
+            keyword_search=keyword_search,
+            vector_search=vector_search,
+            vector_fallback_enabled=state.vector_fallback_enabled,
+        )
+        endpoint_details_service = EndpointDetailsService(
+            endpoint_repo=endpoint_repo,
+            example_service=example_service,
+        )
+        schema_ref_resolver = SchemaRefResolver(
+            endpoint_repo=endpoint_repo,
+            document_repo=document_repo,
+        )
+        tag_catalog_service = TagCatalogService(
+            endpoint_repo=endpoint_repo,
+            document_repo=document_repo,
+        )
         yield ServiceBundle(
             session=session,
             document_repo=document_repo,
@@ -145,6 +193,10 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             search_service=search_service,
             rag_service=rag_service,
             example_service=example_service,
+            candidate_search=candidate_search,
+            endpoint_details_service=endpoint_details_service,
+            schema_ref_resolver=schema_ref_resolver,
+            tag_catalog_service=tag_catalog_service,
         )
     finally:
         session.close()

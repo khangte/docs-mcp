@@ -1,4 +1,7 @@
-"""MCP 서버 통합 테스트."""
+"""MCP 서버 통합 테스트.
+
+SPEC 기능 1~4 의 도구 계약과 기능 9(OpenAPI 범위) 의 도구 구성을 검증한다.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +10,15 @@ from fastmcp import FastMCP
 
 from app.mcp_server import create_mcp_server
 
+OPENAPI_TOOL_NAMES = {
+    "list_documents",
+    "register_document",
+    "search_endpoints",
+    "get_endpoint_details",
+    "resolve_ref",
+    "list_tags",
+}
+
 
 @pytest.fixture()
 def mcp_server(app_state) -> FastMCP:
@@ -14,90 +26,296 @@ def mcp_server(app_state) -> FastMCP:
     return create_mcp_server(app_state)
 
 
+@pytest.fixture()
+async def seeded_mcp(mcp_server: FastMCP, sample_openapi_3: str) -> FastMCP:
+    """샘플 OpenAPI 문서를 등록해둔 MCP 서버."""
+    await mcp_server.call_tool(
+        "register_document", arguments={"raw_document": sample_openapi_3}
+    )
+    return mcp_server
+
+
+async def _tool_names(mcp: FastMCP) -> set[str]:
+    """등록된 MCP 도구 이름 집합을 반환한다."""
+    return {tool.name for tool in await mcp.list_tools()}
+
+
+async def _tool_parameters(mcp: FastMCP, name: str) -> dict:
+    """특정 MCP 도구의 입력 스키마 properties 를 반환한다."""
+    tool = next(t for t in await mcp.list_tools() if t.name == name)
+    return tool.parameters["properties"]
+
+
+async def _first_candidate(mcp: FastMCP, query: str) -> dict:
+    """search_endpoints 로 첫 번째 후보를 가져온다."""
+    result = await mcp.call_tool("search_endpoints", arguments={"query": query})
+    items = result.structured_content["result"]["items"]
+    assert items, f"후보가 비어 있음: {query}"
+    return items[0]
+
+
+# --- 기능 9(OpenAPI 범위): 도구 구성 -----------------------------------------
+
+
 @pytest.mark.asyncio()
-async def test_mcp_list_documents_empty(mcp_server: FastMCP):
+async def test_expected_tools_are_registered(mcp_server: FastMCP) -> None:
+    """기존 도구 이름이 유지되고 신규 도구 2개가 추가돼 있다."""
+    assert OPENAPI_TOOL_NAMES <= await _tool_names(mcp_server)
+
+
+@pytest.mark.asyncio()
+async def test_query_rag_is_not_registered(mcp_server: FastMCP) -> None:
+    """query_rag 는 MCP 도구 목록에 나타나지 않는다(코드는 보존)."""
+    assert "query_rag" not in await _tool_names(mcp_server)
+
+
+def test_query_rag_source_is_preserved() -> None:
+    """query_rag 구현과 RAG 서비스 코드는 삭제되지 않고 남아 있다."""
+    from app.mcp_server import query_rag
+    from app.services.rag.llm_provider import GeminiLLMProvider, TemplateLLMProvider
+    from app.services.rag.rag_service import RAGService
+
+    assert callable(query_rag)
+    assert RAGService is not None
+    assert GeminiLLMProvider is not None
+    assert TemplateLLMProvider is not None
+
+
+@pytest.mark.asyncio()
+async def test_search_endpoints_has_no_mode_parameter(mcp_server: FastMCP) -> None:
+    """search_endpoints 시그니처에서 mode 파라미터가 제거됐다(Phase 0 결정 5번)."""
+    properties = await _tool_parameters(mcp_server, "search_endpoints")
+
+    assert "mode" not in properties
+    assert set(properties) == {"query", "top_k", "document_id"}
+
+
+@pytest.mark.asyncio()
+async def test_get_endpoint_details_exposes_include_example(mcp_server: FastMCP) -> None:
+    """get_endpoint_details 시그니처에 include_example 이 기본 False 로 노출된다."""
+    properties = await _tool_parameters(mcp_server, "get_endpoint_details")
+
+    assert set(properties) == {"endpoint_id", "include_example"}
+    assert properties["include_example"]["default"] is False
+
+
+# --- 기능 1: search_endpoints -----------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_search_returns_candidate_items_only(seeded_mcp: FastMCP) -> None:
+    """후보 항목은 5개 필드만 갖고 상세 필드/snippet 을 포함하지 않는다."""
+    result = await seeded_mcp.call_tool("search_endpoints", arguments={"query": "pet"})
+    items = result.structured_content["result"]["items"]
+
+    assert items
+    for item in items:
+        assert set(item) == {"endpoint_id", "method", "path", "summary", "match_type"}
+
+
+@pytest.mark.asyncio()
+async def test_search_marks_keyword_match_type(seeded_mcp: FastMCP) -> None:
+    """키워드로 찾은 후보는 match_type="keyword" 로 표시된다."""
+    candidate = await _first_candidate(seeded_mcp, "find pet by id")
+
+    assert candidate["match_type"] == "keyword"
+    assert candidate["path"] == "/pet/{petId}"
+
+
+@pytest.mark.asyncio()
+async def test_search_empty_query_returns_error_payload(seeded_mcp: FastMCP) -> None:
+    """빈 질의는 표준 에러 포맷으로 반환된다."""
+    result = await seeded_mcp.call_tool("search_endpoints", arguments={"query": "   "})
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "validation_error"
+
+
+@pytest.mark.asyncio()
+async def test_search_no_match_returns_empty_items(seeded_mcp: FastMCP) -> None:
+    """매칭이 전혀 없으면 items 가 빈 리스트다."""
+    result = await seeded_mcp.call_tool(
+        "search_endpoints", arguments={"query": "zzzzz_nothing_matches_here_xxx"}
+    )
+
+    assert result.structured_content["result"]["items"] == []
+
+
+# --- 기능 2: get_endpoint_details -------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_details_default_has_no_example_code_key(seeded_mcp: FastMCP) -> None:
+    """include_example 기본값(False)에서는 example_code 키 자체가 없다."""
+    candidate = await _first_candidate(seeded_mcp, "find pet by id")
+
+    result = await seeded_mcp.call_tool(
+        "get_endpoint_details", arguments={"endpoint_id": candidate["endpoint_id"]}
+    )
+    details = result.structured_content["result"]
+
+    assert "example_code" not in details
+    assert details["endpoint_id"] == candidate["endpoint_id"]
+
+
+@pytest.mark.asyncio()
+async def test_details_with_include_example_adds_example_code(
+    seeded_mcp: FastMCP,
+) -> None:
+    """include_example=True 면 example_code 가 포함된다."""
+    candidate = await _first_candidate(seeded_mcp, "find pet by id")
+
+    result = await seeded_mcp.call_tool(
+        "get_endpoint_details",
+        arguments={"endpoint_id": candidate["endpoint_id"], "include_example": True},
+    )
+    details = result.structured_content["result"]
+
+    assert details["example_code"].startswith("curl -X GET")
+
+
+@pytest.mark.asyncio()
+async def test_details_exposes_schema_ref(seeded_mcp: FastMCP) -> None:
+    """상세 응답이 schema_ref 를 참조 문자열 그대로 노출한다."""
+    candidate = await _first_candidate(seeded_mcp, "add new pet store")
+
+    result = await seeded_mcp.call_tool(
+        "get_endpoint_details", arguments={"endpoint_id": candidate["endpoint_id"]}
+    )
+    details = result.structured_content["result"]
+
+    assert details["request_body"]["schema_ref"] == "#/components/schemas/Pet"
+    assert "properties" not in details["request_body"]["schema"]
+
+
+@pytest.mark.asyncio()
+async def test_details_unknown_endpoint_returns_error_payload(
+    mcp_server: FastMCP,
+) -> None:
+    """존재하지 않는 endpoint_id 조회 시 스택트레이스 대신 표준 에러 포맷을 반환한다."""
+    result = await mcp_server.call_tool(
+        "get_endpoint_details", arguments={"endpoint_id": "does-not-exist"}
+    )
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "endpoint_not_found"
+    assert "does-not-exist" in payload["message"]
+
+
+# --- 기능 3: resolve_ref -----------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_resolve_ref_expands_schema(seeded_mcp: FastMCP) -> None:
+    """`$ref` 가 name/fields 구조로 펼쳐진다."""
+    result = await seeded_mcp.call_tool(
+        "resolve_ref", arguments={"ref": "#/components/schemas/Pet"}
+    )
+    resolved = result.structured_content["result"]
+
+    assert resolved["name"] == "Pet"
+    assert [f["name"] for f in resolved["fields"]] == ["id", "name", "status"]
+    name_field = next(f for f in resolved["fields"] if f["name"] == "name")
+    assert name_field["required"] is True
+    assert name_field["type"] == "string"
+
+
+@pytest.mark.asyncio()
+async def test_resolve_ref_is_deterministic(seeded_mcp: FastMCP) -> None:
+    """같은 ref 를 두 번 호출하면 동일한 응답을 반환한다."""
+    first = await seeded_mcp.call_tool(
+        "resolve_ref", arguments={"ref": "#/components/schemas/Pet"}
+    )
+    second = await seeded_mcp.call_tool(
+        "resolve_ref", arguments={"ref": "#/components/schemas/Pet"}
+    )
+
+    assert first.structured_content["result"] == second.structured_content["result"]
+
+
+@pytest.mark.asyncio()
+async def test_resolve_ref_unknown_returns_error_payload(seeded_mcp: FastMCP) -> None:
+    """존재하지 않는 ref 는 표준 에러 포맷을 반환한다."""
+    result = await seeded_mcp.call_tool(
+        "resolve_ref", arguments={"ref": "#/components/schemas/NoSuchSchema"}
+    )
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "schema_ref_not_found"
+
+
+@pytest.mark.asyncio()
+async def test_resolve_ref_bad_format_returns_error_payload(seeded_mcp: FastMCP) -> None:
+    """참조 형식이 잘못되면 validation_error 를 반환한다."""
+    result = await seeded_mcp.call_tool("resolve_ref", arguments={"ref": "Pet"})
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "validation_error"
+
+
+# --- 기능 4: list_tags -------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_tags_returns_counts(seeded_mcp: FastMCP) -> None:
+    """태그 목록과 태그별 엔드포인트 수를 반환한다."""
+    result = await seeded_mcp.call_tool("list_tags", arguments={})
+    tags = result.structured_content["result"]["tags"]
+
+    assert {t["name"]: t["endpoint_count"] for t in tags} == {"pet": 3, "user": 1}
+
+
+@pytest.mark.asyncio()
+async def test_list_tags_empty_when_no_documents(mcp_server: FastMCP) -> None:
+    """등록 문서가 없으면 빈 배열을 반환한다."""
+    result = await mcp_server.call_tool("list_tags", arguments={})
+
+    assert result.structured_content["result"]["tags"] == []
+
+
+@pytest.mark.asyncio()
+async def test_list_tags_unknown_document_returns_error_payload(
+    mcp_server: FastMCP,
+) -> None:
+    """존재하지 않는 document_id 는 표준 에러 포맷을 반환한다."""
+    result = await mcp_server.call_tool(
+        "list_tags", arguments={"document_id": "no-such-doc"}
+    )
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "document_not_found"
+
+
+# --- 기존 도구 회귀 -----------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_documents_empty(mcp_server: FastMCP) -> None:
     """문서가 없을 때 list_documents 도구가 빈 목록을 반환하는지 확인."""
     result = await mcp_server.call_tool("list_documents", arguments={})
-    # FastMCP는 list/Union 반환 도구의 결과를 {'result': ...} 로 감쌈
+
     assert result.structured_content["result"] == []
 
 
 @pytest.mark.asyncio()
-async def test_mcp_register_and_search(mcp_server: FastMCP, sample_openapi_3):
+async def test_register_and_search(mcp_server: FastMCP, sample_openapi_3: str) -> None:
     """문서를 등록하고 검색 도구를 통해 결과를 확인."""
-    # 1. 문서 등록 (TypedDict | ErrorPayload 반환 -> {'result': {...}})
     reg_result = await mcp_server.call_tool(
-        "register_document",
-        arguments={"raw_document": sample_openapi_3}
+        "register_document", arguments={"raw_document": sample_openapi_3}
     )
     reg_data = reg_result.structured_content["result"]
     assert reg_data["status"] == "registered"
     assert reg_data["endpoints_count"] > 0
 
-    # 2. 엔드포인트 검색 (list 반환 -> {'result': [...]})
     search_result = await mcp_server.call_tool(
-        "search_endpoints",
-        arguments={"query": "pet", "top_k": 3}
+        "search_endpoints", arguments={"query": "pet", "top_k": 3}
     )
-    search_data = search_result.structured_content["result"]
-    assert len(search_data) > 0
-    assert any("pet" in r["path"].lower() or "pet" in r["summary"].lower() for r in search_data)
+    items = search_result.structured_content["result"]["items"]
 
-
-@pytest.mark.asyncio()
-async def test_mcp_query_rag(mcp_server: FastMCP, sample_openapi_3):
-    """RAG 질의응답 도구 확인."""
-    # 문서 등록
-    await mcp_server.call_tool(
-        "register_document",
-        arguments={"raw_document": sample_openapi_3}
-    )
-
-    # RAG 질의 (TypedDict | ErrorPayload 반환 -> {'result': {...}})
-    query_result = await mcp_server.call_tool(
-        "query_rag",
-        arguments={"question": "How can I find a pet by ID?"}
-    )
-    query_data = query_result.structured_content["result"]
-    assert "answer" in query_data
-    assert query_data["is_grounded"] is True
-
-
-@pytest.mark.asyncio()
-async def test_mcp_get_details(mcp_server: FastMCP, sample_openapi_3):
-    """엔드포인트 상세 정보 및 예시 코드 조회 확인."""
-    # 문서 등록
-    await mcp_server.call_tool(
-        "register_document",
-        arguments={"raw_document": sample_openapi_3}
-    )
-
-    # 검색
-    search_result = await mcp_server.call_tool(
-        "search_endpoints",
-        arguments={"query": "pet"}
-    )
-    search_data = search_result.structured_content["result"]
-    endpoint_id = search_data[0]["endpoint_id"]
-
-    # 상세 정보 (TypedDict | ErrorPayload 반환 -> {'result': {...}})
-    detail_result = await mcp_server.call_tool(
-        "get_endpoint_details",
-        arguments={"endpoint_id": endpoint_id}
-    )
-    detail_data = detail_result.structured_content["result"]
-    assert detail_data["endpoint_id"] == endpoint_id
-    assert "example_code" in detail_data
-
-
-@pytest.mark.asyncio()
-async def test_mcp_get_details_unknown_endpoint_returns_error_payload(mcp_server: FastMCP):
-    """존재하지 않는 endpoint_id 조회 시 스택트레이스 대신 code/message를 담은 에러 페이로드를 반환하는지 확인."""
-    result = await mcp_server.call_tool(
-        "get_endpoint_details",
-        arguments={"endpoint_id": "does-not-exist"}
-    )
-    detail_data = result.structured_content["result"]
-    assert detail_data["error"] is True
-    assert detail_data["code"] == "endpoint_not_found"
-    assert "does-not-exist" in detail_data["message"]
+    assert items
+    assert any("pet" in i["path"].lower() or "pet" in i["summary"].lower() for i in items)

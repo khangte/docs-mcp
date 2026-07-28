@@ -130,9 +130,19 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 |------|------|-----------|
 | `list_documents` | 등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다 | document_id, title, version, doc_type, source_url, endpoints_count, indexed_at |
 | `register_document` | 신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별) | document_id, title, version, doc_type, endpoints_count, sections_count, chunks_count, status |
-| `search_endpoints` | 자연어로 API 엔드포인트 또는 문서 섹션을 검색한다 (하이브리드/키워드/벡터 모드) | endpoint_id, chunk_type, method, path, summary, score, snippet |
-| `query_rag` | API 명세에 대해 자연어로 질문하고 RAG 기반 답변을 받는다 | answer, citations(method/path/snippet), is_grounded |
-| `get_endpoint_details` | 특정 엔드포인트의 상세 정보와 호출 예시 코드를 조회한다 | endpoint_id, method, path, summary, description, example_code |
+| `search_endpoints` | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조) | items[{endpoint_id, method, path, summary, match_type}] |
+| `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함) | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
+| `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기) | name, fields[{name, type, required, description}] |
+| `list_tags` | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다 | tags[{name, endpoint_count}] |
+
+검색은 **후보 압축**과 **상세 조회**를 분리한다. `search_endpoints`로 후보를
+추린 뒤, 필요한 것만 `get_endpoint_details`로 상세를 보고, 스키마가 더
+필요하면 `resolve_ref`로 한 단계씩 펼친다. 최종 자연어 답변 생성은 서버가
+아니라 호출 LLM(Claude/ChatGPT)이 담당한다.
+
+> `query_rag`(서버 내부 답변생성)는 MCP 도구 등록에서 제외됐다. 구현 코드
+> (`RAGService`, `GeminiLLMProvider`, `TemplateLLMProvider`)는 삭제하지 않고
+> 보존되며, FastAPI `/query` 라우트에서는 계속 사용한다.
 
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다

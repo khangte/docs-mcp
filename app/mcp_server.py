@@ -13,21 +13,36 @@ from fastmcp import FastMCP
 
 from app.api.dependencies import AppState, build_services
 from app.bootstrap import bootstrap_app_state
-from app.core.db import managed_session
-from app.core.errors import DomainError, DocumentNotFoundError, EndpointNotFoundError, IntegrationError
 from app.core.config import get_settings
+from app.core.db import managed_session
+from app.core.errors import (
+    DocumentNotFoundError,
+    DomainError,
+    IntegrationError,
+)
 from app.core.logging import get_logger
 from app.mcp_types import (
     Citation,
     DocumentSummary,
+    EndpointCandidateItem,
     EndpointDetails,
-    EndpointSearchResult,
+    EndpointSearchResponse,
     ErrorPayload,
+    ParameterItem,
     RagAnswer,
     RegisterDocumentResult,
+    RequestBodyItem,
+    ResolvedSchemaResult,
+    ResponseItem,
+    SchemaFieldItem,
+    TagItem,
+    TagListResult,
 )
 from app.repositories.document_repository import DocumentRepository
-from app.services.search.search_service import SearchOptions
+from app.services.endpoints.endpoint_details_service import EndpointDetailsResult
+from app.services.schemas.schema_ref_resolver import ResolvedSchema
+from app.services.search.endpoint_candidate_search import CandidateSearchOptions
+from app.services.tags.tag_catalog_service import TagSummary
 
 _LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
 
@@ -53,6 +68,80 @@ def to_error_payload(error: DomainError | IntegrationError) -> ErrorPayload:
     code = error.code if isinstance(error, DomainError) else "integration_error"
     _LOG.error("mcp tool error: %s", code, exc_info=error)
     return {"error": True, "code": code, "message": str(error)}
+
+
+def _to_endpoint_details_payload(result: EndpointDetailsResult) -> EndpointDetails:
+    """엔드포인트 상세 결과를 MCP 응답 dict 로 변환한다.
+
+    example_code 는 생성된 경우에만 키를 추가한다(include_example=False 이면
+    키 자체가 존재하지 않아야 한다).
+    """
+    parameters: list[ParameterItem] = [
+        {
+            "name": p.name,
+            "location": p.location,
+            "required": p.required,
+            "description": p.description,
+            "schema": p.schema,
+            "schema_ref": p.schema_ref,
+        }
+        for p in result.parameters
+    ]
+    request_body: RequestBodyItem | None = None
+    if result.request_body is not None:
+        request_body = {
+            "content_type": result.request_body.content_type,
+            "required": result.request_body.required,
+            "schema": result.request_body.schema,
+            "schema_ref": result.request_body.schema_ref,
+        }
+    responses: list[ResponseItem] = [
+        {
+            "status_code": r.status_code,
+            "content_type": r.content_type,
+            "description": r.description,
+            "schema": r.schema,
+            "schema_ref": r.schema_ref,
+        }
+        for r in result.responses
+    ]
+    payload: EndpointDetails = {
+        "endpoint_id": result.endpoint_id,
+        "document_id": result.document_id,
+        "method": result.method,
+        "path": result.path,
+        "summary": result.summary,
+        "description": result.description,
+        "tags": result.tags,
+        "parameters": parameters,
+        "request_body": request_body,
+        "responses": responses,
+    }
+    if result.example_code is not None:
+        payload["example_code"] = result.example_code
+    return payload
+
+
+def _to_resolved_schema_payload(resolved: ResolvedSchema) -> ResolvedSchemaResult:
+    """펼쳐진 스키마를 MCP 응답 dict 로 변환한다."""
+    fields: list[SchemaFieldItem] = [
+        {
+            "name": f.name,
+            "type": f.type,
+            "required": f.required,
+            "description": f.description,
+        }
+        for f in resolved.fields
+    ]
+    return {"name": resolved.name, "fields": fields}
+
+
+def _to_tag_list_payload(summaries: list[TagSummary]) -> TagListResult:
+    """태그 집계 결과를 MCP 응답 dict 로 변환한다."""
+    tags: list[TagItem] = [
+        {"name": s.name, "endpoint_count": s.endpoint_count} for s in summaries
+    ]
+    return {"tags": tags}
 
 
 def create_mcp_server(app_state: AppState) -> FastMCP:
@@ -147,39 +236,40 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
     async def search_endpoints(
         query: str,
         top_k: int = 5,
-        mode: str = "hybrid",
         document_id: str | None = None,
-    ) -> list[EndpointSearchResult] | ErrorPayload:
-        """자연어로 API 엔드포인트 또는 문서 섹션을 검색한다. 하이브리드/키워드/벡터 모드를 지원한다.
+    ) -> EndpointSearchResponse | ErrorPayload:
+        """자연어/키워드로 API 엔드포인트 후보를 가볍게 검색한다.
+
+        키워드·구조적 매칭(operationId/path/tag/summary)을 먼저 수행하고, 결과가
+        0건일 때만 벡터 검색을 보조로 시도한다. 상세 정보는 포함하지 않으므로,
+        후보를 고른 뒤 get_endpoint_details 로 상세를 조회한다.
 
         Args:
-            query: 검색할 자연어 질의.
-            top_k: 반환할 최대 결과 수.
-            mode: "hybrid" | "keyword" | "vector" 중 하나.
+            query: 검색할 자연어 또는 키워드 질의.
+            top_k: 반환할 최대 후보 수(1~50).
             document_id: 특정 문서로 검색 범위를 제한하고 싶을 때 지정.
 
         Returns:
-            각 원소가 endpoint_id, chunk_type, method, path, summary, score,
-            snippet 필드를 갖는 리스트, score가 높을수록 관련도가 높다. 검색 중
-            도메인/외부 연동 오류가 발생하면 error/code/message 필드를 담은
-            ErrorPayload를 대신 반환한다.
+            items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,
+            path, summary, match_type("keyword" 또는 "vector") 필드를 갖는다.
+            검색 중 도메인/외부 연동 오류가 발생하면 error/code/message 필드를
+            담은 ErrorPayload를 대신 반환한다.
         """
-        def _sync() -> list[EndpointSearchResult] | ErrorPayload:
-            def _inner(bundle):
-                options = SearchOptions(top_k=top_k, mode=mode, document_id=document_id)
-                results = bundle.search_service.search(query, options)
-                return [
+        def _sync() -> EndpointSearchResponse | ErrorPayload:
+            def _inner(bundle) -> EndpointSearchResponse:
+                options = CandidateSearchOptions(top_k=top_k, document_id=document_id)
+                candidates = bundle.candidate_search.search(query, options)
+                items: list[EndpointCandidateItem] = [
                     {
-                        "endpoint_id": r.endpoint_id,
-                        "chunk_type": r.chunk_type,
-                        "method": r.method,
-                        "path": r.path,
-                        "summary": r.summary,
-                        "score": round(r.score, 4),
-                        "snippet": r.snippet,
+                        "endpoint_id": c.endpoint_id,
+                        "method": c.method,
+                        "path": c.path,
+                        "summary": c.summary,
+                        "match_type": c.match_type,
                     }
-                    for r in results
+                    for c in candidates
                 ]
+                return {"items": items}
             try:
                 return _run_bundle(app_state, _inner)
             except (DomainError, IntegrationError) as e:
@@ -187,74 +277,90 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         return await anyio.to_thread.run_sync(_sync)
 
     @mcp.tool()
-    async def query_rag(
-        question: str,
-        top_k: int = 5,
-        document_id: str | None = None,
-    ) -> RagAnswer | ErrorPayload:
-        """API 명세에 대해 자연어로 질문하고 RAG 기반의 답변을 받는다.
+    async def get_endpoint_details(
+        endpoint_id: str,
+        include_example: bool = False,
+    ) -> EndpointDetails | ErrorPayload:
+        """특정 엔드포인트의 상세 정보(파라미터·요청/응답 스펙)를 조회한다.
 
-        Args:
-            question: API 명세에 대해 묻고 싶은 자연어 질문.
-            top_k: 답변 생성에 근거로 사용할 최대 검색 결과 수.
-            document_id: 특정 문서로 질의 범위를 제한하고 싶을 때 지정.
-
-        Returns:
-            answer(생성된 답변), citations(근거가 된 method/path/snippet 목록),
-            is_grounded(답변이 실제 문서 근거에 기반했는지 여부)를 담은 dict.
-            질의 처리 중 도메인/외부 연동 오류가 발생하면 error/code/message
-            필드를 담은 ErrorPayload를 대신 반환한다.
-        """
-        def _sync() -> RagAnswer | ErrorPayload:
-            def _inner(bundle):
-                result = bundle.rag_service.answer(
-                    question=question,
-                    top_k=top_k,
-                    document_id=document_id,
-                )
-                citations: list[Citation] = [
-                    {"method": c.method, "path": c.path, "snippet": c.snippet}
-                    for c in result.citations
-                ]
-                return {
-                    "answer": result.answer,
-                    "citations": citations,
-                    "is_grounded": result.is_grounded,
-                }
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
-
-    @mcp.tool()
-    async def get_endpoint_details(endpoint_id: str) -> EndpointDetails | ErrorPayload:
-        """특정 엔드포인트의 상세 정보(파라미터, 요청/응답 스펙)와 호출 예시 코드를 조회한다.
+        schema_ref 는 참조 문자열 그대로 반환하며 스키마 본문을 펼치지 않는다.
+        스키마 필드가 필요하면 resolve_ref 도구로 따로 조회한다.
 
         Args:
             endpoint_id: search_endpoints 등에서 얻은 엔드포인트 식별자.
+            include_example: True 일 때만 curl 호출 예시(example_code)를
+                생성해 포함한다. 기본값 False 에서는 응답에 example_code 키가
+                아예 없다.
 
         Returns:
-            endpoint_id, method, path, summary, description, example_code(curl
-            예시 코드) 필드를 갖는 dict. endpoint_id가 존재하지 않거나 예시
-            생성 중 오류가 발생하면 error/code/message 필드를 담은
-            ErrorPayload를 대신 반환한다.
+            endpoint_id, document_id, method, path, summary, description, tags,
+            parameters, request_body, responses 필드를 갖는 dict.
+            include_example=True 이면 example_code 가 추가된다. endpoint_id가
+            존재하지 않으면 error/code/message 필드를 담은 ErrorPayload를
+            대신 반환한다.
         """
         def _sync() -> EndpointDetails | ErrorPayload:
-            def _inner(bundle):
-                endpoint = bundle.endpoint_repo.get(endpoint_id)
-                if not endpoint:
-                    raise EndpointNotFoundError(endpoint_id)
-                details = {
-                    "endpoint_id": endpoint.id,
-                    "method": endpoint.method,
-                    "path": endpoint.path,
-                    "summary": endpoint.summary,
-                    "description": endpoint.description,
-                }
-                example = bundle.example_service.generate(endpoint_id, "curl")
-                details["example_code"] = example["code"]
-                return details
+            def _inner(bundle) -> EndpointDetails:
+                result = bundle.endpoint_details_service.get_details(
+                    endpoint_id, include_example=include_example
+                )
+                return _to_endpoint_details_payload(result)
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def resolve_ref(
+        ref: str,
+        document_id: str | None = None,
+    ) -> ResolvedSchemaResult | ErrorPayload:
+        """`$ref` 로 표기된 컴포넌트 스키마를 실제 필드 목록으로 펼친다.
+
+        중첩 `$ref` 는 재귀적으로 펼치지 않고 참조 이름만 type 에 표기한다.
+        더 깊이 필요하면 그 이름으로 resolve_ref 를 다시 호출한다.
+
+        Args:
+            ref: `#/components/schemas/Product` 형태의 로컬 참조 문자열.
+            document_id: 특정 문서의 스키마로 한정하고 싶을 때 지정. 생략하면
+                등록된 문서 전체에서 같은 이름의 스키마를 찾는다.
+
+        Returns:
+            name(스키마 이름)과 fields(name/type/required/description 목록)를
+            담은 dict. 참조 형식이 잘못됐거나 해당 스키마가 없으면
+            error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
+        """
+        def _sync() -> ResolvedSchemaResult | ErrorPayload:
+            def _inner(bundle) -> ResolvedSchemaResult:
+                resolved = bundle.schema_ref_resolver.resolve(ref, document_id=document_id)
+                return _to_resolved_schema_payload(resolved)
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def list_tags(document_id: str | None = None) -> TagListResult | ErrorPayload:
+        """등록된 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다.
+
+        search_endpoints 로 검색하기 전에 어떤 기능 영역이 있는지 훑어보는
+        탐색 보조 도구다.
+
+        Args:
+            document_id: 특정 문서의 태그만 보고 싶을 때 지정. 생략하면 전체.
+
+        Returns:
+            tags 키에 name/endpoint_count 를 갖는 항목 리스트를 담은 dict.
+            엔드포인트 수 내림차순으로 정렬되며, 태그가 없으면 빈 리스트다.
+            document_id가 존재하지 않으면 error/code/message 필드를 담은
+            ErrorPayload를 대신 반환한다.
+        """
+        def _sync() -> TagListResult | ErrorPayload:
+            def _inner(bundle) -> TagListResult:
+                summaries = bundle.tag_catalog_service.list_tags(document_id=document_id)
+                return _to_tag_list_payload(summaries)
             try:
                 return _run_bundle(app_state, _inner)
             except (DomainError, IntegrationError) as e:
@@ -274,6 +380,54 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         return await anyio.to_thread.run_sync(_sync)
 
     return mcp
+
+
+# 미사용: query_rag 도구 제거로 호출부 없음. RAG 답변생성은 호출
+# LLM(Claude/ChatGPT)이 담당. MCP 도구 등록(@mcp.tool())만 제거하고 구현은
+# 보존한다(FastAPI `/query` 라우트는 계속 RAGService 를 직접 사용).
+async def query_rag(
+    app_state: AppState,
+    question: str,
+    top_k: int = 5,
+    document_id: str | None = None,
+) -> RagAnswer | ErrorPayload:
+    """API 명세에 대해 자연어로 질문하고 RAG 기반의 답변을 받는다.
+
+    미사용: MCP 도구로 등록하지 않는다(위 주석 참고).
+
+    Args:
+        app_state: 서비스 번들을 만들기 위한 앱 상태.
+        question: API 명세에 대해 묻고 싶은 자연어 질문.
+        top_k: 답변 생성에 근거로 사용할 최대 검색 결과 수.
+        document_id: 특정 문서로 질의 범위를 제한하고 싶을 때 지정.
+
+    Returns:
+        answer(생성된 답변), citations(근거가 된 method/path/snippet 목록),
+        is_grounded(답변이 실제 문서 근거에 기반했는지 여부)를 담은 dict.
+        질의 처리 중 도메인/외부 연동 오류가 발생하면 error/code/message
+        필드를 담은 ErrorPayload를 대신 반환한다.
+    """
+    def _sync() -> RagAnswer | ErrorPayload:
+        def _inner(bundle) -> RagAnswer:
+            result = bundle.rag_service.answer(
+                question=question,
+                top_k=top_k,
+                document_id=document_id,
+            )
+            citations: list[Citation] = [
+                {"method": c.method, "path": c.path, "snippet": c.snippet}
+                for c in result.citations
+            ]
+            return {
+                "answer": result.answer,
+                "citations": citations,
+                "is_grounded": result.is_grounded,
+            }
+        try:
+            return _run_bundle(app_state, _inner)
+        except (DomainError, IntegrationError) as e:
+            return to_error_payload(e)
+    return await anyio.to_thread.run_sync(_sync)
 
 
 def main() -> None:

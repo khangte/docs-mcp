@@ -30,6 +30,18 @@ class EndpointRepository:
         stmt = select(ApiEndpoint).where(ApiEndpoint.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
 
+    def list_all(self, document_id: str | None = None) -> Sequence[ApiEndpoint]:
+        """엔드포인트 목록을 (method, path) 오름차순으로 반환한다.
+
+        document_id 가 주어지면 해당 문서로 범위를 제한한다. 정렬을 고정해
+        태그 집계 같은 후속 처리 결과가 결정적이 되도록 한다.
+        """
+        stmt = select(ApiEndpoint)
+        if document_id is not None:
+            stmt = stmt.where(ApiEndpoint.document_id == document_id)
+        stmt = stmt.order_by(ApiEndpoint.path, ApiEndpoint.method)
+        return self._session.execute(stmt).scalars().all()
+
     def get_schema_by_name(self, document_id: str, name: str) -> ApiSchema | None:
         """문서 내 스키마 이름으로 컴포넌트 스키마를 조회한다."""
         stmt = select(ApiSchema).where(

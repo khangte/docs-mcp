@@ -93,13 +93,35 @@ def in_memory_fetcher() -> InMemoryFetcher:
 
 @pytest.fixture()
 def app_state(pg_engine, in_memory_fetcher):
+    """테스트용 AppState.
+
+    `vector_fallback_enabled` 를 True 로 고정해 벡터 보조 경로가 실행 환경의
+    Gemini 키 유무에 좌우되지 않게 한다(키가 없으면 HashEmbeddingProvider 로
+    폴백되므로 외부 호출은 발생하지 않는다). 보조 비활성 동작을 검증하는
+    테스트는 이 값을 명시적으로 False 로 바꾼다.
+    """
     state = AppState.from_engine(
         engine=pg_engine,
         fetcher=in_memory_fetcher,
         embedding_dim=EMBEDDING_DIM,
         hybrid_alpha=0.4,
+        vector_fallback_enabled=True,
     )
     return state
+
+
+@pytest.fixture()
+def counting_embedding_provider(app_state):
+    """app_state 의 임베딩 프로바이더를 호출 카운트 페이크로 감싼다.
+
+    색인(register) 단계에서도 임베딩이 호출되므로, 검색 호출만 세려면
+    테스트에서 `reset_counts()` 를 호출한 뒤 검색을 수행한다.
+    """
+    from tests.fixtures.fakes import CountingEmbeddingProvider
+
+    provider = CountingEmbeddingProvider(app_state.embedding_provider)
+    app_state.embedding_provider = provider
+    return provider
 
 
 @pytest.fixture()

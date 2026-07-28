@@ -1,5 +1,15 @@
 """LLM Provider Protocol + 템플릿/Gemini 기반 구현."""
 
+# 미사용: query_rag 도구 제거로 호출부 없음. RAG 답변생성은 호출 LLM(Claude/ChatGPT)이 담당.
+#
+# 주의: 같은 "Gemini" 이름이지만 `app/services/indexer/embedding_provider.py` 의
+# `GeminiEmbeddingProvider`(벡터검색용 임베딩)와는 전혀 다른 것이다. 임베딩
+# 프로바이더는 `search_endpoints` 의 벡터 보조 단계가 계속 사용하므로 미사용
+# 대상이 아니다. 이 파일(답변생성용 LLM)만 사용처가 없어졌다.
+#
+# 코드는 삭제하지 않고 보존한다(SPEC Phase 0 결정 3·4번). FastAPI `/query`
+# 라우트가 아직 RAGService 경유로 이 프로바이더를 사용한다.
+
 from __future__ import annotations
 
 import logging

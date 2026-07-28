@@ -1,0 +1,80 @@
+"""테스트용 페이크 구현.
+
+호출 여부/횟수를 검증해야 하는 의존성(임베딩 프로바이더, 예시 생성 서비스)을
+얇게 감싸 호출 카운트를 노출한다.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app.services.examples.request_example_service import RequestExampleService
+from app.services.indexer.embedding_provider import EmbeddingProvider
+
+
+class CountingEmbeddingProvider:
+    """임베딩 호출 횟수를 세는 페이크 프로바이더.
+
+    실제 벡터 생성은 위임 대상 프로바이더에 맡기고, `embed()` 가 몇 번
+    불렸는지만 추가로 기록한다. "키워드로 찾아지면 임베딩 API 를 호출하지
+    않는다"는 SPEC 검증 기준을 카운트로 확인하기 위한 도구다.
+    """
+
+    def __init__(self, delegate: EmbeddingProvider) -> None:
+        """위임 프로바이더를 보관하고 호출 카운터를 0 으로 초기화한다."""
+        self._delegate = delegate
+        self.embed_call_count = 0
+        self.embedded_texts: list[list[str]] = []
+
+    @property
+    def dim(self) -> int:
+        """위임 프로바이더의 임베딩 차원 수를 그대로 반환한다."""
+        return self._delegate.dim
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """호출 횟수와 입력 텍스트를 기록한 뒤 위임 프로바이더로 임베딩한다."""
+        self.embed_call_count += 1
+        self.embedded_texts.append(list(texts))
+        return self._delegate.embed(texts)
+
+    def reset_counts(self) -> None:
+        """호출 카운터와 기록을 초기화한다(색인 단계 호출을 제외하고 셀 때 사용)."""
+        self.embed_call_count = 0
+        self.embedded_texts = []
+
+
+class ExplodingEmbeddingProvider:
+    """호출되면 즉시 실패하는 페이크 프로바이더.
+
+    "이 경로에서는 임베딩이 절대 호출되면 안 된다"를 카운트가 아니라
+    예외로 단언하고 싶을 때 쓴다.
+    """
+
+    def __init__(self, dim: int = 256) -> None:
+        """임베딩 차원만 보관한다."""
+        self._dim = dim
+
+    @property
+    def dim(self) -> int:
+        """임베딩 차원 수를 반환한다."""
+        return self._dim
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """호출되면 AssertionError 를 발생시킨다."""
+        raise AssertionError(
+            f"임베딩 프로바이더가 호출되면 안 되는 경로에서 호출됨 (texts={len(texts)}건)"
+        )
+
+
+class CountingExampleService:
+    """예시 코드 생성 호출 횟수를 세는 페이크 서비스."""
+
+    def __init__(self, delegate: RequestExampleService) -> None:
+        """위임 서비스를 보관하고 호출 카운터를 0 으로 초기화한다."""
+        self._delegate = delegate
+        self.generate_call_count = 0
+
+    def generate(self, endpoint_id: str, fmt: str) -> dict[str, Any]:
+        """호출 횟수를 기록한 뒤 위임 서비스로 예시를 생성한다."""
+        self.generate_call_count += 1
+        return self._delegate.generate(endpoint_id, fmt)

@@ -1,5 +1,11 @@
 """RAG 파이프라인: 검색 → 컨텍스트 조립 → LLM 응답."""
 
+# 미사용: query_rag 도구 제거로 호출부 없음. RAG 답변생성은 호출 LLM(Claude/ChatGPT)이 담당.
+#
+# 코드는 삭제하지 않고 보존한다(SPEC Phase 0 결정 4번). MCP 도구 등록에서만
+# 빠졌을 뿐, FastAPI `/query` 라우트(`app/api/routes/query.py`)는 계속 이
+# 서비스를 사용하므로 `ServiceBundle.rag_service` 도 그대로 유지한다.
+
 from __future__ import annotations
 
 from dataclasses import dataclass
