@@ -35,14 +35,15 @@ class ProjectSourceResolver:
         drive_repo: ProjectDriveSourceRepository,
         notion_repo: ProjectNotionSourceRepository,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
-        notion_source_builder: Callable[[str], DocumentSource | None] | None = None,
+        notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
     ) -> None:
         """설정·Drive 토큰 발급기·매핑 저장소를 보관하고 어댑터 캐시를 초기화한다.
 
         `drive_source_builder`/`notion_source_builder` 를 주입하면 기본
         `build_drive_source`/`build_notion_source` 대신 그 콜백으로 어댑터를
         만든다(테스트에서 페이크를 주입하는 지점, `AppState.drive_source_builder`
-        /`notion_source_builder` 의 후계).
+        /`notion_source_builder` 의 후계). `notion_source_builder` 는
+        `(notion_id, kind)` 두 인자를 받는다.
         """
         self._settings = settings
         self._drive_token_provider = drive_token_provider
@@ -51,7 +52,7 @@ class ProjectSourceResolver:
         self._drive_source_builder = drive_source_builder
         self._notion_source_builder = notion_source_builder
         self._drive_cache: dict[str, DocumentSource | None] = {}
-        self._notion_cache: dict[str, DocumentSource | None] = {}
+        self._notion_cache: dict[tuple[str, str], DocumentSource | None] = {}
 
     def resolve_for_project(self, project: str) -> dict[str, DocumentSource]:
         """그 project 에서 쓸 수 있는 소스만 담은 매핑을 반환한다.
@@ -69,7 +70,7 @@ class ProjectSourceResolver:
 
         notion_row = self._notion_repo.get(project)
         if notion_row is not None:
-            notion_source = self._notion_source_for(notion_row.database_id)
+            notion_source = self._notion_source_for(notion_row.database_id, notion_row.kind)
             if notion_source is not None:
                 sources[notion_source.source_name] = notion_source
 
@@ -88,7 +89,7 @@ class ProjectSourceResolver:
             if drive_source is not None:
                 pairs.append((drive_row.project, drive_source))
         for notion_row in self._notion_repo.list_all():
-            notion_source = self._notion_source_for(notion_row.database_id)
+            notion_source = self._notion_source_for(notion_row.database_id, notion_row.kind)
             if notion_source is not None:
                 pairs.append((notion_row.project, notion_source))
         return pairs
@@ -104,13 +105,14 @@ class ProjectSourceResolver:
                 )
         return self._drive_cache[folder_id]
 
-    def _notion_source_for(self, database_id: str) -> DocumentSource | None:
-        """database_id 에 대한 Notion 어댑터를 캐시에서 찾거나 새로 만든다."""
-        if database_id not in self._notion_cache:
+    def _notion_source_for(self, notion_id: str, kind: str) -> DocumentSource | None:
+        """(notion_id, kind) 에 대한 Notion 어댑터를 캐시에서 찾거나 새로 만든다."""
+        cache_key = (notion_id, kind)
+        if cache_key not in self._notion_cache:
             if self._notion_source_builder is not None:
-                self._notion_cache[database_id] = self._notion_source_builder(database_id)
+                self._notion_cache[cache_key] = self._notion_source_builder(notion_id, kind)
             else:
-                self._notion_cache[database_id] = build_notion_source(
-                    self._settings, database_id
+                self._notion_cache[cache_key] = build_notion_source(
+                    self._settings, notion_id, kind
                 )
-        return self._notion_cache[database_id]
+        return self._notion_cache[cache_key]

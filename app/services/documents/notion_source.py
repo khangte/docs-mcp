@@ -40,6 +40,7 @@ class NotionSource:
         self,
         token: str,
         database_id: str | None = None,
+        page_id: str | None = None,
         notion_version: str = DEFAULT_NOTION_VERSION,
         timeout_seconds: float = 15.0,
         max_chars: int = 200_000,
@@ -50,6 +51,10 @@ class NotionSource:
         Args:
             token: Notion Integration Token.
             database_id: 지정 시 해당 데이터베이스 하위 페이지로 범위를 한정한다.
+                `page_id` 와 상호배타.
+            page_id: 지정 시 해당 페이지 바로 아래 child_page 블록들을
+                목록화 대상으로 삼는다(허브 페이지 하위 문서 탐색용).
+                `database_id` 와 상호배타.
             notion_version: `Notion-Version` 헤더 값.
             timeout_seconds: HTTP 타임아웃.
             max_chars: 본문 fetch 시 잘라낼 최대 문자 수.
@@ -64,6 +69,7 @@ class NotionSource:
             )
         self._token = token
         self._database_id = database_id
+        self._page_id = page_id
         self._notion_version = notion_version
         self._timeout = timeout_seconds
         self._max_chars = max_chars
@@ -77,9 +83,16 @@ class NotionSource:
     def list_pages(self) -> list[FileMeta]:
         """설정된 범위 안의 Notion 페이지 메타데이터를 반환한다.
 
+        `page_id` 가 설정돼 있으면 그 페이지 바로 아래(1단계, 재귀 없음)
+        child_page 블록만 목록화한다(허브 페이지 하위 문서 탐색). 그 외에는
+        기존처럼 데이터베이스 쿼리 또는 워크스페이스 검색을 사용한다.
+
         Raises:
             IntegrationError: 인증 실패·rate limit·네트워크 오류 시.
         """
+        if self._page_id:
+            with self._client() as client:
+                return self._list_child_pages(client, self._page_id)
         path, body = self._list_request_spec()
         with self._client() as client:
             raw_pages = self._paginate(client, path, body)
@@ -160,6 +173,19 @@ class NotionSource:
                 lines.append(text)
             if block.get("has_children") and block.get("id"):
                 self._collect_block_text(client, str(block["id"]), lines, depth + 1)
+
+    def _list_child_pages(self, client: httpx.Client, page_id: str) -> list[FileMeta]:
+        """page_id 바로 아래(1단계) child_page 블록만 FileMeta 목록으로 변환한다.
+
+        재귀하지 않는다 — child_page 안에 또 child_page 가 있어도 이 목록에는
+        포함되지 않는다(깊은 순회는 후속 스코프).
+        """
+        child_pages: list[FileMeta] = []
+        for block in self._list_children(client, page_id):
+            if block.get("type") != "child_page" or not block.get("id"):
+                continue
+            child_pages.append(_child_page_to_file_meta(block))
+        return child_pages
 
     def _list_children(self, client: httpx.Client, block_id: str) -> list[dict[str, Any]]:
         """블록 자식 목록을 페이지네이션까지 처리해 반환한다."""
@@ -246,6 +272,24 @@ def _page_title(page: dict[str, Any]) -> str:
                 if title:
                     return title
     return UNTITLED
+
+
+def _child_page_to_file_meta(block: dict[str, Any]) -> FileMeta:
+    """`child_page` 타입 블록 하나를 FileMeta 로 변환한다.
+
+    블록 자체의 id 가 하위 페이지의 page id 다(그대로 fetch 대상 external_id).
+    """
+    block_id = str(block.get("id") or "")
+    child_page = block.get("child_page")
+    title = UNTITLED
+    if isinstance(child_page, dict):
+        title = str(child_page.get("title") or "") or UNTITLED
+    return FileMeta(
+        external_id=block_id,
+        title=title,
+        url=f"https://www.notion.so/{block_id.replace('-', '')}",
+        modified_at=parse_rfc3339(block.get("last_edited_time")),
+    )
 
 
 def _to_file_meta(page: dict[str, Any]) -> FileMeta:

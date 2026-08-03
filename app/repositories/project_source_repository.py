@@ -78,3 +78,14 @@ class ProjectNotionSourceRepository(ProjectSourceRepositoryBase[ProjectNotionSou
 
     model = ProjectNotionSource
     value_attr = "database_id"
+
+    def upsert_kind(self, project: str, value: str, kind: str) -> ProjectNotionSource:
+        """value(database_id 또는 page_id)와 함께 kind 도 세팅해 upsert 한다.
+
+        `kind` 가 바뀌는 경우(예: database → page 재등록)도 이 메서드로
+        갱신된다. 기본 `upsert()` 는 값 컬럼만 다루므로 kind 는 여기서 별도로
+        반영한다.
+        """
+        row = self.upsert(project, value)
+        row.kind = kind
+        return row

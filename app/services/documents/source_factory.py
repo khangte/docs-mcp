@@ -51,13 +51,29 @@ def build_drive_source(
     )
 
 
-def build_notion_source(settings: Settings, database_id: str) -> NotionSource | None:
-    """Notion 토큰이 있을 때만 어댑터를 만든다. database_id 로 범위를 한정한다."""
+def build_notion_source(
+    settings: Settings, notion_id: str, kind: str = "database"
+) -> NotionSource | None:
+    """Notion 토큰이 있을 때만 어댑터를 만든다.
+
+    Args:
+        notion_id: `kind="database"` 면 데이터베이스 ID, `kind="page"` 면
+            허브 페이지 ID.
+        kind: `"database"`(기본) 또는 `"page"`.
+    """
     if not settings.notion_token:
         return None
+    if kind == "page":
+        return NotionSource(
+            token=settings.notion_token,
+            page_id=notion_id,
+            notion_version=settings.notion_version,
+            timeout_seconds=settings.document_source_timeout_seconds,
+            max_chars=settings.document_fetch_max_chars,
+        )
     return NotionSource(
         token=settings.notion_token,
-        database_id=database_id,
+        database_id=notion_id,
         notion_version=settings.notion_version,
         timeout_seconds=settings.document_source_timeout_seconds,
         max_chars=settings.document_fetch_max_chars,

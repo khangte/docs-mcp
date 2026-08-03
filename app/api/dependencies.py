@@ -67,9 +67,9 @@ class AppState:
     #: folder_id → Drive 어댑터 팩토리. 테스트에서 페이크를 주입하는 지점.
     #: None 이면 `build_drive_source` 가 기본으로 쓰인다.
     drive_source_builder: Callable[[str], DocumentSource | None] | None = None
-    #: database_id → Notion 어댑터 팩토리. 테스트에서 페이크를 주입하는 지점.
-    #: None 이면 `build_notion_source` 가 기본으로 쓰인다.
-    notion_source_builder: Callable[[str], DocumentSource | None] | None = None
+    #: (notion_id, kind) → Notion 어댑터 팩토리. 테스트에서 페이크를 주입하는
+    #: 지점. None 이면 `build_notion_source` 가 기본으로 쓰인다.
+    notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None
 
     @classmethod
     def from_engine(
@@ -80,7 +80,7 @@ class AppState:
         hybrid_alpha: float = 0.4,
         vector_fallback_enabled: bool | None = None,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
-        notion_source_builder: Callable[[str], DocumentSource | None] | None = None,
+        notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 

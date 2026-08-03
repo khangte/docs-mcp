@@ -134,7 +134,7 @@ def app_state(pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_sourc
         hybrid_alpha=0.4,
         vector_fallback_enabled=True,
         drive_source_builder=lambda folder_id: fake_drive_source,
-        notion_source_builder=lambda database_id: fake_notion_source,
+        notion_source_builder=lambda notion_id, kind: fake_notion_source,
     )
     return state
 
@@ -159,14 +159,16 @@ def make_project_resolver(db_session):
         drive_mapping: dict[str, object] | None = None,
         notion_mapping: dict[str, object] | None = None,
     ):
-        """project → (folder_id, 페이크) / (database_id, 페이크) 매핑으로 resolver 를 만든다.
+        """project → (folder_id, 페이크) / (database_id[, kind], 페이크) 매핑으로 만든다.
 
         Args:
             drive_mapping: `{project: (folder_id, fake_drive_source)}`.
-            notion_mapping: `{project: (database_id, fake_notion_source)}`.
+            notion_mapping: `{project: (database_id, fake_notion_source)}` 또는
+                `{project: (notion_id, kind, fake_notion_source)}`(3튜플이면
+                kind 를 명시, 생략하면 "database").
 
         반환된 resolver 에는 `drive_builder_calls`/`notion_builder_calls`
-        속성(리스트)이 붙어, 빌더가 어떤 folder_id/database_id 로 몇 번
+        속성(리스트)이 붙어, 빌더가 어떤 folder_id/(notion_id, kind) 로 몇 번
         호출됐는지(캐싱 검증) 테스트가 직접 확인할 수 있다.
         """
         drive_repo = ProjectDriveSourceRepository(db_session)
@@ -175,22 +177,27 @@ def make_project_resolver(db_session):
         for project, (folder_id, fake) in (drive_mapping or {}).items():
             drive_repo.upsert(project, folder_id)
             drive_by_folder[folder_id] = fake
-        notion_by_db: dict[str, object] = {}
-        for project, (database_id, fake) in (notion_mapping or {}).items():
-            notion_repo.upsert(project, database_id)
-            notion_by_db[database_id] = fake
+        notion_by_id_kind: dict[tuple[str, str], object] = {}
+        for project, entry in (notion_mapping or {}).items():
+            if len(entry) == 3:
+                notion_id, kind, fake = entry
+            else:
+                notion_id, fake = entry
+                kind = "database"
+            notion_repo.upsert_kind(project, notion_id, kind)
+            notion_by_id_kind[(notion_id, kind)] = fake
         db_session.commit()
 
         drive_builder_calls: list[str] = []
-        notion_builder_calls: list[str] = []
+        notion_builder_calls: list[tuple[str, str]] = []
 
         def _drive_builder(folder_id: str):
             drive_builder_calls.append(folder_id)
             return drive_by_folder.get(folder_id)
 
-        def _notion_builder(database_id: str):
-            notion_builder_calls.append(database_id)
-            return notion_by_db.get(database_id)
+        def _notion_builder(notion_id: str, kind: str):
+            notion_builder_calls.append((notion_id, kind))
+            return notion_by_id_kind.get((notion_id, kind))
 
         resolver = ProjectSourceResolver(
             settings=Settings(),
@@ -233,15 +240,20 @@ def fake_drive_source_builder():
 
 @pytest.fixture()
 def fake_notion_source_builder():
-    """database_id → 페이크 Notion 어댑터를 돌려주는 빌더. Drive 판과 동일한 구조."""
+    """(notion_id, kind) → 페이크 Notion 어댑터를 돌려주는 빌더. Drive 판과 동일한 구조.
+
+    kind 는 기본값 "database"로 생략 호출도 허용해, 기존 호출부(`builder(id)`)
+    가 그대로 동작하게 한다.
+    """
     from tests.fixtures.document_sources import FakeDocumentSource
 
-    instances: dict[str, FakeDocumentSource] = {}
+    instances: dict[tuple[str, str], FakeDocumentSource] = {}
 
-    def _build(database_id: str) -> FakeDocumentSource:
-        if database_id not in instances:
-            instances[database_id] = FakeDocumentSource(SOURCE_NOTION)
-        return instances[database_id]
+    def _build(notion_id: str, kind: str = "database") -> FakeDocumentSource:
+        key = (notion_id, kind)
+        if key not in instances:
+            instances[key] = FakeDocumentSource(SOURCE_NOTION)
+        return instances[key]
 
     _build.instances = instances  # type: ignore[attr-defined]
     return _build

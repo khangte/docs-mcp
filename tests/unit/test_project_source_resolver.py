@@ -43,7 +43,7 @@ def test_resolve_for_project_notion_uses_that_projects_database_id(
     resolver.resolve_for_project("A")
     resolver.resolve_for_project("B")
 
-    assert resolver.notion_builder_calls == ["db-a", "db-b"]
+    assert resolver.notion_builder_calls == [("db-a", "database"), ("db-b", "database")]
 
 
 # --- 매핑 없는 소스는 키 자체가 없다 ---------------------------------------------
@@ -125,7 +125,7 @@ def test_resolve_all_caches_notion_builder_call_per_database_id(
 
     pairs = resolver.resolve_all()
 
-    assert resolver.notion_builder_calls == ["db-shared"]
+    assert resolver.notion_builder_calls == [("db-shared", "database")]
     assert len(pairs) == 2  # (A, notion), (B, notion) — 어댑터 인스턴스는 동일
 
 

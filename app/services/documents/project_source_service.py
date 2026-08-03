@@ -95,8 +95,36 @@ class DriveSourceService(ProjectSourceService[ProjectDriveSource]):
 
 
 class NotionSourceService(ProjectSourceService[ProjectNotionSource]):
-    """`ProjectNotionSourceRepository` 전용 얇은 래퍼."""
+    """`ProjectNotionSourceRepository` 전용 얇은 래퍼.
+
+    한 프로젝트는 database 또는 page 중 하나만 가진다(같은 project PK 를
+    공유). `register()`(기존, database 용)와 `register_page()`(page 용) 는
+    각각 `kind` 를 명시적으로 세팅한다.
+    """
 
     def __init__(self, session: Session, repo: ProjectNotionSourceRepository) -> None:
         """Notion 소스 저장소로 고정한 서비스를 만든다."""
         super().__init__(session, repo)
+        self._notion_repo = repo
+
+    def register(self, project: str, value: str) -> tuple[ProjectNotionSource, UpsertStatus]:
+        """project 에 Notion 데이터베이스를 매핑한다(kind="database")."""
+        return self._register(project, value, kind="database")
+
+    def register_page(
+        self, project: str, page_id: str
+    ) -> tuple[ProjectNotionSource, UpsertStatus]:
+        """project 에 Notion 허브 페이지를 매핑한다(kind="page")."""
+        return self._register(project, page_id, kind="page")
+
+    def _register(
+        self, project: str, value: str, kind: str
+    ) -> tuple[ProjectNotionSource, UpsertStatus]:
+        """project 정규화·value 검증 후 kind 를 명시해 upsert 한다."""
+        normalized_project = normalize_project(project, required=True)
+        normalized_value = _normalize_value(value)
+
+        existed = self._notion_repo.get(normalized_project) is not None
+        row = self._notion_repo.upsert_kind(normalized_project, normalized_value, kind)
+        self._session.commit()
+        return row, ("updated" if existed else "created")

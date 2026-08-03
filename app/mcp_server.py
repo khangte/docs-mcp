@@ -39,6 +39,7 @@ from app.mcp_types import (
     RefreshIndexResult,
     RegisterDocumentResult,
     RegisterDriveSourceResult,
+    RegisterNotionPageResult,
     RegisterNotionSourceResult,
     RemoveDriveSourceResult,
     RemoveNotionSourceResult,
@@ -222,6 +223,7 @@ def _to_notion_source_item(row: ProjectNotionSource) -> NotionSourceItem:
     return {
         "project": row.project,
         "database_id": row.database_id,
+        "kind": cast(Literal["database", "page"], row.kind),
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
@@ -698,17 +700,54 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         return await anyio.to_thread.run_sync(_sync)
 
     @mcp.tool()
+    async def register_notion_page(
+        project: str, page_id: str
+    ) -> RegisterNotionPageResult | ErrorPayload:
+        """프로젝트에 Notion 허브 페이지를 매핑한다.
+
+        `register_notion_source`(데이터베이스)와 달리, 지정한 페이지 바로
+        아래(1단계, 재귀 없음)의 하위 페이지들을 검색 대상 문서로 삼는다.
+        같은 project 로 다시 호출하면 page_id 가 교체된다(upsert). 한
+        project 는 database 매핑과 page 매핑을 동시에 가질 수 없다 —
+        나중 호출이 이전 매핑을 덮어쓴다.
+
+        Args:
+            project: 매핑할 프로젝트 식별자.
+            page_id: 허브로 쓸 Notion 페이지 ID.
+
+        Returns:
+            project, page_id, status("created" 또는 "updated")를 담은 dict.
+            project 나 page_id 가 비었으면 error/code/message 필드를 담은
+            ErrorPayload(code="validation_error")를 대신 반환한다.
+        """
+        def _sync() -> RegisterNotionPageResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> RegisterNotionPageResult:
+                row, status = bundle.notion_source_service.register_page(project, page_id)
+                return {
+                    "project": row.project,
+                    "page_id": row.database_id,
+                    "status": status,
+                }
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
     async def list_notion_sources(
         project: str | None = None,
     ) -> NotionSourceListResult | ErrorPayload:
-        """등록된 프로젝트→Notion 데이터베이스 매핑 목록을 반환한다.
+        """등록된 프로젝트→Notion 데이터베이스/페이지 매핑 목록을 반환한다.
 
         Args:
             project: 특정 프로젝트의 매핑만 보고 싶을 때 지정. 생략하면 전체.
 
         Returns:
-            items 키에 project/database_id/created_at/updated_at 을 갖는
-            항목 리스트를 담은 dict. project 오름차순으로 결정적으로 정렬된다.
+            items 키에 project/database_id/kind/created_at/updated_at 을 갖는
+            항목 리스트를 담은 dict. `kind` 는 "database" 또는 "page"이며,
+            page 매핑이어도 값은 `database_id` 필드에 담긴다. project
+            오름차순으로 결정적으로 정렬된다.
         """
         def _sync() -> NotionSourceListResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> NotionSourceListResult:

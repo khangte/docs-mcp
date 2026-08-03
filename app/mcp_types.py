@@ -198,10 +198,15 @@ class DriveSourceItem(TypedDict):
 
 
 class NotionSourceItem(TypedDict):
-    """list_notion_sources 가 반환하는 매핑 한 건."""
+    """list_notion_sources 가 반환하는 매핑 한 건.
+
+    `kind` 가 `"page"` 이면 `database_id` 필드에는 page_id 가 담긴다(값
+    컬럼을 database/page 가 공유).
+    """
 
     project: str
     database_id: str
+    kind: Literal["database", "page"]
     created_at: str
     updated_at: str
 
@@ -231,6 +236,14 @@ class RegisterNotionSourceResult(TypedDict):
 
     project: str
     database_id: str
+    status: Literal["created", "updated"]
+
+
+class RegisterNotionPageResult(TypedDict):
+    """register_notion_page 의 반환 타입."""
+
+    project: str
+    page_id: str
     status: Literal["created", "updated"]
 
 
