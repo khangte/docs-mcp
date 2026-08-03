@@ -9,6 +9,15 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from dotenv import find_dotenv, load_dotenv
+
+# 모듈 import 시점에 1회 로드한다(Settings 필드의 os.environ 접근보다 먼저
+# 실행되도록, 그리고 get_settings() 캐시 이전에 프로세스 환경에 반영되도록).
+# override=False: 이미 셸이나 MCP 클라이언트의 env 블록으로 주입된 값이
+# .env 파일 값에 덮이지 않는다(우선순위: 명시적 env > .env > 기본값).
+# .env 파일이 없으면 조용히 넘어간다(load_dotenv 기본 동작).
+load_dotenv(find_dotenv(), override=False)
+
 
 @dataclass(frozen=True)
 class Settings:
