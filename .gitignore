@@ -220,5 +220,8 @@ harness/
 # Serena MCP
 .serena
 
+# ai-setup
+team/
+
 # 로컬 자격증명 (서비스 계정 키 등) — 절대 커밋 금지
 secrets/
