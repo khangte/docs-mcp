@@ -24,7 +24,7 @@ from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.documents.project_scope import normalize_project
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
-from app.services.parser.document_router import detect_doc_type, parse_document
+from app.services.parser.document_router import detect_doc_type, extract_text, parse_document
 
 
 @dataclass
@@ -76,6 +76,10 @@ class SyncService:
         normalized_project = normalize_project(project, required=True)
         if (source_url is None) == (raw_document is None):
             raise ValidationError("exactly one of source_url or raw_document must be provided")
+        if source_url is not None and doc_type in ("pdf", "docx"):
+            raise ValidationError(
+                "pdf/docx documents must be provided as base64 raw_document, not source_url"
+            )
 
         if source_url:
             existing = self._document_repo.find_by_source_url(source_url)
@@ -86,6 +90,8 @@ class SyncService:
             raw = raw_document or ""
 
         resolved_doc_type = doc_type or detect_doc_type(raw, source_url)
+        if resolved_doc_type in ("pdf", "docx"):
+            raw = extract_text(raw, resolved_doc_type)
         parsed = parse_document(raw, resolved_doc_type, title_hint=title_override)
         content_hash = _hash(raw)
 

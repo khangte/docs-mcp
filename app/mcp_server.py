@@ -285,10 +285,13 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
                 이후 검색에서 이 값으로 범위를 좁힌다.
             source_url: 문서를 가져올 URL. raw_document를 생략할 때 사용.
             raw_document: 문서 원문(JSON/YAML/Markdown/CSV 문자열 또는 dict).
-                source_url을 생략할 때 사용.
+                source_url을 생략할 때 사용. pdf/docx는 base64로 인코딩한
+                문자열로 전달하고 doc_type을 반드시 명시한다.
             title_override: 문서 제목을 강제로 지정하고 싶을 때 사용, 생략 시
                 문서 자체의 제목을 사용한다.
-            doc_type: "openapi" | "markdown" | "csv" 중 하나, 생략 시 자동 판별한다.
+            doc_type: "openapi" | "markdown" | "csv" | "pdf" | "docx" 중 하나,
+                생략 시 자동 판별한다(pdf/docx는 자동 판별 대상이 아니므로
+                명시가 필수).
 
         Returns:
             document_id, title, version, doc_type, project, endpoints_count,
