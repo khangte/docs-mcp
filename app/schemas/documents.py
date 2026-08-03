@@ -7,10 +7,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.models.openapi import DEFAULT_PROJECT
+
 
 class RegisterDocumentRequest(BaseModel):
     """문서 등록 요청 본문."""
 
+    project: str = DEFAULT_PROJECT
     source_url: str | None = None
     raw_document: str | None = None
     title_override: str | None = None
@@ -34,6 +37,7 @@ class RegisterDocumentResponse(BaseModel):
     version: str
     source_url: str | None
     doc_type: str
+    project: str
     endpoints_count: int
     schemas_count: int
     sections_count: int
@@ -49,6 +53,7 @@ class DocumentSummary(BaseModel):
     title: str
     version: str
     source_url: str | None
+    project: str
     endpoints_count: int
     indexed_at: datetime
 

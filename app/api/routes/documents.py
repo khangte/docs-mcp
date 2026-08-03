@@ -25,6 +25,7 @@ def register_document(
 ) -> RegisterDocumentResponse:
     """OpenAPI 문서를 신규 등록하고 등록 결과 메타를 반환한다."""
     result = services.sync_service.register(
+        project=body.project,
         source_url=body.source_url,
         raw_document=body.raw_document,
         title_override=body.title_override,
@@ -37,6 +38,7 @@ def register_document(
         version=doc.version,
         source_url=doc.source_url,
         doc_type=doc.doc_type,
+        project=doc.project,
         endpoints_count=result.endpoints_count,
         schemas_count=result.schemas_count,
         sections_count=result.sections_count,
@@ -58,6 +60,7 @@ def list_documents(
             title=d.title,
             version=d.version,
             source_url=d.source_url,
+            project=d.project,
             endpoints_count=len(d.endpoints),
             indexed_at=d.indexed_at,
         )
@@ -82,6 +85,7 @@ def get_document(
         title=doc.title,
         version=doc.version,
         source_url=doc.source_url,
+        project=doc.project,
         endpoints_count=len(doc.endpoints),
         indexed_at=doc.indexed_at,
         sync_history=[

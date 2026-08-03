@@ -10,7 +10,7 @@ from app.core.errors import EndpointNotFoundError, ValidationError
 def _register_and_find_get_pet(services_factory, sample_openapi_3: str):
     services = services_factory()
     result = services.sync_service.register(
-        source_url=None, raw_document=sample_openapi_3
+        project="default", source_url=None, raw_document=sample_openapi_3
     )
     endpoints = services.endpoint_repo.list_by_document(result.document.id)
     get_pet = next(e for e in endpoints if e.method == "GET" and e.path == "/pet/{petId}")

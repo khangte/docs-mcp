@@ -10,7 +10,9 @@ from app.services.search.search_service import SearchOptions
 
 def _register(services_factory, raw: str):
     services = services_factory()
-    result = services.sync_service.register(source_url=None, raw_document=raw)
+    result = services.sync_service.register(
+        project="default", source_url=None, raw_document=raw
+    )
     return services, result
 
 

@@ -21,6 +21,7 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
+from app.services.documents.project_scope import normalize_project
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.parser.document_router import detect_doc_type, parse_document
@@ -65,12 +66,14 @@ class SyncService:
     def register(
         self,
         *,
+        project: str,
         source_url: str | None,
         raw_document: str | None,
         title_override: str | None = None,
         doc_type: str | None = None,
     ) -> RegistrationResult:
         """원본 URL 또는 원문을 받아 수집·파싱·색인하고 신규 문서로 등록한다."""
+        normalized_project = normalize_project(project, required=True)
         if (source_url is None) == (raw_document is None):
             raise ValidationError("exactly one of source_url or raw_document must be provided")
 
@@ -88,6 +91,7 @@ class SyncService:
 
         document = ApiDocument(
             id=_new_id(),
+            project=normalized_project,
             source_url=source_url,
             title=title_override or parsed.title,
             version=parsed.version,

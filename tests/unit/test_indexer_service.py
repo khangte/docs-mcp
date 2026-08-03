@@ -9,7 +9,9 @@ def test_index_document_creates_endpoints_and_chunks(
     services_factory, sample_openapi_3: str
 ) -> None:
     services = services_factory()
-    result = services.sync_service.register(source_url=None, raw_document=sample_openapi_3)
+    result = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
     assert result.endpoints_count == 4  # POST /pet, GET /pet/{petId}, DELETE /pet/{petId}, POST /user
     assert result.chunks_count == result.endpoints_count + result.schemas_count
 
@@ -21,7 +23,9 @@ def test_index_document_creates_endpoints_and_chunks(
 
 def test_reindex_replaces_chunks(services_factory, sample_openapi_3: str) -> None:
     services = services_factory()
-    first = services.sync_service.register(source_url=None, raw_document=sample_openapi_3)
+    first = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
     document_id = first.document.id
     first_chunk_ids = {c.id for c in services.chunk_repo.list_by_document(document_id)}
     assert first_chunk_ids
@@ -44,7 +48,9 @@ def test_reindex_replaces_chunks(services_factory, sample_openapi_3: str) -> Non
 
 def test_resync_same_hash_is_skipped(services_factory, sample_openapi_3: str) -> None:
     services = services_factory()
-    first = services.sync_service.register(source_url=None, raw_document=sample_openapi_3)
+    first = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
     document_id = first.document.id
     before = {c.id for c in services.chunk_repo.list_by_document(document_id)}
 
@@ -60,7 +66,9 @@ def test_resync_force_reindexes_even_with_same_hash(
     services_factory, sample_openapi_3: str
 ) -> None:
     services = services_factory()
-    first = services.sync_service.register(source_url=None, raw_document=sample_openapi_3)
+    first = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
     document_id = first.document.id
 
     result = services.sync_service.resync(
