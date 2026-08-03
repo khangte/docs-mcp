@@ -23,6 +23,7 @@ class DocumentSummary(TypedDict):
     title: str
     version: str
     doc_type: str
+    project: str
     source_url: str | None
     endpoints_count: int
     indexed_at: str | None
@@ -35,6 +36,7 @@ class RegisterDocumentResult(TypedDict):
     title: str
     version: str
     doc_type: str
+    project: str
     endpoints_count: int
     sections_count: int
     chunks_count: int
@@ -152,6 +154,7 @@ class DocumentSearchItemPayload(TypedDict):
 
     title: str
     source: Literal["drive", "notion"]
+    project: str
     url: str
     snippet: str
     score: float
@@ -183,3 +186,63 @@ class RefreshIndexResult(TypedDict):
     updated: int
     removed: int
     failed_sources: list[str]
+
+
+class DriveSourceItem(TypedDict):
+    """list_drive_sources 가 반환하는 매핑 한 건."""
+
+    project: str
+    folder_id: str
+    created_at: str
+    updated_at: str
+
+
+class NotionSourceItem(TypedDict):
+    """list_notion_sources 가 반환하는 매핑 한 건."""
+
+    project: str
+    database_id: str
+    created_at: str
+    updated_at: str
+
+
+class DriveSourceListResult(TypedDict):
+    """list_drive_sources 의 반환 타입."""
+
+    items: list[DriveSourceItem]
+
+
+class NotionSourceListResult(TypedDict):
+    """list_notion_sources 의 반환 타입."""
+
+    items: list[NotionSourceItem]
+
+
+class RegisterDriveSourceResult(TypedDict):
+    """register_drive_source 의 반환 타입."""
+
+    project: str
+    folder_id: str
+    status: Literal["created", "updated"]
+
+
+class RegisterNotionSourceResult(TypedDict):
+    """register_notion_source 의 반환 타입."""
+
+    project: str
+    database_id: str
+    status: Literal["created", "updated"]
+
+
+class RemoveDriveSourceResult(TypedDict):
+    """remove_drive_source 의 반환 타입."""
+
+    project: str
+    removed: bool
+
+
+class RemoveNotionSourceResult(TypedDict):
+    """remove_notion_source 의 반환 타입."""
+
+    project: str
+    removed: bool

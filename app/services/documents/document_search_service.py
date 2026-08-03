@@ -10,6 +10,11 @@
 
 본문은 절대 캐시하지 않는다. `get_document` 도 항상 fetch 시점의 최신 원문을
 돌려준다.
+
+SPEC 기능 6 이후 소스는 project → folder_id/database_id 매핑에서 요청 시점에
+만들어진다(`ProjectSourceResolver`). 같은 `source`(`drive`/`notion`) 라도
+project 마다 다른 폴더/DB 를 가리키므로, 후보 행의 `project` 로 어댑터를
+고른다(`row.source` 만으로는 부족).
 """
 
 from __future__ import annotations
@@ -20,11 +25,13 @@ from dataclasses import dataclass, replace
 from app.core.errors import IntegrationError, ValidationError
 from app.core.logging import get_logger
 from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
+from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
 )
+from app.services.documents.project_source_resolver import ProjectSourceResolver
 
 _LOG = get_logger("docs_mcp.documents.search")
 
@@ -47,6 +54,7 @@ class DocumentSearchOptions:
 
     top_k: int = 5
     source: str | None = None
+    project: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +63,7 @@ class DocumentSearchItem:
 
     title: str
     source: str
+    project: str
     url: str
     snippet: str
     score: float
@@ -85,24 +94,23 @@ class DocumentSearchService:
     def __init__(
         self,
         meta_repo: DocumentMetaRepository,
-        sources: dict[str, DocumentSource],
+        resolver: ProjectSourceResolver,
     ) -> None:
-        """저장소와 source 이름 → 어댑터 매핑을 보관한다.
+        """저장소와 프로젝트 소스 리졸버를 보관한다.
 
         Args:
             meta_repo: `document_meta` 저장소(1단계 후보 조회용).
-            sources: `drive`/`notion` → 어댑터 매핑. 자격증명이 없는 소스는
-                아예 포함되지 않는다.
+            resolver: project → Drive/Notion 어댑터 요청 시점 팩토리.
         """
         self._meta_repo = meta_repo
-        self._sources = dict(sources)
+        self._resolver = resolver
 
     def search(self, query: str, options: DocumentSearchOptions) -> list[DocumentSearchItem]:
         """질의에 관련된 협업 문서를 찾아 스니펫과 점수를 붙여 반환한다.
 
         Args:
             query: 검색할 자연어/키워드 질의.
-            options: top_k 와 source 필터.
+            options: top_k·source·project 필터.
 
         Returns:
             점수 내림차순 결과 리스트(최대 top_k 건). 1단계 후보가 없으면
@@ -116,7 +124,7 @@ class DocumentSearchService:
         """
         normalized_query = self._validate(query, options)
         normalized_source = self._validate_source(options.source, allow_none=True)
-        self._require_configured(normalized_source)
+        self._require_configured(normalized_source, options.project)
         query_tokens = set(tokenize(normalized_query))
         if not query_tokens:
             raise ValidationError("query must contain at least one searchable token")
@@ -134,6 +142,12 @@ class DocumentSearchService:
     def get_document(self, source: str, external_id: str) -> DocumentContent:
         """문서 한 건의 최신 원문을 조회한다(캐시된 본문이 아니다).
 
+        project 는 인자로 받지 않는다(계약 유지). 어댑터 선택은
+        `document_meta` 에서 `(source, external_id)` 를 가진 행의 project 로
+        결정한다. 같은 external_id 가 여러 project 에 있으면 가장 최근
+        `last_synced_at` 행을 쓴다. 메타에 없으면 `DEFAULT_PROJECT` 의 해당
+        source 어댑터로 폴백한다.
+
         Args:
             source: `drive` 또는 `notion`.
             external_id: 출처 시스템의 문서 식별자.
@@ -147,19 +161,37 @@ class DocumentSearchService:
             IntegrationError: 소스 미구성, 문서 없음, 외부 연동 실패.
         """
         normalized_source = self._validate_source(source, allow_none=False)
+        source_str = str(normalized_source)
         normalized_id = (external_id or "").strip()
         if not normalized_id:
             raise ValidationError("external_id must not be empty")
 
-        document_source = self._require_source(str(normalized_source))
+        row = self._find_meta_row(source_str, normalized_id)
+        project = row.project if row is not None else DEFAULT_PROJECT
+        document_source = self._require_source(project, source_str)
         content = document_source.fetch(normalized_id)
-        row = self._meta_repo.find(str(normalized_source), normalized_id)
         return DocumentContent(
             title=row.title if row else "",
-            source=str(normalized_source),
+            source=source_str,
             url=row.url if row else "",
             content=content,
         )
+
+    def _find_meta_row(self, source: str, external_id: str) -> DocumentMeta | None:
+        """(source, external_id) 를 가진 행 중 가장 최근 last_synced_at 행을 찾는다.
+
+        같은 external_id 가 여러 project 에 공유될 수 있으므로(SPEC 기능 6
+        검증 기준: A·B 소스에 공유된 문서는 2행), project 를 명시하지 않고
+        source/external_id 만으로 조회한다.
+        """
+        rows = [
+            row
+            for row in self._meta_repo.list_all(source=source)
+            if row.external_id == external_id
+        ]
+        if not rows:
+            return None
+        return max(rows, key=lambda row: row.last_synced_at)
 
     # --- 1단계: 메타 캐시 후보 압축 ----------------------------------------
 
@@ -175,7 +207,9 @@ class DocumentSearchService:
         2단계에서 fetch 하는 문서 수가 top_k 를 넘지 않도록, 여기서 이미
         top_k 로 잘라 반환한다.
         """
-        rows = self._meta_repo.search_by_tokens(sorted(query_tokens), source=options.source)
+        rows = self._meta_repo.search_by_tokens(
+            sorted(query_tokens), source=options.source, project=options.project
+        )
         scored = [
             (row, score)
             for row, score in ((row, _title_score(row, query_tokens)) for row in rows)
@@ -196,19 +230,26 @@ class DocumentSearchService:
         """후보 본문을 실시간으로 받아 스니펫을 만들고 최종 점수로 재정렬한다.
 
         개별 문서 fetch 실패는 그 문서만 건너뛴다(한 건의 권한 오류가 검색
-        전체를 죽이지 않게 한다).
+        전체를 죽이지 않게 한다). 어댑터는 후보 행의 project 로 고른다.
         """
         items: list[DocumentSearchItem] = []
         for row, title_score in candidates:
-            document_source = self._sources.get(row.source)
+            sources = self._resolver.resolve_for_project(row.project)
+            document_source = sources.get(row.source)
             if document_source is None:
-                _LOG.warning("메타 캐시에 있으나 소스가 미구성됨: %s", row.source)
+                _LOG.warning(
+                    "메타 캐시에 있으나 소스가 미구성됨: %s/%s", row.project, row.source
+                )
                 continue
             try:
                 body = document_source.fetch(row.external_id)
             except IntegrationError as exc:
                 _LOG.warning(
-                    "문서 본문 조회 실패(건너뜀): %s/%s (%s)", row.source, row.external_id, exc
+                    "문서 본문 조회 실패(건너뜀): %s/%s/%s (%s)",
+                    row.project,
+                    row.source,
+                    row.external_id,
+                    exc,
                 )
                 continue
             body_score = _body_score(body, query_tokens)
@@ -216,6 +257,7 @@ class DocumentSearchService:
                 DocumentSearchItem(
                     title=row.title,
                     source=row.source,
+                    project=row.project,
                     url=row.url,
                     snippet=_build_snippet(body, query_tokens) or _fallback_snippet(row, query),
                     score=round(
@@ -253,24 +295,31 @@ class DocumentSearchService:
             )
         return normalized
 
-    def _require_configured(self, source: str | None) -> None:
+    def _require_configured(self, source: str | None, project: str | None) -> None:
         """검색 대상 소스가 구성돼 있는지 확인한다.
 
         "구성은 됐는데 결과가 0건"인 정상 케이스와 "서버에 소스가 아예 설정되지
         않음"을 구별하기 위한 검사다. 전자는 계속 빈 리스트를 돌려줘야 하므로
         여기서는 **구성 여부만** 보고 캐시 내용은 보지 않는다.
 
+        project 가 주어지면 그 project 의 매핑만 보고, 없으면 등록된 전체
+        (project, source) 쌍을 본다.
+
         Raises:
             IntegrationError: 소스가 하나도 없거나, 지정한 source 가 미구성인 경우.
         """
-        if not self._sources:
+        if project is not None:
+            available = self._resolver.resolve_for_project(project)
+        else:
+            available = {s.source_name: s for _, s in self._resolver.resolve_all()}
+        if not available:
             raise IntegrationError(NO_SOURCE_CONFIGURED_MESSAGE)
-        if source is not None and source not in self._sources:
+        if source is not None and source not in available:
             raise IntegrationError(f"document source is not configured: {source}")
 
-    def _require_source(self, source: str) -> DocumentSource:
+    def _require_source(self, project: str, source: str) -> DocumentSource:
         """구성된 어댑터를 반환하고, 없으면 IntegrationError 를 던진다."""
-        document_source = self._sources.get(source)
+        document_source = self._resolver.resolve_for_project(project).get(source)
         if document_source is None:
             raise IntegrationError(f"document source is not configured: {source}")
         return document_source

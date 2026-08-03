@@ -1,6 +1,6 @@
 """DocumentMetaRepository 단위 테스트.
 
-UNIQUE(source, external_id) 제약과 출처별 조회 동작을 검증한다.
+UNIQUE(project, source, external_id) 제약과 project/출처별 조회 동작을 검증한다.
 """
 
 from __future__ import annotations
@@ -11,14 +11,21 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
+from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 
 _NOW = datetime(2026, 7, 1, 9, 0, 0)
 
+_PROJECT_A = "A"
+_PROJECT_B = "B"
 
-def _row(source: str, external_id: str, title: str = "문서") -> DocumentMeta:
+
+def _row(
+    source: str, external_id: str, title: str = "문서", project: str = DEFAULT_PROJECT
+) -> DocumentMeta:
     """테스트용 메타 행을 만든다."""
     return DocumentMeta(
+        project=project,
         source=source,
         external_id=external_id,
         title=title,
@@ -35,11 +42,11 @@ def repo(db_session) -> DocumentMetaRepository:
 
 
 def test_add_and_find(db_session, repo: DocumentMetaRepository) -> None:
-    """추가한 행을 (source, external_id) 로 다시 찾을 수 있다."""
+    """추가한 행을 (project, source, external_id) 로 다시 찾을 수 있다."""
     repo.add(_row(SOURCE_DRIVE, "d1", "설계서"))
     db_session.commit()
 
-    found = repo.find(SOURCE_DRIVE, "d1")
+    found = repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
 
     assert found is not None
     assert found.title == "설계서"
@@ -47,7 +54,7 @@ def test_add_and_find(db_session, repo: DocumentMetaRepository) -> None:
 
 def test_find_returns_none_when_absent(repo: DocumentMetaRepository) -> None:
     """없는 조합을 조회하면 None 을 돌려준다."""
-    assert repo.find(SOURCE_DRIVE, "nope") is None
+    assert repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "nope") is None
 
 
 def test_same_external_id_across_sources_is_allowed(
@@ -58,14 +65,26 @@ def test_same_external_id_across_sources_is_allowed(
     repo.add(_row(SOURCE_NOTION, "shared"))
     db_session.commit()
 
-    assert repo.find(SOURCE_DRIVE, "shared") is not None
-    assert repo.find(SOURCE_NOTION, "shared") is not None
+    assert repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "shared") is not None
+    assert repo.find(DEFAULT_PROJECT, SOURCE_NOTION, "shared") is not None
 
 
-def test_duplicate_source_and_external_id_violates_unique(
+def test_same_external_id_across_projects_is_allowed(
     db_session, repo: DocumentMetaRepository
 ) -> None:
-    """(source, external_id) 중복은 UNIQUE 제약에 걸린다."""
+    """external_id 가 같아도 project 가 다르면 별개 행으로 공존한다(새 UNIQUE 제약)."""
+    repo.add(_row(SOURCE_DRIVE, "shared", project=_PROJECT_A))
+    repo.add(_row(SOURCE_DRIVE, "shared", project=_PROJECT_B))
+    db_session.commit()
+
+    assert repo.find(_PROJECT_A, SOURCE_DRIVE, "shared") is not None
+    assert repo.find(_PROJECT_B, SOURCE_DRIVE, "shared") is not None
+
+
+def test_duplicate_project_source_and_external_id_violates_unique(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """(project, source, external_id) 중복은 UNIQUE 제약에 걸린다."""
     repo.add(_row(SOURCE_DRIVE, "dup"))
     db_session.commit()
     repo.add(_row(SOURCE_DRIVE, "dup"))
@@ -83,15 +102,71 @@ def test_list_by_source_filters(db_session, repo: DocumentMetaRepository) -> Non
     assert [m.external_id for m in repo.list_by_source(SOURCE_DRIVE)] == ["d1"]
 
 
+def test_list_by_source_respects_project_filter(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """list_by_source 에 project 를 주면 그 프로젝트 행만 돌려준다."""
+    repo.add(_row(SOURCE_DRIVE, "a1", project=_PROJECT_A))
+    repo.add(_row(SOURCE_DRIVE, "b1", project=_PROJECT_B))
+    db_session.commit()
+
+    found = repo.list_by_source(SOURCE_DRIVE, project=_PROJECT_A)
+
+    assert [m.external_id for m in found] == ["a1"]
+
+
+def test_list_by_project_source_never_includes_other_projects(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """list_by_project_source 는 다른 프로젝트의 같은 소스 행을 절대 포함하지 않는다.
+
+    삭제 감지가 이 조회 결과를 기준 집합으로 쓰므로, 여기서 다른 프로젝트
+    행이 섞이면 교차 프로젝트 삭제로 직결된다(SPEC 기능 6 핵심 회귀 지점).
+    """
+    repo.add(_row(SOURCE_DRIVE, "shared", project=_PROJECT_A))
+    repo.add(_row(SOURCE_DRIVE, "shared", project=_PROJECT_B))
+    db_session.commit()
+
+    found_a = repo.list_by_project_source(_PROJECT_A, SOURCE_DRIVE)
+    found_b = repo.list_by_project_source(_PROJECT_B, SOURCE_DRIVE)
+
+    assert [m.project for m in found_a] == [_PROJECT_A]
+    assert [m.project for m in found_b] == [_PROJECT_B]
+
+
+def test_list_by_project_source_is_ordered_by_external_id(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """list_by_project_source 는 external_id 오름차순으로 결정적이다."""
+    for external_id in ("d3", "d1", "d2"):
+        repo.add(_row(SOURCE_DRIVE, external_id, project=_PROJECT_A))
+    db_session.commit()
+
+    found = repo.list_by_project_source(_PROJECT_A, SOURCE_DRIVE)
+
+    assert [m.external_id for m in found] == ["d1", "d2", "d3"]
+
+
 def test_list_all_without_filter_returns_every_row(
     db_session, repo: DocumentMetaRepository
 ) -> None:
-    """source 를 생략하면 전체 행을 돌려준다."""
+    """source/project 를 생략하면 전체 행을 돌려준다."""
     repo.add(_row(SOURCE_DRIVE, "d1"))
     repo.add(_row(SOURCE_NOTION, "n1"))
     db_session.commit()
 
     assert len(repo.list_all()) == 2
+
+
+def test_list_all_respects_project_filter(db_session, repo: DocumentMetaRepository) -> None:
+    """list_all 에 project 를 주면 그 프로젝트 행만 돌려준다."""
+    repo.add(_row(SOURCE_DRIVE, "a1", project=_PROJECT_A))
+    repo.add(_row(SOURCE_DRIVE, "b1", project=_PROJECT_B))
+    db_session.commit()
+
+    found = repo.list_all(project=_PROJECT_A)
+
+    assert [m.external_id for m in found] == ["a1"]
 
 
 def test_list_all_is_deterministically_ordered(
@@ -110,10 +185,10 @@ def test_delete_removes_row(db_session, repo: DocumentMetaRepository) -> None:
     repo.add(_row(SOURCE_DRIVE, "d1"))
     db_session.commit()
 
-    repo.delete(repo.find(SOURCE_DRIVE, "d1"))
+    repo.delete(repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1"))
     db_session.commit()
 
-    assert repo.find(SOURCE_DRIVE, "d1") is None
+    assert repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1") is None
 
 
 def test_empty_repository_returns_empty_lists(repo: DocumentMetaRepository) -> None:
@@ -168,6 +243,19 @@ def test_search_by_tokens_respects_source_filter(
     found = repo.search_by_tokens(["로그인"], source=SOURCE_NOTION)
 
     assert [m.external_id for m in found] == ["n1"]
+
+
+def test_search_by_tokens_respects_project_filter(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """project 를 주면 해당 프로젝트의 행만 후보가 된다."""
+    repo.add(_row(SOURCE_DRIVE, "a1", "로그인 문서", project=_PROJECT_A))
+    repo.add(_row(SOURCE_DRIVE, "b1", "로그인 문서", project=_PROJECT_B))
+    db_session.commit()
+
+    found = repo.search_by_tokens(["로그인"], project=_PROJECT_A)
+
+    assert [m.external_id for m in found] == ["a1"]
 
 
 def test_search_by_tokens_empty_tokens_returns_empty(

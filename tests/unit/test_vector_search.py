@@ -37,7 +37,11 @@ def test_vector_search_empty_query_returns_empty(db_session) -> None:
 
 def test_vector_search_returns_sorted_by_score(db_session) -> None:
     provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
-    db_session.add(ApiDocument(id="doc1", title="t", version="v", content_hash="h", raw_text="{}"))
+    db_session.add(
+        ApiDocument(
+            id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
+        )
+    )
     db_session.flush()
     a, b = provider.embed(["find pet by id", "create user account"])
     _add_chunk(db_session, "doc1", "a", a)
@@ -53,7 +57,11 @@ def test_vector_search_returns_sorted_by_score(db_session) -> None:
 
 def test_vector_search_restricts_to_candidates(db_session) -> None:
     provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
-    db_session.add(ApiDocument(id="doc1", title="t", version="v", content_hash="h", raw_text="{}"))
+    db_session.add(
+        ApiDocument(
+            id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
+        )
+    )
     db_session.flush()
     a, b = provider.embed(["find pet by id", "create user account"])
     _add_chunk(db_session, "doc1", "a", a)

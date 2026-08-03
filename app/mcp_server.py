@@ -27,13 +27,21 @@ from app.mcp_types import (
     DocumentSearchItemPayload,
     DocumentSearchResponse,
     DocumentSummary,
+    DriveSourceItem,
+    DriveSourceListResult,
     EndpointCandidateItem,
     EndpointDetails,
     EndpointSearchResponse,
     ErrorPayload,
+    NotionSourceItem,
+    NotionSourceListResult,
     ParameterItem,
     RefreshIndexResult,
     RegisterDocumentResult,
+    RegisterDriveSourceResult,
+    RegisterNotionSourceResult,
+    RemoveDriveSourceResult,
+    RemoveNotionSourceResult,
     RequestBodyItem,
     ResolvedSchemaResult,
     ResponseItem,
@@ -41,6 +49,8 @@ from app.mcp_types import (
     TagItem,
     TagListResult,
 )
+from app.models.project_drive_source import ProjectDriveSource
+from app.models.project_notion_source import ProjectNotionSource
 from app.repositories.document_repository import DocumentRepository
 from app.services.documents.document_index_service import RefreshResult
 from app.services.documents.document_search_service import (
@@ -166,6 +176,7 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
         {
             "title": item.title,
             "source": cast(Literal["drive", "notion"], item.source),
+            "project": item.project,
             "url": item.url,
             "snippet": item.snippet,
             "score": item.score,
@@ -196,17 +207,43 @@ def _to_refresh_payload(result: RefreshResult) -> RefreshIndexResult:
     }
 
 
+def _to_drive_source_item(row: ProjectDriveSource) -> DriveSourceItem:
+    """`ProjectDriveSource` 행을 MCP 응답 dict 로 변환한다."""
+    return {
+        "project": row.project,
+        "folder_id": row.folder_id,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+def _to_notion_source_item(row: ProjectNotionSource) -> NotionSourceItem:
+    """`ProjectNotionSource` 행을 MCP 응답 dict 로 변환한다."""
+    return {
+        "project": row.project,
+        "database_id": row.database_id,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
 def create_mcp_server(app_state: AppState) -> FastMCP:
     """FastMCP 서버 인스턴스를 생성하고 도구들을 등록한다."""
     mcp = FastMCP("docs-mcp")
     session_factory = app_state.session_factory
 
     @mcp.tool()
-    async def list_documents() -> list[DocumentSummary] | ErrorPayload:
-        """등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다.
+    async def list_documents(
+        project: str | None = None,
+    ) -> list[DocumentSummary] | ErrorPayload:
+        """등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다.
+
+        Args:
+            project: 특정 프로젝트로 범위를 제한하고 싶을 때 지정. 생략하면
+                등록된 모든 프로젝트의 문서를 반환한다(하위 호환).
 
         Returns:
-            각 원소가 document_id, title, version, doc_type, source_url,
+            각 원소가 document_id, title, version, doc_type, project, source_url,
             endpoints_count, indexed_at 필드를 갖는 리스트. 조회 중 도메인/외부
             연동 오류가 발생하면 error/code/message 필드를 담은 ErrorPayload를
             대신 반환한다.
@@ -215,13 +252,14 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
             try:
                 with managed_session(session_factory) as session:
                     repo = DocumentRepository(session)
-                    docs = repo.list_all()
+                    docs = repo.list_all(project=project)
                     return [
                         {
                             "document_id": d.id,
                             "title": d.title,
                             "version": d.version,
                             "doc_type": d.doc_type,
+                            "project": d.project,
                             "source_url": d.source_url,
                             "endpoints_count": len(d.endpoints),
                             "indexed_at": d.indexed_at.isoformat() if d.indexed_at else None,
@@ -234,6 +272,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
 
     @mcp.tool()
     async def register_document(
+        project: str,
         source_url: str | None = None,
         raw_document: str | dict[str, Any] | None = None,
         title_override: str | None = None,
@@ -242,6 +281,8 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         """신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다.
 
         Args:
+            project: 이 문서가 속할 프로젝트 식별자(보통 프로젝트 폴더명).
+                이후 검색에서 이 값으로 범위를 좁힌다.
             source_url: 문서를 가져올 URL. raw_document를 생략할 때 사용.
             raw_document: 문서 원문(JSON/YAML/Markdown/CSV 문자열 또는 dict).
                 source_url을 생략할 때 사용.
@@ -250,7 +291,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
             doc_type: "openapi" | "markdown" | "csv" 중 하나, 생략 시 자동 판별한다.
 
         Returns:
-            document_id, title, version, doc_type, endpoints_count,
+            document_id, title, version, doc_type, project, endpoints_count,
             sections_count, chunks_count, status 필드를 갖는 dict. 이미 등록된
             문서이거나 파싱에 실패하는 등 도메인 오류가 발생하면
             error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
@@ -262,6 +303,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         def _sync() -> RegisterDocumentResult | ErrorPayload:
             def _inner(bundle):
                 result = bundle.sync_service.register(
+                    project=project,
                     source_url=source_url,
                     raw_document=raw_doc_captured,
                     title_override=title_override,
@@ -273,6 +315,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
                     "title": doc.title,
                     "version": doc.version,
                     "doc_type": doc.doc_type,
+                    "project": doc.project,
                     "endpoints_count": result.endpoints_count,
                     "sections_count": result.sections_count,
                     "chunks_count": result.chunks_count,
@@ -289,6 +332,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         query: str,
         top_k: int = 5,
         document_id: str | None = None,
+        project: str | None = None,
     ) -> EndpointSearchResponse | ErrorPayload:
         """자연어/키워드로 API 엔드포인트 후보를 가볍게 검색한다.
 
@@ -300,17 +344,22 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
             query: 검색할 자연어 또는 키워드 질의.
             top_k: 반환할 최대 후보 수(1~50).
             document_id: 특정 문서로 검색 범위를 제한하고 싶을 때 지정.
+            project: 특정 프로젝트로 검색 범위를 제한하고 싶을 때 지정.
+                document_id 와 함께 오면 document_id 가 우선하되, 그 문서가
+                해당 project 소속이 아니면 document_not_found 오류가 된다.
 
         Returns:
             items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,
             path, summary, match_type("keyword" 또는 "vector") 필드를 갖는다.
-            매칭이 없으면 items 는 빈 리스트다. document_id가 등록되지 않은
-            문서이면(빈 결과와 구분해) code="document_not_found" 에러
-            페이로드를 반환한다.
+            매칭이 없으면 items 는 빈 리스트다. document_id가 등록되지 않았거나
+            project 와 불일치하면(빈 결과와 구분해) code="document_not_found"
+            에러 페이로드를 반환한다.
         """
         def _sync() -> EndpointSearchResponse | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> EndpointSearchResponse:
-                options = CandidateSearchOptions(top_k=top_k, document_id=document_id)
+                options = CandidateSearchOptions(
+                    top_k=top_k, document_id=document_id, project=project
+                )
                 candidates = bundle.candidate_search.search(query, options)
                 items: list[EndpointCandidateItem] = [
                     {
@@ -368,6 +417,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
     async def resolve_ref(
         ref: str,
         document_id: str | None = None,
+        project: str | None = None,
     ) -> ResolvedSchemaResult | ErrorPayload:
         """`$ref` 로 표기된 컴포넌트 스키마를 실제 필드 목록으로 펼친다.
 
@@ -380,16 +430,22 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
                 등록된 문서 전체에서 같은 이름의 스키마를 찾으며, 여러 문서에
                 동명 스키마가 있으면 **가장 최근 등록 문서**가 선택된다.
                 모호성을 없애려면 document_id 지정을 권장한다.
+            project: 특정 프로젝트로 한정하고 싶을 때 지정. document_id 와
+                함께 오면 document_id 가 우선한다. 여러 프로젝트에 동명
+                스키마가 있을 때 다른 프로젝트 스키마가 섞이지 않게 한다.
 
         Returns:
             name(스키마 이름), document_id(스키마가 속한 문서),
             fields(name/type/required/description 목록)를 담은 dict.
-            참조 형식이 잘못됐거나, document_id가 미등록이거나, 해당 스키마가
-            없으면 error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
+            참조 형식이 잘못됐거나, document_id가 미등록이거나 project 와
+            불일치하거나, 해당 스키마가 없으면 error/code/message 필드를 담은
+            ErrorPayload를 대신 반환한다.
         """
         def _sync() -> ResolvedSchemaResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> ResolvedSchemaResult:
-                resolved = bundle.schema_ref_resolver.resolve(ref, document_id=document_id)
+                resolved = bundle.schema_ref_resolver.resolve(
+                    ref, document_id=document_id, project=project
+                )
                 return _to_resolved_schema_payload(resolved)
             try:
                 return _run_bundle(app_state, _inner)
@@ -398,7 +454,10 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         return await anyio.to_thread.run_sync(_sync)
 
     @mcp.tool()
-    async def list_tags(document_id: str | None = None) -> TagListResult | ErrorPayload:
+    async def list_tags(
+        document_id: str | None = None,
+        project: str | None = None,
+    ) -> TagListResult | ErrorPayload:
         """등록된 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다.
 
         search_endpoints 로 검색하기 전에 어떤 기능 영역이 있는지 훑어보는
@@ -406,16 +465,20 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
 
         Args:
             document_id: 특정 문서의 태그만 보고 싶을 때 지정. 생략하면 전체.
+            project: 특정 프로젝트의 태그만 보고 싶을 때 지정. document_id 와
+                함께 오면 document_id 가 우선한다.
 
         Returns:
             tags 키에 name/endpoint_count 를 갖는 항목 리스트를 담은 dict.
             엔드포인트 수 내림차순으로 정렬되며, 태그가 없으면 빈 리스트다.
-            document_id가 존재하지 않으면 error/code/message 필드를 담은
-            ErrorPayload를 대신 반환한다.
+            document_id가 존재하지 않거나 project 와 불일치하면
+            error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
         def _sync() -> TagListResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> TagListResult:
-                summaries = bundle.tag_catalog_service.list_tags(document_id=document_id)
+                summaries = bundle.tag_catalog_service.list_tags(
+                    document_id=document_id, project=project
+                )
                 return _to_tag_list_payload(summaries)
             try:
                 return _run_bundle(app_state, _inner)
@@ -428,6 +491,7 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         query: str,
         top_k: int = 5,
         source: str | None = None,
+        project: str | None = None,
     ) -> DocumentSearchResponse | ErrorPayload:
         """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
 
@@ -442,16 +506,18 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
             top_k: 반환할 최대 결과 수(1~50). 실시간으로 본문을 가져오는 문서
                 수의 상한이기도 하다.
             source: "drive" 또는 "notion" 으로 출처를 한정할 때 지정.
+            project: 특정 프로젝트로 검색 범위를 제한하고 싶을 때 지정.
+                생략하면 등록된 모든 프로젝트에서 검색한다.
 
         Returns:
-            items 키에 결과 리스트를 담은 dict. 각 항목은 title, source, url,
-            snippet, score 필드를 갖는다. 관련 문서가 없으면 빈 리스트다.
-            검색 중 도메인/외부 연동 오류가 발생하면 error/code/message 필드를
-            담은 ErrorPayload를 대신 반환한다.
+            items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
+            project, url, snippet, score 필드를 갖는다. 관련 문서가 없으면
+            빈 리스트다. 검색 중 도메인/외부 연동 오류가 발생하면
+            error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
         def _sync() -> DocumentSearchResponse | ErrorPayload:
             def _inner(bundle) -> DocumentSearchResponse:
-                options = DocumentSearchOptions(top_k=top_k, source=source)
+                options = DocumentSearchOptions(top_k=top_k, source=source, project=project)
                 items = bundle.document_search_service.search(query, options)
                 return _to_document_search_payload(items)
             try:
@@ -487,7 +553,9 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         return await anyio.to_thread.run_sync(_sync)
 
     @mcp.tool()
-    async def refresh_index(source: str | None = None) -> RefreshIndexResult | ErrorPayload:
+    async def refresh_index(
+        source: str | None = None, project: str | None = None
+    ) -> RefreshIndexResult | ErrorPayload:
         """협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다.
 
         문서 목록과 메타데이터만 갱신하고 본문은 저장하지 않는다. 새로 만든
@@ -496,17 +564,180 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         Args:
             source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
                 모든 소스를 갱신한다.
+            project: 특정 프로젝트만 갱신할 때 지정. 생략하면 등록된 전
+                프로젝트를 순회한다.
 
         Returns:
             synced(조회 건수), added, updated, removed, failed_sources 를 담은
-            dict. 일부 소스만 실패하면 성공한 소스의 변경분은 그대로 반영되고
-            실패한 소스 이름이 failed_sources 에 담긴다. 소스가 하나도 구성돼
+            dict. failed_sources 의 각 원소는 "<project>/<source>" 형식이다.
+            일부 소스만 실패하면 성공한 소스의 변경분은 그대로 반영되고
+            실패한 항목이 failed_sources 에 담긴다. 대상이 하나도 구성돼
             있지 않거나 전부 실패하면 error/code/message 필드를 담은
             ErrorPayload를 대신 반환한다.
         """
         def _sync() -> RefreshIndexResult | ErrorPayload:
             def _inner(bundle) -> RefreshIndexResult:
-                return _to_refresh_payload(bundle.document_index_service.refresh(source=source))
+                return _to_refresh_payload(
+                    bundle.document_index_service.refresh(source=source, project=project)
+                )
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def register_drive_source(
+        project: str, folder_id: str
+    ) -> RegisterDriveSourceResult | ErrorPayload:
+        """프로젝트에 Google Drive 폴더를 매핑한다.
+
+        같은 project 로 다시 호출하면 folder_id 가 교체된다(upsert).
+
+        Args:
+            project: 매핑할 프로젝트 식별자.
+            folder_id: Google Drive 폴더 ID.
+
+        Returns:
+            project, folder_id, status("created" 또는 "updated")를 담은 dict.
+            project 나 folder_id 가 비었으면 error/code/message 필드를 담은
+            ErrorPayload(code="validation_error")를 대신 반환한다.
+        """
+        def _sync() -> RegisterDriveSourceResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> RegisterDriveSourceResult:
+                row, status = bundle.drive_source_service.register(project, folder_id)
+                return {"project": row.project, "folder_id": row.folder_id, "status": status}
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def list_drive_sources(
+        project: str | None = None,
+    ) -> DriveSourceListResult | ErrorPayload:
+        """등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다.
+
+        Args:
+            project: 특정 프로젝트의 매핑만 보고 싶을 때 지정. 생략하면 전체.
+
+        Returns:
+            items 키에 project/folder_id/created_at/updated_at 을 갖는 항목
+            리스트를 담은 dict. project 오름차순으로 결정적으로 정렬된다.
+        """
+        def _sync() -> DriveSourceListResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> DriveSourceListResult:
+                if project is not None:
+                    row = bundle.drive_source_service.get(project)
+                    rows = [row] if row is not None else []
+                else:
+                    rows = list(bundle.drive_source_service.list_all())
+                return {"items": [_to_drive_source_item(r) for r in rows]}
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def remove_drive_source(project: str) -> RemoveDriveSourceResult | ErrorPayload:
+        """프로젝트의 Drive 폴더 매핑을 제거한다.
+
+        등록돼 있지 않은 project 를 지정해도 오류가 아니라 removed=False 를
+        반환한다(멱등).
+
+        Args:
+            project: 매핑을 제거할 프로젝트 식별자.
+
+        Returns:
+            project, removed(bool)를 담은 dict.
+        """
+        def _sync() -> RemoveDriveSourceResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> RemoveDriveSourceResult:
+                normalized_project, removed = bundle.drive_source_service.remove(project)
+                return {"project": normalized_project, "removed": removed}
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def register_notion_source(
+        project: str, database_id: str
+    ) -> RegisterNotionSourceResult | ErrorPayload:
+        """프로젝트에 Notion 데이터베이스를 매핑한다.
+
+        같은 project 로 다시 호출하면 database_id 가 교체된다(upsert).
+
+        Args:
+            project: 매핑할 프로젝트 식별자.
+            database_id: Notion 데이터베이스 ID.
+
+        Returns:
+            project, database_id, status("created" 또는 "updated")를 담은
+            dict. project 나 database_id 가 비었으면 error/code/message
+            필드를 담은 ErrorPayload(code="validation_error")를 대신 반환한다.
+        """
+        def _sync() -> RegisterNotionSourceResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> RegisterNotionSourceResult:
+                row, status = bundle.notion_source_service.register(project, database_id)
+                return {
+                    "project": row.project,
+                    "database_id": row.database_id,
+                    "status": status,
+                }
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def list_notion_sources(
+        project: str | None = None,
+    ) -> NotionSourceListResult | ErrorPayload:
+        """등록된 프로젝트→Notion 데이터베이스 매핑 목록을 반환한다.
+
+        Args:
+            project: 특정 프로젝트의 매핑만 보고 싶을 때 지정. 생략하면 전체.
+
+        Returns:
+            items 키에 project/database_id/created_at/updated_at 을 갖는
+            항목 리스트를 담은 dict. project 오름차순으로 결정적으로 정렬된다.
+        """
+        def _sync() -> NotionSourceListResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> NotionSourceListResult:
+                if project is not None:
+                    row = bundle.notion_source_service.get(project)
+                    rows = [row] if row is not None else []
+                else:
+                    rows = list(bundle.notion_source_service.list_all())
+                return {"items": [_to_notion_source_item(r) for r in rows]}
+            try:
+                return _run_bundle(app_state, _inner)
+            except (DomainError, IntegrationError) as e:
+                return to_error_payload(e)
+        return await anyio.to_thread.run_sync(_sync)
+
+    @mcp.tool()
+    async def remove_notion_source(project: str) -> RemoveNotionSourceResult | ErrorPayload:
+        """프로젝트의 Notion 데이터베이스 매핑을 제거한다.
+
+        등록돼 있지 않은 project 를 지정해도 오류가 아니라 removed=False 를
+        반환한다(멱등).
+
+        Args:
+            project: 매핑을 제거할 프로젝트 식별자.
+
+        Returns:
+            project, removed(bool)를 담은 dict.
+        """
+        def _sync() -> RemoveNotionSourceResult | ErrorPayload:
+            def _inner(bundle: ServiceBundle) -> RemoveNotionSourceResult:
+                normalized_project, removed = bundle.notion_source_service.remove(project)
+                return {"project": normalized_project, "removed": removed}
             try:
                 return _run_bundle(app_state, _inner)
             except (DomainError, IntegrationError) as e:

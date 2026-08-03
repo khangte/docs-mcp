@@ -30,7 +30,7 @@ def mcp_server(app_state) -> FastMCP:
 async def seeded_mcp(mcp_server: FastMCP, sample_openapi_3: str) -> FastMCP:
     """샘플 OpenAPI 문서를 등록해둔 MCP 서버."""
     await mcp_server.call_tool(
-        "register_document", arguments={"raw_document": sample_openapi_3}
+        "register_document", arguments={"project": "default", "raw_document": sample_openapi_3}
     )
     return mcp_server
 
@@ -75,7 +75,7 @@ async def test_search_endpoints_has_no_mode_parameter(mcp_server: FastMCP) -> No
     properties = await _tool_parameters(mcp_server, "search_endpoints")
 
     assert "mode" not in properties
-    assert set(properties) == {"query", "top_k", "document_id"}
+    assert set(properties) == {"query", "top_k", "document_id", "project"}
 
 
 @pytest.mark.asyncio()
@@ -335,7 +335,7 @@ async def test_list_documents_empty(mcp_server: FastMCP) -> None:
 async def test_register_and_search(mcp_server: FastMCP, sample_openapi_3: str) -> None:
     """문서를 등록하고 검색 도구를 통해 결과를 확인."""
     reg_result = await mcp_server.call_tool(
-        "register_document", arguments={"raw_document": sample_openapi_3}
+        "register_document", arguments={"project": "default", "raw_document": sample_openapi_3}
     )
     reg_data = reg_result.structured_content["result"]
     assert reg_data["status"] == "registered"
@@ -348,3 +348,210 @@ async def test_register_and_search(mcp_server: FastMCP, sample_openapi_3: str) -
 
     assert items
     assert any("pet" in i["path"].lower() or "pet" in i["summary"].lower() for i in items)
+
+
+# --- 기능 4: 프로젝트→Drive/Notion 소스 매핑 도구 -----------------------------
+
+
+@pytest.mark.asyncio()
+async def test_register_drive_source_then_list_has_one_entry(mcp_server: FastMCP) -> None:
+    """register_drive_source 후 list_drive_sources 에 정확히 1건 나온다."""
+    reg = await mcp_server.call_tool(
+        "register_drive_source", arguments={"project": "A", "folder_id": "folder-a"}
+    )
+    assert reg.structured_content["result"]["status"] == "created"
+
+    listed = await mcp_server.call_tool("list_drive_sources", arguments={})
+    items = listed.structured_content["result"]["items"]
+
+    assert [(i["project"], i["folder_id"]) for i in items] == [("A", "folder-a")]
+
+
+@pytest.mark.asyncio()
+async def test_register_notion_source_then_list_has_one_entry(mcp_server: FastMCP) -> None:
+    """register_notion_source 후 list_notion_sources 에 정확히 1건 나온다."""
+    reg = await mcp_server.call_tool(
+        "register_notion_source", arguments={"project": "A", "database_id": "db-a"}
+    )
+    assert reg.structured_content["result"]["status"] == "created"
+
+    listed = await mcp_server.call_tool("list_notion_sources", arguments={})
+    items = listed.structured_content["result"]["items"]
+
+    assert [(i["project"], i["database_id"]) for i in items] == [("A", "db-a")]
+
+
+@pytest.mark.asyncio()
+async def test_register_drive_source_upsert_replaces_value_and_keeps_created_at(
+    mcp_server: FastMCP,
+) -> None:
+    """같은 project 로 재등록하면 행이 늘지 않고 값만 바뀌며 status=updated."""
+    await mcp_server.call_tool(
+        "register_drive_source", arguments={"project": "A", "folder_id": "folder-a"}
+    )
+    first_list = await mcp_server.call_tool("list_drive_sources", arguments={})
+    created_at = first_list.structured_content["result"]["items"][0]["created_at"]
+
+    reg2 = await mcp_server.call_tool(
+        "register_drive_source", arguments={"project": "A", "folder_id": "folder-a-v2"}
+    )
+    assert reg2.structured_content["result"]["status"] == "updated"
+
+    listed = await mcp_server.call_tool("list_drive_sources", arguments={})
+    items = listed.structured_content["result"]["items"]
+
+    assert len(items) == 1
+    assert items[0]["folder_id"] == "folder-a-v2"
+    assert items[0]["created_at"] == created_at
+    assert items[0]["updated_at"] >= created_at
+
+
+@pytest.mark.asyncio()
+async def test_register_drive_source_empty_folder_id_is_validation_error(
+    mcp_server: FastMCP,
+) -> None:
+    """folder_id="" 는 validation_error 이고 행이 생기지 않는다."""
+    result = await mcp_server.call_tool(
+        "register_drive_source", arguments={"project": "A", "folder_id": ""}
+    )
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "validation_error"
+
+    listed = await mcp_server.call_tool("list_drive_sources", arguments={})
+    assert listed.structured_content["result"]["items"] == []
+
+
+@pytest.mark.asyncio()
+async def test_register_notion_source_empty_database_id_is_validation_error(
+    mcp_server: FastMCP,
+) -> None:
+    """database_id="" 는 validation_error 이고 행이 생기지 않는다."""
+    result = await mcp_server.call_tool(
+        "register_notion_source", arguments={"project": "A", "database_id": ""}
+    )
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "validation_error"
+
+
+@pytest.mark.asyncio()
+@pytest.mark.parametrize(
+    "tool_name", ["register_drive_source", "register_notion_source"]
+)
+async def test_register_source_empty_project_is_validation_error(
+    mcp_server: FastMCP, tool_name: str
+) -> None:
+    """project="" 는 두 도구 모두 validation_error 다."""
+    value_key = "folder_id" if tool_name == "register_drive_source" else "database_id"
+    result = await mcp_server.call_tool(
+        tool_name, arguments={"project": "", value_key: "x"}
+    )
+    payload = result.structured_content["result"]
+
+    assert payload["error"] is True
+    assert payload["code"] == "validation_error"
+
+
+@pytest.mark.asyncio()
+async def test_remove_drive_source_unknown_project_is_not_error(mcp_server: FastMCP) -> None:
+    """remove_drive_source("없는프로젝트") 는 오류가 아니라 removed=False 다."""
+    result = await mcp_server.call_tool(
+        "remove_drive_source", arguments={"project": "없는프로젝트"}
+    )
+    payload = result.structured_content["result"]
+
+    assert "error" not in payload or payload.get("error") is not True
+    assert payload["removed"] is False
+
+
+@pytest.mark.asyncio()
+async def test_remove_notion_source_unknown_project_is_not_error(mcp_server: FastMCP) -> None:
+    """remove_notion_source("없는프로젝트") 는 오류가 아니라 removed=False 다."""
+    result = await mcp_server.call_tool(
+        "remove_notion_source", arguments={"project": "없는프로젝트"}
+    )
+    payload = result.structured_content["result"]
+
+    assert "error" not in payload or payload.get("error") is not True
+    assert payload["removed"] is False
+
+
+@pytest.mark.asyncio()
+async def test_remove_drive_source_then_list_no_longer_has_it(mcp_server: FastMCP) -> None:
+    """remove_drive_source("A") 후 list_drive_sources 에 A 가 없다."""
+    await mcp_server.call_tool(
+        "register_drive_source", arguments={"project": "A", "folder_id": "folder-a"}
+    )
+
+    removed = await mcp_server.call_tool("remove_drive_source", arguments={"project": "A"})
+    assert removed.structured_content["result"]["removed"] is True
+
+    listed = await mcp_server.call_tool("list_drive_sources", arguments={})
+    assert listed.structured_content["result"]["items"] == []
+
+
+@pytest.mark.asyncio()
+async def test_remove_notion_source_then_list_no_longer_has_it(mcp_server: FastMCP) -> None:
+    """remove_notion_source("A") 후 list_notion_sources 에 A 가 없다."""
+    await mcp_server.call_tool(
+        "register_notion_source", arguments={"project": "A", "database_id": "db-a"}
+    )
+
+    removed = await mcp_server.call_tool("remove_notion_source", arguments={"project": "A"})
+    assert removed.structured_content["result"]["removed"] is True
+
+    listed = await mcp_server.call_tool("list_notion_sources", arguments={})
+    assert listed.structured_content["result"]["items"] == []
+
+
+@pytest.mark.asyncio()
+async def test_project_can_register_drive_only_or_notion_only(mcp_server: FastMCP) -> None:
+    """한 프로젝트에 Drive 만 등록하거나 Notion 만 등록하는 것이 가능하다."""
+    await mcp_server.call_tool(
+        "register_drive_source", arguments={"project": "drive-only", "folder_id": "folder-x"}
+    )
+    await mcp_server.call_tool(
+        "register_notion_source", arguments={"project": "notion-only", "database_id": "db-x"}
+    )
+
+    drive_list = await mcp_server.call_tool("list_drive_sources", arguments={})
+    notion_list = await mcp_server.call_tool("list_notion_sources", arguments={})
+
+    drive_projects = {i["project"] for i in drive_list.structured_content["result"]["items"]}
+    notion_projects = {i["project"] for i in notion_list.structured_content["result"]["items"]}
+
+    assert drive_projects == {"drive-only"}
+    assert notion_projects == {"notion-only"}
+
+
+@pytest.mark.asyncio()
+async def test_list_drive_sources_ordered_by_project_ascending(mcp_server: FastMCP) -> None:
+    """list_drive_sources 반환 순서가 project 오름차순으로 결정적이다."""
+    for project in ("C", "A", "B"):
+        await mcp_server.call_tool(
+            "register_drive_source",
+            arguments={"project": project, "folder_id": f"folder-{project.lower()}"},
+        )
+
+    listed = await mcp_server.call_tool("list_drive_sources", arguments={})
+    projects = [i["project"] for i in listed.structured_content["result"]["items"]]
+
+    assert projects == ["A", "B", "C"]
+
+
+@pytest.mark.asyncio()
+async def test_list_notion_sources_ordered_by_project_ascending(mcp_server: FastMCP) -> None:
+    """list_notion_sources 반환 순서가 project 오름차순으로 결정적이다."""
+    for project in ("C", "A", "B"):
+        await mcp_server.call_tool(
+            "register_notion_source",
+            arguments={"project": project, "database_id": f"db-{project.lower()}"},
+        )
+
+    listed = await mcp_server.call_tool("list_notion_sources", arguments={})
+    projects = [i["project"] for i in listed.structured_content["result"]["items"]]
+
+    assert projects == ["A", "B", "C"]

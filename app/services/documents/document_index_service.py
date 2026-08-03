@@ -12,6 +12,11 @@
 
 집계(`added`/`updated`/`removed`)는 **실제로 커밋된 행만** 센다. 커밋에
 실패해 롤백된 배치는 집계에 넣지 않으므로, 반환값과 DB 상태가 항상 일치한다.
+
+프로젝트 확장(SPEC 기능 6)의 핵심 위험은 **교차 프로젝트 삭제**다. 여러
+프로젝트가 같은 `source_name`(`drive`/`notion`)을 공유하므로, 삭제 감지 시
+"이 프로젝트의 이 소스" 기존 행 집합(`list_by_project_source`)만 기준으로
+삼아야 다른 프로젝트 행이 "원본에서 사라진 것"으로 오인되지 않는다.
 """
 
 from __future__ import annotations
@@ -30,12 +35,20 @@ from app.services.documents.document_source import (
     DocumentSource,
     FileMeta,
 )
+from app.services.documents.project_source_resolver import ProjectSourceResolver
 
 _LOG = get_logger("docs_mcp.documents.index")
 
 #: 커밋 경계. 이 건수만큼 변경이 쌓일 때마다 커밋해, 도중에 실패해도 직전
 #: 배치까지는 DB 에 남게 한다(SPEC 기능 6 "부분 실패 허용").
 BATCH_SIZE = 100
+
+#: project 가 지정됐지만 그 project 에 Drive/Notion 매핑이 하나도 없을 때의
+#: 메시지. NO_SOURCE_CONFIGURED_MESSAGE(서버 전역 미구성)와 구별해, 호출자가
+#: "서버에 소스가 아예 없음"과 "이 프로젝트만 미구성"을 나눠 볼 수 있게 한다.
+_NO_PROJECT_SOURCE_MESSAGE_TEMPLATE = (
+    "no document source is configured for project: {project}"
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +60,7 @@ class RefreshResult:
         added: 새로 생성된 메타 행 수.
         updated: `modified_at`/제목/URL 이 실제로 바뀌어 갱신된 행 수.
         removed: 소스에서 사라져 캐시에서 제거된 행 수.
-        failed_sources: 갱신에 실패한 소스 이름 목록(부분 실패 허용).
+        failed_sources: 갱신에 실패한 "<project>/<source>" 목록(부분 실패 허용).
     """
 
     synced: int
@@ -87,57 +100,59 @@ class _PartialRefreshError(Exception):
 
 
 class DocumentIndexService:
-    """등록된 문서 소스들의 메타데이터를 `document_meta` 에 동기화한다."""
+    """등록된 프로젝트별 문서 소스들의 메타데이터를 `document_meta` 에 동기화한다."""
 
     def __init__(
         self,
         session: Session,
         meta_repo: DocumentMetaRepository,
-        sources: list[DocumentSource],
+        resolver: ProjectSourceResolver,
     ) -> None:
-        """세션·저장소·소스 목록을 보관한다.
+        """세션·저장소·프로젝트 소스 리졸버를 보관한다.
 
         Args:
             session: 커밋/롤백 경계를 소스 단위로 제어하기 위한 DB 세션.
             meta_repo: `document_meta` 저장소.
-            sources: 동기화 대상 문서 소스 어댑터 목록. 비어 있어도 된다
-                (자격증명 미설정 환경에서는 빈 목록으로 구성된다).
+            resolver: project → Drive/Notion 어댑터 요청 시점 팩토리.
         """
         self._session = session
         self._meta_repo = meta_repo
-        self._sources = list(sources)
+        self._resolver = resolver
 
-    def refresh(self, source: str | None = None) -> RefreshResult:
-        """소스들의 문서 목록을 조회해 메타 캐시를 갱신한다.
+    def refresh(
+        self, source: str | None = None, project: str | None = None
+    ) -> RefreshResult:
+        """등록된 프로젝트들의 문서 목록을 조회해 메타 캐시를 갱신한다.
 
         Args:
             source: 특정 소스(`drive`/`notion`)만 갱신할 때 지정. 생략하면 전체.
+            project: 특정 프로젝트만 갱신할 때 지정. 생략하면 등록된 전 프로젝트.
 
         Returns:
-            added/updated/removed/synced 집계와 실패한 소스 목록.
+            added/updated/removed/synced 집계와 실패한 "<project>/<source>" 목록.
 
         Raises:
-            IntegrationError: 대상 소스가 하나도 구성돼 있지 않거나, 갱신을
-                시도한 모든 소스가 실패한 경우.
+            IntegrationError: 대상이 하나도 구성돼 있지 않거나, 갱신을 시도한
+                모든 대상이 실패한 경우.
         """
-        targets = self._resolve_targets(source)
+        targets = self._resolve_targets(source, project)
 
         totals = _SourceCounts()
         failed: list[str] = []
-        for document_source in targets:
-            name = document_source.source_name
+        for target_project, document_source in targets:
+            label = f"{target_project}/{document_source.source_name}"
             try:
-                counts = self._refresh_source(document_source)
+                counts = self._refresh_source(target_project, document_source)
             except _PartialRefreshError as exc:
                 # 부분 실패 허용: 실패한 소스라도 이미 커밋된 배치는 집계에 넣는다.
                 # (`_refresh_source` 가 미커밋 배치만 롤백하고 확정분을 실어 보낸다)
                 _merge_counts(totals, exc.committed)
-                _LOG.warning("문서 소스 갱신 실패(다음 갱신에서 재시도 가능): %s (%s)", name, exc)
-                failed.append(name)
+                _LOG.warning("문서 소스 갱신 실패(다음 갱신에서 재시도 가능): %s (%s)", label, exc)
+                failed.append(label)
                 continue
             _merge_counts(totals, counts)
 
-        # 모든 소스가 실패했고 커밋된 변경도 전혀 없으면 "조용한 무동작"이 되므로
+        # 모든 대상이 실패했고 커밋된 변경도 전혀 없으면 "조용한 무동작"이 되므로
         # 예외로 알린다. 반대로 일부라도 커밋됐다면 그 사실이 집계와
         # `failed_sources` 로 전달되어야 하므로 정상 반환한다.
         if failed and len(failed) == len(targets) and totals.total_changes == 0:
@@ -153,19 +168,37 @@ class DocumentIndexService:
             failed_sources=tuple(failed),
         )
 
-    def _resolve_targets(self, source: str | None) -> list[DocumentSource]:
-        """갱신 대상 소스 목록을 결정하고 비어 있으면 예외를 던진다."""
-        if not self._sources:
+    def _resolve_targets(
+        self, source: str | None, project: str | None
+    ) -> list[tuple[str, DocumentSource]]:
+        """갱신 대상 (project, source) 쌍 목록을 결정하고 비어 있으면 예외를 던진다.
+
+        `resolver.resolve_all()` 로 등록된 전 프로젝트의 (project, source)
+        쌍을 얻은 뒤 `project`/`source` 인자로 필터한다(ARCH_REVIEW R2:
+        source_name 단일 매칭이 아니라 project 축까지 함께 순회해야 여러
+        프로젝트를 대상으로 갱신할 수 있다).
+        """
+        all_pairs = self._resolver.resolve_all()
+        if project is not None:
+            all_pairs = [(p, s) for p, s in all_pairs if p == project]
+            if not all_pairs:
+                raise IntegrationError(
+                    _NO_PROJECT_SOURCE_MESSAGE_TEMPLATE.format(project=project)
+                )
+        elif not all_pairs:
             raise IntegrationError(NO_SOURCE_CONFIGURED_MESSAGE)
+
         if source is None:
-            return self._sources
-        targets = [s for s in self._sources if s.source_name == source]
+            return all_pairs
+        targets = [(p, s) for p, s in all_pairs if s.source_name == source]
         if not targets:
             raise IntegrationError(f"unknown or unconfigured document source: {source}")
         return targets
 
-    def _refresh_source(self, document_source: DocumentSource) -> _SourceCounts:
-        """소스 하나의 목록을 배치 단위로 커밋하며 반영한다.
+    def _refresh_source(
+        self, project: str, document_source: DocumentSource
+    ) -> _SourceCounts:
+        """프로젝트 하나·소스 하나의 목록을 배치 단위로 커밋하며 반영한다.
 
         `BATCH_SIZE` 건마다 커밋하므로, 도중에 예외가 나도 직전 배치까지는
         DB 에 남는다. 실패 지점 이후 항목은 다음 갱신에서 재시도된다.
@@ -183,7 +216,12 @@ class DocumentIndexService:
         except Exception as exc:
             # 목록 조회 실패: 이 소스는 아무 행도 건드리지 않았다(확정분 0건).
             raise _PartialRefreshError(exc, _SourceCounts()) from exc
-        existing = {m.external_id: m for m in self._meta_repo.list_by_source(source_name)}
+        # project 로 좁힌 기존 행만 삭제 감지 기준 집합으로 쓴다. 다른
+        # 프로젝트가 같은 source_name 을 쓰더라도 그 행은 여기 섞이지 않는다.
+        existing = {
+            m.external_id: m
+            for m in self._meta_repo.list_by_project_source(project, source_name)
+        }
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         committed = _SourceCounts(synced=len(remote_files))
@@ -194,7 +232,7 @@ class DocumentIndexService:
                 if not meta.external_id or meta.external_id in seen:
                     continue
                 seen.add(meta.external_id)
-                self._stage_upsert(source_name, meta, existing, now, pending)
+                self._stage_upsert(project, source_name, meta, existing, now, pending)
                 if pending.total_changes >= BATCH_SIZE:
                     pending = self._commit_batch(committed, pending)
 
@@ -208,7 +246,9 @@ class DocumentIndexService:
             # 마지막 배치는 미완성이므로 버리고, 이미 커밋된 배치만 남긴다.
             self._session.rollback()
             _LOG.warning(
-                "메타 캐시 갱신 중단(직전 배치까지 보존): source=%s added=%d updated=%d removed=%d",
+                "메타 캐시 갱신 중단(직전 배치까지 보존): project=%s source=%s "
+                "added=%d updated=%d removed=%d",
+                project,
                 source_name,
                 committed.added,
                 committed.updated,
@@ -218,7 +258,8 @@ class DocumentIndexService:
 
         self._commit_batch(committed, pending)
         _LOG.info(
-            "메타 캐시 갱신 완료: source=%s synced=%d added=%d updated=%d removed=%d",
+            "메타 캐시 갱신 완료: project=%s source=%s synced=%d added=%d updated=%d removed=%d",
+            project,
             source_name,
             committed.synced,
             committed.added,
@@ -229,6 +270,7 @@ class DocumentIndexService:
 
     def _stage_upsert(
         self,
+        project: str,
         source_name: str,
         meta: FileMeta,
         existing: dict[str, DocumentMeta],
@@ -238,7 +280,7 @@ class DocumentIndexService:
         """문서 한 건의 신규 생성/갱신을 세션에 올리고 미커밋 집계에 반영한다."""
         current = existing.get(meta.external_id)
         if current is None:
-            self._meta_repo.add(_new_row(source_name, meta, now))
+            self._meta_repo.add(_new_row(project, source_name, meta, now))
             pending.added += 1
         elif _apply_changes(current, meta, now):
             pending.updated += 1
@@ -269,9 +311,10 @@ def _merge_counts(totals: _SourceCounts, counts: _SourceCounts) -> None:
     totals.removed += counts.removed
 
 
-def _new_row(source_name: str, meta: FileMeta, now: datetime) -> DocumentMeta:
+def _new_row(project: str, source_name: str, meta: FileMeta, now: datetime) -> DocumentMeta:
     """FileMeta 로부터 신규 `document_meta` 행을 만든다."""
     return DocumentMeta(
+        project=project,
         source=source_name,
         external_id=meta.external_id,
         title=meta.title,
