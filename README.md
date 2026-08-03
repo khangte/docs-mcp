@@ -139,15 +139,21 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 <!-- AUTO-GENERATED: app/mcp_server.py 도구 docstring 기준 -->
 | 도구 | 설명 | 반환 필드 |
 |------|------|-----------|
-| `list_documents` | 등록된 모든 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다 | document_id, title, version, doc_type, source_url, endpoints_count, indexed_at |
-| `register_document` | 신규 문서를 등록한다. URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별) | document_id, title, version, doc_type, endpoints_count, sections_count, chunks_count, status |
-| `search_endpoints` | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조) | items[{endpoint_id, method, path, summary, match_type}] |
+| `list_documents` | 등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체) | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at |
+| `register_document` | 신규 문서를 등록한다. `project`(필수)와 URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별) | document_id, title, version, doc_type, project, endpoints_count, sections_count, chunks_count, status |
+| `search_endpoints` | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조). `project`/`document_id` 로 범위를 제한할 수 있다 | items[{endpoint_id, method, path, summary, match_type}] |
 | `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함) | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
-| `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기) | name, document_id, fields[{name, type, required, description}] |
-| `list_tags` | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다 | tags[{name, endpoint_count}] |
-| `search_documents` | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회) | items[{title, source, url, snippet, score}] |
+| `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다 | name, document_id, fields[{name, type, required, description}] |
+| `list_tags` | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다 | tags[{name, endpoint_count}] |
+| `search_documents` | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다 | items[{title, source, project, url, snippet, score}] |
 | `get_document` | 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님) | title, source, url, content |
-| `refresh_index` | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음) | synced, added, updated, removed, failed_sources |
+| `refresh_index` | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다 | synced, added, updated, removed, failed_sources |
+| `register_drive_source` | 프로젝트에 Google Drive 폴더를 매핑한다(upsert, 같은 project 재호출 시 폴더 교체) | project, folder_id, status |
+| `list_drive_sources` | 등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, folder_id, created_at, updated_at}] |
+| `remove_drive_source` | 프로젝트의 Drive 폴더 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
+| `register_notion_source` | 프로젝트에 Notion 데이터베이스를 매핑한다(upsert, 같은 project 재호출 시 DB 교체) | project, database_id, status |
+| `list_notion_sources` | 등록된 프로젝트→Notion 데이터베이스 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, database_id, created_at, updated_at}] |
+| `remove_notion_source` | 프로젝트의 Notion 데이터베이스 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
 
 검색은 **후보 압축**과 **상세 조회**를 분리한다. `search_endpoints`로 후보를
 추린 뒤, 필요한 것만 `get_endpoint_details`로 상세를 보고, 스키마가 더
@@ -171,7 +177,44 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 (응답 스키마는 `app/mcp_types.py` 참고).
 <!-- /AUTO-GENERATED -->
 
-### 3. 제공되는 리소스 (Resources)
+### 3. 프로젝트 격리
+
+이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
+서비스합니다. 문서를 등록할 때(`register_document`) 반드시 `project` 를
+지정해야 하고, 조회·검색 도구들(`list_documents`, `search_endpoints`,
+`list_tags`, `resolve_ref`, `search_documents`, `refresh_index`)은 선택적으로
+`project` 를 지정해 그 범위로 결과를 좁힐 수 있습니다. 생략하면 등록된 모든
+프로젝트를 대상으로 동작합니다(하위 호환).
+
+> **`project` 는 단순 문자열 태그이며 보안 경계가 아닙니다.** 인증도, 접근
+> 제어도 하지 않습니다. 같은 서버·같은 DB 자격증명에 접근할 수 있는 누구나
+> 모든 프로젝트의 문서를 `project` 필터 없이 조회할 수 있습니다. 서로 다른
+> 신뢰 수준의 사용자를 프로젝트로 격리하려는 목적이라면 이 기능으로는
+> 부족하며, 별도 서버·별도 DB·인증 계층이 필요합니다. 이 기능이 막아주는
+> 것은 "여러 프로젝트를 한 서버에서 쓸 때 검색 결과가 서로 섞이는 문제"뿐입니다.
+
+**프로젝트별 Drive 폴더/Notion DB 등록**: `register_drive_source(project,
+folder_id)` / `register_notion_source(project, database_id)` 로 프로젝트마다
+다른 Drive 폴더·Notion 데이터베이스를 매핑한 뒤, `refresh_index` 를 실행하면
+매핑된 소스들의 메타 캐시가 채워집니다. 매핑을 등록/변경해도 서버를
+재시작할 필요가 없습니다 — 다음 `search_documents`/`refresh_index` 호출부터
+바로 반영됩니다. `list_drive_sources`/`list_notion_sources` 로 현재 매핑을
+확인하고, `remove_drive_source`/`remove_notion_source` 로 제거할 수 있습니다
+(등록되지 않은 project 를 제거해도 오류가 아니라 `removed: false` 입니다).
+
+**자격증명은 전역 공유, 폴더/DB 는 프로젝트별**: Google Drive 서비스 계정
+자격증명(`DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`/`_JSON`)과 Notion Integration
+Token(`DOCS_MCP_NOTION_TOKEN`)은 서버 전체가 **하나씩만** 갖습니다. 프로젝트마다
+달라지는 것은 그 자격증명으로 접근할 **폴더/데이터베이스 범위**뿐입니다. 즉
+모든 프로젝트가 같은 서비스 계정·같은 Integration 을 공유하되, 각자 자신에게
+매핑된 폴더/DB 만 봅니다(대칭 구조: Drive ↔ Notion 동일 원칙).
+
+**기존 문서의 취급**: `project` 개념이 도입되기 전에 등록된 문서는 모두
+`project="default"` 로 백필되어 있습니다. 다른 프로젝트로 옮기려면 문서를
+재등록하거나, DB 에 직접 SQL 로 `project` 컬럼을 갱신해야 합니다(제공되는
+도구 중에는 기존 문서의 project 를 바꾸는 기능이 없습니다).
+
+### 4. 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
 
