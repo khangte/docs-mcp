@@ -15,7 +15,11 @@ from app.api.dependencies import AppState
 from app.core.db import create_db_engine, create_session_factory
 from app.main import create_app
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.models.openapi import EMBEDDING_DIM, create_all
+from app.models.openapi import DEFAULT_PROJECT, EMBEDDING_DIM, create_all
+from app.repositories.project_source_repository import (
+    ProjectDriveSourceRepository,
+    ProjectNotionSourceRepository,
+)
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from tests.fixtures.samples import openapi_3_json, swagger_2_json
 
@@ -109,16 +113,7 @@ def fake_notion_source():
 
 
 @pytest.fixture()
-def fake_document_sources(fake_drive_source, fake_notion_source):
-    """AppState 에 주입할 `drive`/`notion` 페이크 어댑터 매핑."""
-    return {
-        SOURCE_DRIVE: fake_drive_source,
-        SOURCE_NOTION: fake_notion_source,
-    }
-
-
-@pytest.fixture()
-def app_state(pg_engine, in_memory_fetcher, fake_document_sources):
+def app_state(pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_source):
     """테스트용 AppState.
 
     `vector_fallback_enabled` 를 True 로 고정해 벡터 보조 경로가 실행 환경의
@@ -126,8 +121,11 @@ def app_state(pg_engine, in_memory_fetcher, fake_document_sources):
     폴백되므로 외부 호출은 발생하지 않는다). 보조 비활성 동작을 검증하는
     테스트는 이 값을 명시적으로 False 로 바꾼다.
 
-    `document_sources` 는 페이크로 고정해, 실행 환경에 Drive/Notion 자격증명이
-    설정돼 있어도 테스트가 실제 외부 API 를 호출하지 않게 한다.
+    Drive/Notion 어댑터는 이제 project → folder_id/database_id 매핑에서
+    요청 시점에 만들어진다(SPEC 기능 5). `drive_source_builder`/
+    `notion_source_builder` 를 페이크로 고정해, folder_id/database_id 값과
+    무관하게 항상 같은 페이크 어댑터를 돌려주도록 한다 — 실행 환경에
+    실제 Drive/Notion 자격증명이 있어도 테스트가 외부 API 를 호출하지 않는다.
     """
     state = AppState.from_engine(
         engine=pg_engine,
@@ -135,9 +133,206 @@ def app_state(pg_engine, in_memory_fetcher, fake_document_sources):
         embedding_dim=EMBEDDING_DIM,
         hybrid_alpha=0.4,
         vector_fallback_enabled=True,
-        document_sources=fake_document_sources,
+        drive_source_builder=lambda folder_id: fake_drive_source,
+        notion_source_builder=lambda database_id: fake_notion_source,
     )
     return state
+
+
+@pytest.fixture()
+def make_project_resolver(db_session):
+    """(project, folder_id, database_id) 매핑을 심고 페이크로 고정된 resolver 를 만드는 헬퍼.
+
+    `ProjectSourceResolver` 단위 테스트(document_index_service/
+    document_search_service)에서, 여러 project 에 서로 다른 페이크 소스를
+    붙이고 싶을 때 쓴다. project 별로 다른 페이크를 주입할 수 있도록
+    folder_id/database_id → DocumentSource 매핑을 딕셔너리로 받는다.
+    """
+    from app.core.config import Settings
+    from app.repositories.project_source_repository import (
+        ProjectDriveSourceRepository,
+        ProjectNotionSourceRepository,
+    )
+    from app.services.documents.project_source_resolver import ProjectSourceResolver
+
+    def _make(
+        drive_mapping: dict[str, object] | None = None,
+        notion_mapping: dict[str, object] | None = None,
+    ):
+        """project → (folder_id, 페이크) / (database_id, 페이크) 매핑으로 resolver 를 만든다.
+
+        Args:
+            drive_mapping: `{project: (folder_id, fake_drive_source)}`.
+            notion_mapping: `{project: (database_id, fake_notion_source)}`.
+
+        반환된 resolver 에는 `drive_builder_calls`/`notion_builder_calls`
+        속성(리스트)이 붙어, 빌더가 어떤 folder_id/database_id 로 몇 번
+        호출됐는지(캐싱 검증) 테스트가 직접 확인할 수 있다.
+        """
+        drive_repo = ProjectDriveSourceRepository(db_session)
+        notion_repo = ProjectNotionSourceRepository(db_session)
+        drive_by_folder: dict[str, object] = {}
+        for project, (folder_id, fake) in (drive_mapping or {}).items():
+            drive_repo.upsert(project, folder_id)
+            drive_by_folder[folder_id] = fake
+        notion_by_db: dict[str, object] = {}
+        for project, (database_id, fake) in (notion_mapping or {}).items():
+            notion_repo.upsert(project, database_id)
+            notion_by_db[database_id] = fake
+        db_session.commit()
+
+        drive_builder_calls: list[str] = []
+        notion_builder_calls: list[str] = []
+
+        def _drive_builder(folder_id: str):
+            drive_builder_calls.append(folder_id)
+            return drive_by_folder.get(folder_id)
+
+        def _notion_builder(database_id: str):
+            notion_builder_calls.append(database_id)
+            return notion_by_db.get(database_id)
+
+        resolver = ProjectSourceResolver(
+            settings=Settings(),
+            drive_token_provider=None,
+            drive_repo=drive_repo,
+            notion_repo=notion_repo,
+            drive_source_builder=_drive_builder,
+            notion_source_builder=_notion_builder,
+        )
+        resolver.drive_builder_calls = drive_builder_calls  # type: ignore[attr-defined]
+        resolver.notion_builder_calls = notion_builder_calls  # type: ignore[attr-defined]
+        return resolver
+
+    return _make
+
+
+@pytest.fixture()
+def fake_drive_source_builder():
+    """folder_id → 페이크 Drive 어댑터를 돌려주는 빌더.
+
+    호출될 때마다 그 folder_id 전용의 새 `FakeDocumentSource` 를 만들고,
+    같은 folder_id 로 다시 부르면 이전에 만든 인스턴스를 그대로 재사용한다
+    (실제 `build_drive_source` 캐싱 계약과 동일한 모양). project 별로 서로
+    다른 폴더를 등록해두면 이 빌더 하나로 서로 다른 페이크가 자동으로
+    붙는다 — SPEC 기능 7 프로젝트 격리 테스트가 두 프로젝트에 별개의
+    페이크를 붙일 때 쓴다.
+    """
+    from tests.fixtures.document_sources import FakeDocumentSource
+
+    instances: dict[str, FakeDocumentSource] = {}
+
+    def _build(folder_id: str) -> FakeDocumentSource:
+        if folder_id not in instances:
+            instances[folder_id] = FakeDocumentSource(SOURCE_DRIVE)
+        return instances[folder_id]
+
+    _build.instances = instances  # type: ignore[attr-defined]
+    return _build
+
+
+@pytest.fixture()
+def fake_notion_source_builder():
+    """database_id → 페이크 Notion 어댑터를 돌려주는 빌더. Drive 판과 동일한 구조."""
+    from tests.fixtures.document_sources import FakeDocumentSource
+
+    instances: dict[str, FakeDocumentSource] = {}
+
+    def _build(database_id: str) -> FakeDocumentSource:
+        if database_id not in instances:
+            instances[database_id] = FakeDocumentSource(SOURCE_NOTION)
+        return instances[database_id]
+
+    _build.instances = instances  # type: ignore[attr-defined]
+    return _build
+
+
+@pytest.fixture()
+def two_project_app_state(
+    pg_engine, in_memory_fetcher, fake_drive_source_builder, fake_notion_source_builder
+):
+    """folder_id/database_id 별로 서로 다른 페이크가 붙는 AppState.
+
+    `app_state` 픽스처는 모든 folder_id/database_id 에 항상 같은 페이크를
+    돌려줘 project 개념 없는 기존 테스트에 적합하다. 이 픽스처는 반대로
+    project 마다 실제로 다른 어댑터가 붙는지(격리) 검증해야 하는 기능 7
+    테스트를 위해, 빌더가 folder_id/database_id 별로 별개의 페이크
+    인스턴스를 반환하도록 구성한다.
+    """
+    return AppState.from_engine(
+        engine=pg_engine,
+        fetcher=in_memory_fetcher,
+        embedding_dim=EMBEDDING_DIM,
+        hybrid_alpha=0.4,
+        vector_fallback_enabled=True,
+        drive_source_builder=fake_drive_source_builder,
+        notion_source_builder=fake_notion_source_builder,
+    )
+
+
+@pytest.fixture()
+def two_project_services(session_factory, fake_drive_source_builder, fake_notion_source_builder):
+    """A(folder-a, db-a)/B(folder-b, db-b) 매핑을 DB 에 미리 심어둔다.
+
+    MCP 도구(`register_drive_source` 등)를 거치지 않고 리포지토리로 직접
+    매핑을 만들어, 두 프로젝트가 이미 등록된 상태에서 테스트를 시작하고
+    싶을 때 쓴다. 반환값은 project → {"drive": 페이크, "notion": 페이크}.
+    """
+    session = session_factory()
+    try:
+        drive_repo = ProjectDriveSourceRepository(session)
+        notion_repo = ProjectNotionSourceRepository(session)
+        drive_repo.upsert("A", "folder-a")
+        drive_repo.upsert("B", "folder-b")
+        notion_repo.upsert("A", "db-a")
+        notion_repo.upsert("B", "db-b")
+        session.commit()
+    finally:
+        session.close()
+
+    return {
+        "A": {
+            "drive": fake_drive_source_builder("folder-a"),
+            "notion": fake_notion_source_builder("db-a"),
+        },
+        "B": {
+            "drive": fake_drive_source_builder("folder-b"),
+            "notion": fake_notion_source_builder("db-b"),
+        },
+    }
+
+
+@pytest.fixture()
+def two_project_mcp(two_project_app_state, two_project_services):
+    """A(folder-a, db-a)/B(folder-b, db-b) 매핑이 이미 DB 에 심어진 MCP 서버.
+
+    두 프로젝트 모두 Drive+Notion 이 서로 다른 폴더/DB 로 구성된다(SPEC
+    기능 7: "두 프로젝트(Drive+Notion 모두 다르게 구성)"). `two_project_services`
+    가 매핑을 미리 심어두므로, 이 서버로 바로 `register_document`/
+    `refresh_index`/`search_documents` 등을 호출할 수 있다.
+    """
+    from app.mcp_server import create_mcp_server
+
+    return create_mcp_server(two_project_app_state)
+
+
+@pytest.fixture()
+def seed_default_project_sources(pg_engine, session_factory):
+    """DEFAULT_PROJECT 에 Drive/Notion 매핑을 심어 페이크 어댑터가 잡히게 한다.
+
+    `app_state` 의 `drive_source_builder`/`notion_source_builder` 는 folder_id/
+    database_id 와 무관하게 항상 페이크를 돌려주지만, `ProjectSourceResolver`
+    는 `project_drive_source`/`project_notion_source` 에 매핑 행이 있어야만
+    빌더를 호출한다. 대부분의 기존 테스트는 project 개념 없이 동작하므로,
+    DEFAULT_PROJECT 앞으로 더미 매핑을 미리 심어 페이크가 잡히게 한다.
+    """
+    session = session_factory()
+    try:
+        ProjectDriveSourceRepository(session).upsert(DEFAULT_PROJECT, "fake-folder")
+        ProjectNotionSourceRepository(session).upsert(DEFAULT_PROJECT, "fake-database")
+        session.commit()
+    finally:
+        session.close()
 
 
 @pytest.fixture()
@@ -184,6 +379,7 @@ def seeded_services(services_factory, sample_openapi_3):
     """app_state 와 동일 엔진을 공유하는 서비스로 샘플 문서를 먼저 등록."""
     services = services_factory()
     result = services.sync_service.register(
+        project="default",
         source_url=None,
         raw_document=sample_openapi_3,
     )
