@@ -61,30 +61,6 @@ class EndpointSearchResponse(TypedDict):
     items: list[EndpointCandidateItem]
 
 
-class Citation(TypedDict):
-    """query_rag 응답의 citations 원소 타입.
-
-    미사용: query_rag 도구 제거로 호출부 없음. RAG 답변생성은 호출
-    LLM(Claude/ChatGPT)이 담당. FastAPI `/query` 라우트 계약 참고용으로 보존.
-    """
-
-    method: str | None
-    path: str | None
-    snippet: str
-
-
-class RagAnswer(TypedDict):
-    """query_rag 의 반환 타입.
-
-    미사용: query_rag 도구 제거로 호출부 없음. RAG 답변생성은 호출
-    LLM(Claude/ChatGPT)이 담당. FastAPI `/query` 라우트 계약 참고용으로 보존.
-    """
-
-    answer: str
-    citations: list[Citation]
-    is_grounded: bool
-
-
 class ParameterItem(TypedDict):
     """get_endpoint_details 응답의 parameters 원소 타입."""
 

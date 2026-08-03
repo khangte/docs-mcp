@@ -15,7 +15,6 @@ from app.api.dependencies import AppState
 from app.api.routes import documents as documents_routes
 from app.api.routes import endpoints as endpoints_routes
 from app.api.routes import health as health_routes
-from app.api.routes import query as query_routes
 from app.api.routes import search as search_routes
 from app.api.routes import sync as sync_routes
 from app.bootstrap import bootstrap_app_state
@@ -102,7 +101,6 @@ def create_app(
     app.include_router(sync_routes.router)
     app.include_router(endpoints_routes.router)
     app.include_router(search_routes.router)
-    app.include_router(query_routes.router)
 
     _register_exception_handlers(app)
     return app

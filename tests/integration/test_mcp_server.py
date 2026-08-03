@@ -65,20 +65,8 @@ async def test_expected_tools_are_registered(mcp_server: FastMCP) -> None:
 
 @pytest.mark.asyncio()
 async def test_query_rag_is_not_registered(mcp_server: FastMCP) -> None:
-    """query_rag 는 MCP 도구 목록에 나타나지 않는다(코드는 보존)."""
+    """query_rag 는 MCP 도구 목록에 나타나지 않는다."""
     assert "query_rag" not in await _tool_names(mcp_server)
-
-
-def test_query_rag_source_is_preserved() -> None:
-    """query_rag 구현과 RAG 서비스 코드는 삭제되지 않고 남아 있다."""
-    from app.mcp_server import query_rag
-    from app.services.rag.llm_provider import GeminiLLMProvider, TemplateLLMProvider
-    from app.services.rag.rag_service import RAGService
-
-    assert callable(query_rag)
-    assert RAGService is not None
-    assert GeminiLLMProvider is not None
-    assert TemplateLLMProvider is not None
 
 
 @pytest.mark.asyncio()

@@ -68,7 +68,6 @@ async def test_openapi_tools_are_not_broken(mcp_server: FastMCP) -> None:
     names = await _tool_names(mcp_server)
 
     assert {"register_document", "search_endpoints", "get_endpoint_details"} <= names
-    assert "query_rag" not in names
 
 
 @pytest.mark.asyncio()

@@ -33,8 +33,6 @@ from app.services.indexer.embedding_provider import (
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
-from app.services.rag.llm_provider import GeminiLLMProvider, LLMProvider, TemplateLLMProvider
-from app.services.rag.rag_service import RAGService
 from app.services.schemas.schema_ref_resolver import SchemaRefResolver
 from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
 from app.services.search.keyword_search import KeywordSearch
@@ -50,7 +48,6 @@ class AppState:
     engine: Engine
     session_factory: sessionmaker[Session]
     embedding_provider: EmbeddingProvider
-    llm_provider: LLMProvider
     fetcher: OpenAPIFetcher
     hybrid_alpha: float = 0.4
     vector_fallback_enabled: bool = True
@@ -77,7 +74,6 @@ class AppState:
             engine=engine,
             session_factory=create_session_factory(engine),
             embedding_provider=_build_embedding_provider(embedding_dim),
-            llm_provider=_build_llm_provider(),
             fetcher=fetcher,
             hybrid_alpha=hybrid_alpha,
             vector_fallback_enabled=(
@@ -104,14 +100,6 @@ def is_vector_fallback_available() -> bool:
     return bool(get_settings().gemini_api_key)
 
 
-def _build_llm_provider() -> LLMProvider:
-    """Gemini API 키가 설정돼 있으면 GeminiLLMProvider 를, 아니면 TemplateLLMProvider 로 폴백."""
-    settings = get_settings()
-    if not settings.gemini_api_key:
-        return TemplateLLMProvider()
-    return GeminiLLMProvider(api_key=settings.gemini_api_key, model=settings.gemini_model)
-
-
 def _build_embedding_provider(embedding_dim: int) -> EmbeddingProvider:
     """Gemini API 키가 있으면 GeminiEmbeddingProvider, 없으면 HashEmbeddingProvider 로 폴백."""
     settings = get_settings()
@@ -136,7 +124,6 @@ class ServiceBundle:
     document_meta_repo: DocumentMetaRepository
     sync_service: SyncService
     search_service: SearchService
-    rag_service: RAGService
     example_service: RequestExampleService
     candidate_search: EndpointCandidateSearch
     endpoint_details_service: EndpointDetailsService
@@ -181,7 +168,6 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             vector_search=vector_search,
             hybrid_alpha=state.hybrid_alpha,
         )
-        rag_service = RAGService(search_service, state.llm_provider)
         example_service = RequestExampleService(endpoint_repo)
         candidate_search = EndpointCandidateSearch(
             chunk_repo=chunk_repo,
@@ -221,7 +207,6 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             document_meta_repo=document_meta_repo,
             sync_service=sync_service,
             search_service=search_service,
-            rag_service=rag_service,
             example_service=example_service,
             candidate_search=candidate_search,
             endpoint_details_service=endpoint_details_service,

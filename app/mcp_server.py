@@ -23,7 +23,6 @@ from app.core.errors import (
 )
 from app.core.logging import get_logger
 from app.mcp_types import (
-    Citation,
     DocumentContentPayload,
     DocumentSearchItemPayload,
     DocumentSearchResponse,
@@ -33,7 +32,6 @@ from app.mcp_types import (
     EndpointSearchResponse,
     ErrorPayload,
     ParameterItem,
-    RagAnswer,
     RefreshIndexResult,
     RegisterDocumentResult,
     RequestBodyItem,
@@ -528,54 +526,6 @@ def create_mcp_server(app_state: AppState) -> FastMCP:
         return await anyio.to_thread.run_sync(_sync)
 
     return mcp
-
-
-# 미사용: query_rag 도구 제거로 호출부 없음. RAG 답변생성은 호출
-# LLM(Claude/ChatGPT)이 담당. MCP 도구 등록(@mcp.tool())만 제거하고 구현은
-# 보존한다(FastAPI `/query` 라우트는 계속 RAGService 를 직접 사용).
-async def query_rag(
-    app_state: AppState,
-    question: str,
-    top_k: int = 5,
-    document_id: str | None = None,
-) -> RagAnswer | ErrorPayload:
-    """API 명세에 대해 자연어로 질문하고 RAG 기반의 답변을 받는다.
-
-    미사용: MCP 도구로 등록하지 않는다(위 주석 참고).
-
-    Args:
-        app_state: 서비스 번들을 만들기 위한 앱 상태.
-        question: API 명세에 대해 묻고 싶은 자연어 질문.
-        top_k: 답변 생성에 근거로 사용할 최대 검색 결과 수.
-        document_id: 특정 문서로 질의 범위를 제한하고 싶을 때 지정.
-
-    Returns:
-        answer(생성된 답변), citations(근거가 된 method/path/snippet 목록),
-        is_grounded(답변이 실제 문서 근거에 기반했는지 여부)를 담은 dict.
-        질의 처리 중 도메인/외부 연동 오류가 발생하면 error/code/message
-        필드를 담은 ErrorPayload를 대신 반환한다.
-    """
-    def _sync() -> RagAnswer | ErrorPayload:
-        def _inner(bundle: ServiceBundle) -> RagAnswer:
-            result = bundle.rag_service.answer(
-                question=question,
-                top_k=top_k,
-                document_id=document_id,
-            )
-            citations: list[Citation] = [
-                {"method": c.method, "path": c.path, "snippet": c.snippet}
-                for c in result.citations
-            ]
-            return {
-                "answer": result.answer,
-                "citations": citations,
-                "is_grounded": result.is_grounded,
-            }
-        try:
-            return _run_bundle(app_state, _inner)
-        except (DomainError, IntegrationError) as e:
-            return to_error_payload(e)
-    return await anyio.to_thread.run_sync(_sync)
 
 
 def main() -> None:

@@ -1,12 +1,11 @@
 # docs-mcp: OpenAPI RAG Server
 
-OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generation) 기술을 활용하여 API 명세에 대한 자연어 질의응답 및 검색 서비스를 제공하는 서버입니다.
+OpenAPI(Swagger) 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터) 기술을 활용하여 API 명세에 대한 검색 서비스를 제공하는 서버입니다. 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
 
 ## 주요 기능
 
 - **다양한 문서 소스 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x/Swagger 2.0, Markdown, CSV 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
 - **하이브리드 검색**: 키워드(토큰 매칭)와 벡터 유사도 검색을 결합하여 원하는 API 엔드포인트 또는 문서 섹션을 정확하게 찾아냅니다.
-- **RAG 질의응답**: 등록된 문서를 기반으로 사용자 질문에 답변하고, 근거가 되는 API 경로/섹션 및 요약 정보를 함께 제공합니다. Gemini API 키가 설정되면 실제 LLM이 답변을 생성하고, 없으면 템플릿 기반으로 폴백합니다.
 - **코드 예시 생성**: 엔드포인트 상세 정보로부터 `curl`, `fetch`, `axios`, `python(requests)` 등 다양한 포맷의 호출 예시 코드를 즉시 생성합니다.
 - **자동 재색인**: 문서의 내용 변경을 감지(해시 비교)하여 변경된 경우에만 지능적으로 인덱스를 업데이트합니다.
 
@@ -15,10 +14,9 @@ OpenAPI(Swagger) 문서를 수집, 색인하고 RAG(Retrieval-Augmented Generati
 <!-- AUTO-GENERATED: pyproject.toml, docker-compose.yml, app/core/config.py 기준 -->
 - **Backend**: Python 3.11+, FastAPI
 - **Database**: PostgreSQL(+`pgvector` 확장) — SQLAlchemy 2.0, Alembic 마이그레이션
-- **Search/RAG**:
+- **Search**:
   - pgvector 코사인 거리(`<=>`, HNSW 인덱스) 기반 벡터 검색
   - 임베딩: Gemini API(`google-genai`, `GeminiEmbeddingProvider`) 또는 결정적 해시 기반 폴백(`HashEmbeddingProvider`)
-  - LLM 답변: Gemini API(`GeminiLLMProvider`) 또는 템플릿 기반 폴백(`TemplateLLMProvider`)
   - 하이브리드 검색 엔진 (Keyword + Vector)
 - **문서 파서**: OpenAPI/Swagger, Markdown, CSV (`app/services/parser/document_router.py`가 자동 판별)
 - **MCP**: `fastmcp` 서드파티 패키지
@@ -108,7 +106,6 @@ uv run uvicorn app.main:create_app --factory --reload
 
 - **문서 등록**: `POST /documents` (URL 또는 raw_document 전달)
 - **하이브리드 검색**: `GET /search?query=...&mode=hybrid`
-- **RAG 질문**: `POST /query` (JSON: `{"question": "사용자 정보를 조회하는 API는 뭐야?"}`)
 - **예시 생성**: `GET /endpoints/{endpoint_id}/example?format=curl`
 
 ## MCP (Model Context Protocol) 연동
@@ -168,10 +165,6 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 **"소스 미설정"과 "검색 결과 0건"은 구별된다** — 소스가 정상 구성됐는데 질의에
 맞는 문서가 없으면 `search_documents` 는 오류가 아니라 빈 `items` 를 돌려준다.
 어느 경우든 OpenAPI 경로는 영향받지 않는다.
-
-> `query_rag`(서버 내부 답변생성)는 MCP 도구 등록에서 제외됐다. 구현 코드
-> (`RAGService`, `GeminiLLMProvider`, `TemplateLLMProvider`)는 삭제하지 않고
-> 보존되며, FastAPI `/query` 라우트에서는 계속 사용한다.
 
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
