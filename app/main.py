@@ -17,7 +17,7 @@ from app.api.routes import endpoints as endpoints_routes
 from app.api.routes import health as health_routes
 from app.api.routes import search as search_routes
 from app.api.routes import sync as sync_routes
-from app.bootstrap import bootstrap_app_state
+from app.bootstrap import bootstrap_app_state, seed_default_sources
 from app.core.config import Settings, get_settings
 from app.core.errors import (
     APIError,
@@ -83,6 +83,7 @@ def create_app(
             from app.models.openapi import create_all
             engine = create_db_engine(cfg.database_url)
             create_all(engine)
+            seed_default_sources(engine, cfg)
             app_state = AppState.from_engine(
                 engine=engine,
                 fetcher=fetcher,

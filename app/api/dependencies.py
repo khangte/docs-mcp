@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -18,11 +18,21 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
+from app.repositories.project_source_repository import (
+    ProjectDriveSourceRepository,
+    ProjectNotionSourceRepository,
+)
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.documents.document_index_service import DocumentIndexService
 from app.services.documents.document_search_service import DocumentSearchService
 from app.services.documents.document_source import DocumentSource
-from app.services.documents.source_factory import build_document_sources
+from app.services.documents.google_drive_source import ServiceAccountTokenProvider
+from app.services.documents.project_source_resolver import ProjectSourceResolver
+from app.services.documents.project_source_service import (
+    DriveSourceService,
+    NotionSourceService,
+)
+from app.services.documents.source_factory import build_drive_token_provider
 from app.services.endpoints.endpoint_details_service import EndpointDetailsService
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import (
@@ -51,8 +61,15 @@ class AppState:
     fetcher: OpenAPIFetcher
     hybrid_alpha: float = 0.4
     vector_fallback_enabled: bool = True
-    #: Drive/Notion 어댑터 매핑(`drive`/`notion` → 어댑터). 자격증명이 없으면 빈 dict.
-    document_sources: dict[str, DocumentSource] = field(default_factory=dict)
+    #: Drive 서비스 계정 토큰 발급기. 자격증명이 없으면 None. project 마다
+    #: 새로 만들지 않고 재사용해 credentials 캐싱 중복을 막는다.
+    drive_token_provider: ServiceAccountTokenProvider | None = None
+    #: folder_id → Drive 어댑터 팩토리. 테스트에서 페이크를 주입하는 지점.
+    #: None 이면 `build_drive_source` 가 기본으로 쓰인다.
+    drive_source_builder: Callable[[str], DocumentSource | None] | None = None
+    #: database_id → Notion 어댑터 팩토리. 테스트에서 페이크를 주입하는 지점.
+    #: None 이면 `build_notion_source` 가 기본으로 쓰인다.
+    notion_source_builder: Callable[[str], DocumentSource | None] | None = None
 
     @classmethod
     def from_engine(
@@ -62,14 +79,22 @@ class AppState:
         embedding_dim: int = 256,
         hybrid_alpha: float = 0.4,
         vector_fallback_enabled: bool | None = None,
-        document_sources: dict[str, DocumentSource] | None = None,
+        drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
+        notion_source_builder: Callable[[str], DocumentSource | None] | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
         `vector_fallback_enabled` 를 생략하면 설정의 Gemini API 키 유무로 결정한다.
-        `document_sources` 를 생략하면 설정값에서 구성 가능한 Drive/Notion
-        어댑터만 자동으로 채운다(테스트에서는 페이크를 명시 주입한다).
+
+        Drive/Notion 어댑터는 여기서 고정 dict 로 만들어 보관하지 않는다.
+        `project_drive_source`/`project_notion_source` 매핑은 요청/갱신마다
+        `ProjectSourceResolver` 가 새로 조회해 만들어내므로(SPEC 기능 5·6),
+        `register_drive_source`/`register_notion_source` 로 매핑을 바꾸면
+        서버 재시작 없이 다음 `search_documents`/`refresh_index` 호출부터
+        바로 반영된다. `drive_source_builder`/`notion_source_builder` 는
+        테스트에서 실제 자격증명 없이 페이크 어댑터를 주입하는 지점이다.
         """
+        settings = get_settings()
         return cls(
             engine=engine,
             session_factory=create_session_factory(engine),
@@ -81,11 +106,9 @@ class AppState:
                 if vector_fallback_enabled is None
                 else vector_fallback_enabled
             ),
-            document_sources=(
-                build_document_sources(get_settings())
-                if document_sources is None
-                else dict(document_sources)
-            ),
+            drive_token_provider=build_drive_token_provider(settings),
+            drive_source_builder=drive_source_builder,
+            notion_source_builder=notion_source_builder,
         )
 
 
@@ -131,6 +154,11 @@ class ServiceBundle:
     tag_catalog_service: TagCatalogService
     document_search_service: DocumentSearchService
     document_index_service: DocumentIndexService
+    project_drive_source_repo: ProjectDriveSourceRepository
+    project_notion_source_repo: ProjectNotionSourceRepository
+    drive_source_service: DriveSourceService
+    notion_source_service: NotionSourceService
+    project_source_resolver: ProjectSourceResolver
 
 
 def build_services(state: AppState) -> Iterator[ServiceBundle]:
@@ -189,14 +217,29 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             endpoint_repo=endpoint_repo,
             document_repo=document_repo,
         )
+        project_drive_source_repo = ProjectDriveSourceRepository(session)
+        project_notion_source_repo = ProjectNotionSourceRepository(session)
+        drive_source_service = DriveSourceService(session, project_drive_source_repo)
+        notion_source_service = NotionSourceService(session, project_notion_source_repo)
+        # 매 요청마다 새로 만든다: project_drive_source/project_notion_source
+        # 매핑을 이 세션 기준으로 즉시 다시 읽으므로, register_drive_source 로
+        # 바꾼 값이 서버 재시작 없이 바로 다음 요청에 반영된다(SPEC 377행).
+        project_source_resolver = ProjectSourceResolver(
+            settings=get_settings(),
+            drive_token_provider=state.drive_token_provider,
+            drive_repo=project_drive_source_repo,
+            notion_repo=project_notion_source_repo,
+            drive_source_builder=state.drive_source_builder,
+            notion_source_builder=state.notion_source_builder,
+        )
         document_search_service = DocumentSearchService(
             meta_repo=document_meta_repo,
-            sources=state.document_sources,
+            resolver=project_source_resolver,
         )
         document_index_service = DocumentIndexService(
             session=session,
             meta_repo=document_meta_repo,
-            sources=list(state.document_sources.values()),
+            resolver=project_source_resolver,
         )
         yield ServiceBundle(
             session=session,
@@ -214,6 +257,11 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             tag_catalog_service=tag_catalog_service,
             document_search_service=document_search_service,
             document_index_service=document_index_service,
+            project_drive_source_repo=project_drive_source_repo,
+            project_notion_source_repo=project_notion_source_repo,
+            drive_source_service=drive_source_service,
+            notion_source_service=notion_source_service,
+            project_source_resolver=project_source_resolver,
         )
     finally:
         session.close()

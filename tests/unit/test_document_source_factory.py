@@ -1,4 +1,4 @@
-"""문서 소스 팩토리 단위 테스트 (SPEC 기능 5 구성 부분).
+"""문서 소스 팩토리 단위 테스트 (SPEC 기능 5).
 
 자격증명 조합에 따라 어떤 어댑터가 만들어지는지 검증한다. 어댑터 생성 자체는
 네트워크를 타지 않으므로 실제 호출은 발생하지 않는다.
@@ -12,7 +12,11 @@ import pytest
 
 from app.core.config import Settings
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.services.documents.source_factory import build_document_sources
+from app.services.documents.source_factory import (
+    build_drive_source,
+    build_drive_token_provider,
+    build_notion_source,
+)
 
 
 @pytest.fixture()
@@ -28,56 +32,55 @@ def bare_settings() -> Settings:
     )
 
 
-def test_no_credentials_yields_no_sources(bare_settings: Settings) -> None:
-    """자격증명이 전혀 없으면 소스가 하나도 만들어지지 않는다(기동은 성공)."""
-    assert build_document_sources(bare_settings) == {}
+def test_no_drive_credentials_yields_no_token_provider(bare_settings: Settings) -> None:
+    """Drive 자격증명이 없으면 토큰 발급기가 만들어지지 않는다."""
+    assert build_drive_token_provider(bare_settings) is None
 
 
-def test_drive_requires_both_folder_and_credentials(bare_settings: Settings) -> None:
-    """폴더 ID 만 있고 자격증명이 없으면 Drive 어댑터를 만들지 않는다."""
-    settings = replace(bare_settings, drive_folder_id="folder-1")
-
-    assert SOURCE_DRIVE not in build_document_sources(settings)
-
-
-def test_drive_credentials_without_folder_is_skipped(bare_settings: Settings) -> None:
-    """자격증명만 있고 폴더 ID 가 없으면 Drive 어댑터를 만들지 않는다."""
+def test_drive_token_provider_is_built_when_credentials_present(bare_settings: Settings) -> None:
+    """Drive 자격증명(파일 또는 JSON)이 있으면 토큰 발급기가 만들어진다."""
     settings = replace(bare_settings, drive_service_account_file="/tmp/key.json")
 
-    assert SOURCE_DRIVE not in build_document_sources(settings)
+    assert build_drive_token_provider(settings) is not None
 
 
-def test_drive_is_built_when_fully_configured(bare_settings: Settings) -> None:
-    """폴더 ID 와 자격증명이 모두 있으면 Drive 어댑터가 만들어진다."""
-    settings = replace(
-        bare_settings,
-        drive_folder_id="folder-1",
-        drive_service_account_file="/tmp/key.json",
-    )
+def test_drive_source_requires_folder_id(bare_settings: Settings) -> None:
+    """토큰 발급기가 있어도 folder_id 가 없으면 Drive 어댑터를 만들지 않는다."""
+    settings = replace(bare_settings, drive_service_account_file="/tmp/key.json")
+    token_provider = build_drive_token_provider(settings)
 
-    sources = build_document_sources(settings)
-
-    assert set(sources) == {SOURCE_DRIVE}
-    assert sources[SOURCE_DRIVE].source_name == SOURCE_DRIVE
+    assert build_drive_source(settings, "", token_provider) is None
 
 
-def test_notion_is_built_from_token_only(bare_settings: Settings) -> None:
-    """Notion 은 토큰만 있으면 어댑터가 만들어진다(DB ID 는 선택)."""
+def test_drive_source_requires_token_provider(bare_settings: Settings) -> None:
+    """folder_id 가 있어도 토큰 발급기가 없으면 Drive 어댑터를 만들지 않는다."""
+    assert build_drive_source(bare_settings, "folder-1", None) is None
+
+
+def test_drive_source_is_built_when_fully_configured(bare_settings: Settings) -> None:
+    """folder_id 와 토큰 발급기가 모두 있으면 Drive 어댑터가 만들어진다."""
+    settings = replace(bare_settings, drive_service_account_file="/tmp/key.json")
+    token_provider = build_drive_token_provider(settings)
+
+    source = build_drive_source(settings, "folder-1", token_provider)
+
+    assert source is not None
+    assert source.source_name == SOURCE_DRIVE
+
+
+def test_notion_source_is_built_from_token_only(bare_settings: Settings) -> None:
+    """Notion 은 토큰만 있으면 어댑터가 만들어진다(database_id 는 선택)."""
     settings = replace(bare_settings, notion_token="secret-token")
 
-    assert set(build_document_sources(settings)) == {SOURCE_NOTION}
+    source = build_notion_source(settings, "db-1")
+
+    assert source is not None
+    assert source.source_name == SOURCE_NOTION
 
 
-def test_both_sources_are_built(bare_settings: Settings) -> None:
-    """Drive/Notion 이 모두 설정되면 두 어댑터가 모두 만들어진다."""
-    settings = replace(
-        bare_settings,
-        drive_folder_id="folder-1",
-        drive_service_account_json='{"type": "service_account"}',
-        notion_token="secret-token",
-    )
-
-    assert set(build_document_sources(settings)) == {SOURCE_DRIVE, SOURCE_NOTION}
+def test_notion_source_requires_token(bare_settings: Settings) -> None:
+    """토큰이 없으면 Notion 어댑터를 만들지 않는다."""
+    assert build_notion_source(bare_settings, "db-1") is None
 
 
 def test_settings_read_document_source_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
