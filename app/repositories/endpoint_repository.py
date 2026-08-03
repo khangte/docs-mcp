@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.openapi import ApiEndpoint, ApiSchema, ApiSection
+from app.models.openapi import ApiDocument, ApiEndpoint, ApiSchema, ApiSection
 
 
 class EndpointRepository:
@@ -30,15 +30,22 @@ class EndpointRepository:
         stmt = select(ApiEndpoint).where(ApiEndpoint.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
 
-    def list_all(self, document_id: str | None = None) -> Sequence[ApiEndpoint]:
+    def list_all(
+        self, document_id: str | None = None, project: str | None = None
+    ) -> Sequence[ApiEndpoint]:
         """엔드포인트 목록을 (method, path) 오름차순으로 반환한다.
 
-        document_id 가 주어지면 해당 문서로 범위를 제한한다. 정렬을 고정해
-        태그 집계 같은 후속 처리 결과가 결정적이 되도록 한다.
+        document_id 가 주어지면 해당 문서로, project 가 주어지면 `ApiDocument`
+        와 조인해 해당 project 로 범위를 제한한다. 정렬을 고정해 태그 집계
+        같은 후속 처리 결과가 결정적이 되도록 한다.
         """
         stmt = select(ApiEndpoint)
         if document_id is not None:
             stmt = stmt.where(ApiEndpoint.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(ApiDocument, ApiEndpoint.document_id == ApiDocument.id).where(
+                ApiDocument.project == project
+            )
         stmt = stmt.order_by(ApiEndpoint.path, ApiEndpoint.method)
         return self._session.execute(stmt).scalars().all()
 

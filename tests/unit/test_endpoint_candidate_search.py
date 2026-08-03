@@ -23,7 +23,9 @@ NO_MATCH_QUERY = "zzzzz_nothing_matches_here_xxx"
 def _register(app_state, raw: str) -> str:
     """샘플 문서를 등록하고 document_id 를 반환한다."""
     bundle = next(build_services(app_state))
-    result = bundle.sync_service.register(source_url=None, raw_document=raw)
+    result = bundle.sync_service.register(
+        project="default", source_url=None, raw_document=raw
+    )
     return result.document.id
 
 

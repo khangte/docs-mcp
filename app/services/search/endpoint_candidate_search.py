@@ -16,12 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from app.core.errors import DocumentNotFoundError, ValidationError
+from app.core.errors import ValidationError
 from app.core.logging import get_logger
 from app.models.openapi import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
+from app.services.documents.project_scope import resolve_document_scope
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
 
@@ -50,6 +51,7 @@ class CandidateSearchOptions:
 
     top_k: int = 5
     document_id: str | None = None
+    project: str | None = None
 
 
 class EndpointCandidateSearch:
@@ -98,9 +100,9 @@ class EndpointCandidateSearch:
             ValidationError: 질의가 비었거나 top_k 가 허용 범위를 벗어난 경우.
             DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
         """
-        normalized_query = self._validate(query, options)
+        normalized_query, document_id, project = self._validate(query, options)
 
-        candidate_chunks = self._endpoint_chunks(options.document_id)
+        candidate_chunks = self._endpoint_chunks(document_id, project)
         if not candidate_chunks:
             return []
 
@@ -112,11 +114,15 @@ class EndpointCandidateSearch:
 
         return self._search_by_vector(normalized_query, candidate_chunks, options.top_k)
 
-    def _validate(self, query: str, options: CandidateSearchOptions) -> str:
-        """질의·top_k·document_id 를 검증하고 공백을 제거한 질의를 반환한다.
+    def _validate(
+        self, query: str, options: CandidateSearchOptions
+    ) -> tuple[str, str | None, str | None]:
+        """질의·top_k 를 검증하고, document_id/project 범위를 확정한다.
 
         미등록 document_id 를 빈 결과로 흘려보내면 호출 LLM 이 "문서가 없음"과
         "결과가 없음"을 구분할 수 없으므로 명시적으로 오류를 낸다.
+        `document_repo` 가 주입되지 않았으면(테스트 등) 범위 검증을 생략하고
+        옵션 값을 그대로 통과시킨다.
         """
         normalized_query = (query or "").strip()
         if not normalized_query:
@@ -125,17 +131,20 @@ class EndpointCandidateSearch:
             raise ValidationError(
                 f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}: {options.top_k}"
             )
-        if (
-            options.document_id is not None
-            and self._document_repo is not None
-            and self._document_repo.get(options.document_id) is None
-        ):
-            raise DocumentNotFoundError(options.document_id)
-        return normalized_query
+        if self._document_repo is None:
+            return normalized_query, options.document_id, options.project
+        document_id, project = resolve_document_scope(
+            self._document_repo, options.document_id, options.project
+        )
+        return normalized_query, document_id, project
 
-    def _endpoint_chunks(self, document_id: str | None) -> list[ApiChunk]:
+    def _endpoint_chunks(
+        self, document_id: str | None, project: str | None
+    ) -> list[ApiChunk]:
         """검색 대상이 되는 endpoint 타입 청크만 SQL 필터로 조회한다."""
-        return list(self._chunk_repo.list_endpoint_chunks(document_id=document_id))
+        return list(
+            self._chunk_repo.list_endpoint_chunks(document_id=document_id, project=project)
+        )
 
     def _search_by_keyword(
         self, query: str, chunks: list[ApiChunk], top_k: int

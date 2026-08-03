@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models.openapi import ApiChunk, ApiEndpoint
+from app.models.openapi import ApiChunk, ApiDocument, ApiEndpoint
 
 
 @dataclass
@@ -50,16 +50,27 @@ class ChunkRepository:
         stmt = select(ApiChunk).where(ApiChunk.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
 
-    def list_endpoint_chunks(self, document_id: str | None = None) -> Sequence[ApiChunk]:
+    def list_endpoint_chunks(
+        self, document_id: str | None = None, project: str | None = None
+    ) -> Sequence[ApiChunk]:
         """endpoint 타입 청크만 SQL 로 필터링해 반환한다.
 
         후보 검색은 endpoint 청크만 사용하므로 section/schema 청크를 DB 단계에서
         걸러낸다. 전체 청크를 적재한 뒤 Python 에서 버리면 쓰이지도 않을
         임베딩 벡터 컬럼까지 매 검색마다 전송된다.
+
+        Args:
+            document_id: 주어지면 해당 문서로 범위를 제한한다.
+            project: 주어지면 `ApiDocument` 와 조인해 해당 project 로
+                범위를 제한한다(SQL 로 필터링, Python 필터링 금지).
         """
         stmt = select(ApiChunk).where(ApiChunk.chunk_type == "endpoint")
         if document_id is not None:
             stmt = stmt.where(ApiChunk.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
+                ApiDocument.project == project
+            )
         return self._session.execute(stmt).scalars().all()
 
     def list_by_endpoint_filter(
@@ -67,14 +78,16 @@ class ChunkRepository:
         method: str | None = None,
         tag: str | None = None,
         document_id: str | None = None,
+        project: str | None = None,
     ) -> Sequence[ApiChunk]:
-        """method/tag/document_id SQL 필터를 적용해 후보 청크를 반환한다.
+        """method/tag/document_id/project SQL 필터를 적용해 후보 청크를 반환한다.
 
         - endpoint 청크: 조건에 맞는 ApiEndpoint 와 JOIN 해 필터링
-        - schema/section 청크: method/tag 조건 없이 document_id 만 적용
+        - schema/section 청크: method/tag 조건 없이 document_id/project 만 적용
+        - project 는 `ApiDocument` 와 조인해 SQL 로 필터링한다.
         필터가 모두 None 이면 전체 청크를 반환한다.
         """
-        if method is None and tag is None and document_id is None:
+        if method is None and tag is None and document_id is None and project is None:
             return self.list_all()
 
         if method is not None or tag is not None:
@@ -86,6 +99,10 @@ class ChunkRepository:
             )
             if document_id is not None:
                 endpoint_stmt = endpoint_stmt.where(ApiChunk.document_id == document_id)
+            if project is not None:
+                endpoint_stmt = endpoint_stmt.join(
+                    ApiDocument, ApiChunk.document_id == ApiDocument.id
+                ).where(ApiDocument.project == project)
             if method is not None:
                 endpoint_stmt = endpoint_stmt.where(
                     ApiEndpoint.method == method.upper()
@@ -97,16 +114,26 @@ class ChunkRepository:
                 )
             endpoint_chunks = list(self._session.execute(endpoint_stmt).scalars().all())
 
-            # schema/section 청크는 method/tag 조건 없이 document_id 만 적용
+            # schema/section 청크는 method/tag 조건 없이 document_id/project 만 적용
             other_stmt = select(ApiChunk).where(ApiChunk.chunk_type.in_(("schema", "section")))
             if document_id is not None:
                 other_stmt = other_stmt.where(ApiChunk.document_id == document_id)
+            if project is not None:
+                other_stmt = other_stmt.join(
+                    ApiDocument, ApiChunk.document_id == ApiDocument.id
+                ).where(ApiDocument.project == project)
             other_chunks = list(self._session.execute(other_stmt).scalars().all())
 
             return endpoint_chunks + other_chunks
 
-        # method/tag 없고 document_id 만 있는 경우
-        stmt = select(ApiChunk).where(ApiChunk.document_id == document_id)
+        # method/tag 없고 document_id/project 만 있는 경우
+        stmt = select(ApiChunk)
+        if document_id is not None:
+            stmt = stmt.where(ApiChunk.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
+                ApiDocument.project == project
+            )
         return self._session.execute(stmt).scalars().all()
 
     def search_by_vector(

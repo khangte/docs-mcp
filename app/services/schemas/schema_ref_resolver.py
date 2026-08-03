@@ -10,10 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.core.errors import DocumentNotFoundError, ValidationError
+from app.core.errors import ValidationError
 from app.models.openapi import ApiSchema
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
+from app.services.documents.project_scope import resolve_document_scope
 
 LOCAL_SCHEMA_REF_PREFIX = "#/components/schemas/"
 SWAGGER2_DEFINITION_REF_PREFIX = "#/definitions/"
@@ -64,7 +65,9 @@ class SchemaRefResolver:
         self._endpoint_repo = endpoint_repo
         self._document_repo = document_repo
 
-    def resolve(self, ref: str, document_id: str | None = None) -> ResolvedSchema:
+    def resolve(
+        self, ref: str, document_id: str | None = None, project: str | None = None
+    ) -> ResolvedSchema:
         """참조 문자열을 펼쳐 필드 목록을 만든다.
 
         Args:
@@ -74,6 +77,8 @@ class SchemaRefResolver:
                 등록된 모든 문서에서 같은 이름의 스키마를 찾는다. 여러 문서에
                 동명 스키마가 있으면 가장 최근 등록 문서가 선택되므로,
                 모호성을 없애려면 document_id 지정을 권장한다.
+            project: 특정 project 로 조회 범위를 제한할 때 지정. document_id
+                와 함께 오면 document_id 가 우선한다.
 
         Returns:
             스키마 이름·소속 document_id·필드 목록. 동일 입력에 대해 항상
@@ -81,11 +86,12 @@ class SchemaRefResolver:
 
         Raises:
             ValidationError: 지원하지 않는 참조 형식인 경우.
-            DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
+            DocumentNotFoundError: document_id 가 등록되지 않은 문서이거나
+                project 와 불일치하는 경우.
             SchemaRefNotFoundError: 해당 이름의 컴포넌트 스키마가 없는 경우.
         """
         schema_name = parse_local_schema_ref(ref)
-        schema = self._find_schema(schema_name, document_id)
+        schema = self._find_schema(schema_name, document_id, project)
         if schema is None:
             raise SchemaRefNotFoundError(ref)
         return ResolvedSchema(
@@ -94,22 +100,28 @@ class SchemaRefResolver:
             fields=extract_fields(schema.schema),
         )
 
-    def _find_schema(self, schema_name: str, document_id: str | None) -> ApiSchema | None:
+    def _find_schema(
+        self, schema_name: str, document_id: str | None, project: str | None = None
+    ) -> ApiSchema | None:
         """문서 범위에 따라 컴포넌트 스키마를 조회한다.
 
         document_id 가 주어지면 먼저 문서 존재를 검증해, "문서 자체가 없음"과
         "문서는 있으나 스키마가 없음"이 서로 다른 오류로 구분되게 한다.
-        생략하면 등록 문서를 색인 시각 내림차순(동률 시 id 오름차순)으로 훑어
-        가장 먼저 매칭되는 스키마를 쓴다.
+        project 만 주어지면 해당 project 문서만 순회한다 — 여러 프로젝트에
+        동명 스키마가 있을 때 다른 프로젝트 스키마가 선택되는 것을 막는다.
+        둘 다 없으면 등록 문서 전체를 색인 시각 내림차순(동률 시 id 오름차순)
+        으로 훑어 가장 먼저 매칭되는 스키마를 쓴다.
 
         Raises:
-            DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
+            DocumentNotFoundError: document_id 가 등록되지 않은 문서이거나
+                project 와 불일치하는 경우.
         """
-        if document_id is not None:
-            if self._document_repo.get(document_id) is None:
-                raise DocumentNotFoundError(document_id)
-            return self._endpoint_repo.get_schema_by_name(document_id, schema_name)
-        for document in self._document_repo.list_all():
+        resolved_document_id, resolved_project = resolve_document_scope(
+            self._document_repo, document_id, project
+        )
+        if resolved_document_id is not None:
+            return self._endpoint_repo.get_schema_by_name(resolved_document_id, schema_name)
+        for document in self._document_repo.list_all(project=resolved_project):
             found = self._endpoint_repo.get_schema_by_name(document.id, schema_name)
             if found is not None:
                 return found

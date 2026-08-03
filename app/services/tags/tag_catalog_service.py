@@ -9,9 +9,9 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
-from app.core.errors import DocumentNotFoundError
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
+from app.services.documents.project_scope import resolve_document_scope
 
 
 @dataclass(frozen=True)
@@ -34,24 +34,32 @@ class TagCatalogService:
         self._endpoint_repo = endpoint_repo
         self._document_repo = document_repo
 
-    def list_tags(self, document_id: str | None = None) -> list[TagSummary]:
+    def list_tags(
+        self, document_id: str | None = None, project: str | None = None
+    ) -> list[TagSummary]:
         """태그 목록을 집계해 반환한다.
 
         Args:
             document_id: 특정 문서로 범위를 제한할 때 지정. 생략하면 전체 문서.
+            project: 특정 project 로 범위를 제한할 때 지정. document_id 와
+                함께 오면 document_id 가 우선한다.
 
         Returns:
             엔드포인트 수 내림차순, 동수일 때는 이름 오름차순으로 정렬된 태그
             목록. 태그가 하나도 없으면 빈 리스트.
 
         Raises:
-            DocumentNotFoundError: document_id 가 등록되지 않은 문서인 경우.
+            DocumentNotFoundError: document_id 가 등록되지 않은 문서이거나
+                project 와 불일치하는 경우.
         """
-        if document_id is not None and self._document_repo.get(document_id) is None:
-            raise DocumentNotFoundError(document_id)
+        resolved_document_id, resolved_project = resolve_document_scope(
+            self._document_repo, document_id, project
+        )
 
         counter: Counter[str] = Counter()
-        for endpoint in self._endpoint_repo.list_all(document_id=document_id):
+        for endpoint in self._endpoint_repo.list_all(
+            document_id=resolved_document_id, project=resolved_project
+        ):
             for tag in endpoint.tags:
                 normalized = str(tag).strip()
                 if normalized:

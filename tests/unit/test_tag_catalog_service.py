@@ -30,7 +30,9 @@ UNTAGGED_DOC: dict = {
 def _register(app_state, raw: str) -> str:
     """문서를 등록하고 document_id 를 반환한다."""
     bundle = next(build_services(app_state))
-    return bundle.sync_service.register(source_url=None, raw_document=raw).document.id
+    return bundle.sync_service.register(
+        project="default", source_url=None, raw_document=raw
+    ).document.id
 
 
 def _bundle(app_state):
