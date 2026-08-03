@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.openapi import Base
+from app.models.openapi import PROJECT_MAX_LENGTH, Base
 
 #: `document_meta.source` 로 허용되는 값.
 SOURCE_DRIVE = "drive"
@@ -31,6 +31,7 @@ class DocumentMeta(Base):
 
     Attributes:
         id: 자동 증가 기본키.
+        project: 소속 프로젝트명.
         source: 문서 출처(`drive` 또는 `notion`).
         external_id: 출처 시스템의 문서 식별자(Drive file_id / Notion page_id).
         title: 문서 제목(1단계 후보 압축의 키워드 매칭 대상).
@@ -41,11 +42,15 @@ class DocumentMeta(Base):
 
     __tablename__ = "document_meta"
     __table_args__ = (
-        UniqueConstraint("source", "external_id", name="uq_document_meta_source_external"),
+        UniqueConstraint(
+            "project", "source", "external_id", name="uq_document_meta_project_source_external"
+        ),
         Index("ix_document_meta_source", "source"),
+        Index("ix_document_meta_project", "project"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project: Mapped[str] = mapped_column(String(PROJECT_MAX_LENGTH), nullable=False)
     source: Mapped[str] = mapped_column(String(16), nullable=False)
     external_id: Mapped[str] = mapped_column(String(256), nullable=False)
     title: Mapped[str] = mapped_column(String(1024), nullable=False, default="")

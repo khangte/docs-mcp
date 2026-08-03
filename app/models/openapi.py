@@ -30,6 +30,11 @@ from sqlalchemy.orm import (
 
 EMBEDDING_DIM = 256
 
+#: 프로젝트 미지정 시 사용하는 기본 프로젝트명.
+DEFAULT_PROJECT = "default"
+#: `project` 컬럼 최대 길이.
+PROJECT_MAX_LENGTH = 128
+
 # public 스키마는 pgvector 확장 전용으로 남겨두고, 애플리케이션 테이블은
 # 전용 스키마(app)에 둔다. public 에 동일 이름 테이블이 있으면 SQLAlchemy
 # create_all() 의 checkfirst 가 search_path 상의 다른 스키마 테이블을
@@ -70,8 +75,10 @@ class ApiDocument(Base):
     """OpenAPI 문서 메타·원문·하위 엔드포인트/스키마/청크/이력 묶음."""
 
     __tablename__ = "api_document"
+    __table_args__ = (Index("ix_api_document_project", "project"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project: Mapped[str] = mapped_column(String(PROJECT_MAX_LENGTH), nullable=False)
     source_url: Mapped[str | None] = mapped_column(String(1024), unique=True, nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
@@ -329,6 +336,8 @@ def create_all(engine: Any) -> None:
     from sqlalchemy import text
 
     import app.models.document_meta  # noqa: F401  (Base.metadata 등록 목적)
+    import app.models.project_drive_source  # noqa: F401  (Base.metadata 등록 목적)
+    import app.models.project_notion_source  # noqa: F401  (Base.metadata 등록 목적)
 
     with engine.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
