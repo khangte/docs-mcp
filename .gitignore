@@ -217,6 +217,9 @@ CLAUDE.md
 .claudeignore
 harness/
 
+# Gemini 
+.geminiignore
+
 # Serena MCP
 .serena
 
