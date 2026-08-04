@@ -14,6 +14,7 @@ FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI �
 ## 기술 스택
 
 <!-- AUTO-GENERATED: pyproject.toml, docker-compose.yml, app/core/config.py 기준 -->
+
 - **Backend**: Python 3.11+, FastAPI
 - **Database**: PostgreSQL(+`pgvector` 확장) — SQLAlchemy 2.0, Alembic 마이그레이션
 - **Search**:
@@ -82,30 +83,32 @@ uv run alembic upgrade head
 ### 3. 환경 설정
 
 <!-- AUTO-GENERATED: app/core/config.py 기준 -->
+
 `.env.example`을 참고해 `.env` 파일 또는 환경변수로 설정을 조절할 수 있습니다.
 
-| 변수 | 필수 | 설명 | 기본값 |
-|------|------|------|--------|
-| `DOCS_MCP_DATABASE_URL` | No | PostgreSQL(+pgvector) 연결 URL | `postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp` |
-| `DOCS_MCP_EMBEDDING_DIM` | No | 임베딩 벡터 차원 (pgvector 컬럼 생성 시 고정됨) | `256` |
-| `DOCS_MCP_HYBRID_ALPHA` | No | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만) | `0.4` |
-| `DOCS_MCP_LOG_LEVEL` | No | 로그 레벨 | `INFO` |
-| `DOCS_MCP_GEMINI_API_KEY` | No | Gemini API 키. 비워두면 임베딩이 결정적 해시 기반(`HashEmbeddingProvider`)으로 폴백 | (없음) |
-| `DOCS_MCP_GEMINI_EMBEDDING_MODEL` | No | Gemini 임베딩 모델 | `gemini-embedding-001` |
-| `DOCS_MCP_DRIVE_FOLDER_ID` | No | 검색 범위로 고정할 Google Drive 폴더 ID(하위 폴더 재귀 포함). 비우면 Drive 소스 비활성 | (없음) |
-| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE` | No | 서비스 계정 키 파일 경로 | (없음) |
-| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON` | No | 서비스 계정 키 JSON 문자열(파일 경로보다 우선) | (없음) |
-| `DOCS_MCP_NOTION_TOKEN` | No | Notion Integration Token. 비우면 Notion 소스 비활성 | (없음) |
-| `DOCS_MCP_NOTION_DATABASE_ID` | No | 검색 범위를 특정 Notion 데이터베이스 하위로 한정 | (없음) |
-| `DOCS_MCP_NOTION_VERSION` | No | Notion REST API 버전(`Notion-Version` 헤더) | `2022-06-28` |
-| `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | No | Drive/Notion HTTP 타임아웃(초) | `15.0` |
-| `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS` | No | 문서 본문 fetch 시 잘라낼 최대 문자 수 | `200000` |
+| 변수                                       | 필수 | 설명                                                                                   | 기본값                                                           |
+| ------------------------------------------ | ---- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `DOCS_MCP_DATABASE_URL`                    | No   | PostgreSQL(+pgvector) 연결 URL                                                         | `postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp` |
+| `DOCS_MCP_EMBEDDING_DIM`                   | No   | 임베딩 벡터 차원 (pgvector 컬럼 생성 시 고정됨)                                        | `256`                                                            |
+| `DOCS_MCP_HYBRID_ALPHA`                    | No   | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만)                               | `0.4`                                                            |
+| `DOCS_MCP_LOG_LEVEL`                       | No   | 로그 레벨                                                                              | `INFO`                                                           |
+| `DOCS_MCP_GEMINI_API_KEY`                  | No   | Gemini API 키. 비워두면 임베딩이 결정적 해시 기반(`HashEmbeddingProvider`)으로 폴백    | (없음)                                                           |
+| `DOCS_MCP_GEMINI_EMBEDDING_MODEL`          | No   | Gemini 임베딩 모델                                                                     | `gemini-embedding-001`                                           |
+| `DOCS_MCP_DRIVE_FOLDER_ID`                 | No   | 검색 범위로 고정할 Google Drive 폴더 ID(하위 폴더 재귀 포함). 비우면 Drive 소스 비활성 | (없음)                                                           |
+| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`      | No   | 서비스 계정 키 파일 경로                                                               | (없음)                                                           |
+| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON`      | No   | 서비스 계정 키 JSON 문자열(파일 경로보다 우선)                                         | (없음)                                                           |
+| `DOCS_MCP_NOTION_TOKEN`                    | No   | Notion Integration Token. 비우면 Notion 소스 비활성                                    | (없음)                                                           |
+| `DOCS_MCP_NOTION_DATABASE_ID`              | No   | 검색 범위를 특정 Notion 데이터베이스 하위로 한정                                       | (없음)                                                           |
+| `DOCS_MCP_NOTION_VERSION`                  | No   | Notion REST API 버전(`Notion-Version` 헤더)                                            | `2022-06-28`                                                     |
+| `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | No   | Drive/Notion HTTP 타임아웃(초)                                                         | `15.0`                                                           |
+| `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS`        | No   | 문서 본문 fetch 시 잘라낼 최대 문자 수                                                 | `200000`                                                         |
+
 <!-- /AUTO-GENERATED -->
 
-- Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 폴더를 그 서비스 
-계정 이메일에 **뷰어로 공유**합니다. 팀원 개별 OAuth 로그인은 필요 없습니다.
+- Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 폴더를 그 서비스
+  계정 이메일에 **뷰어로 공유**합니다. 팀원 개별 OAuth 로그인은 필요 없습니다.
 - Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
-해당 Integration 에 연결합니다.
+  해당 Integration 에 연결합니다.
 
 준비가 끝났으면 다음 절 [MCP 연동](#mcp-model-context-protocol-연동)에서 MCP 클라이언트에 서버를 등록하세요.
 
@@ -165,27 +168,69 @@ claude mcp list              # 등록된 MCP 서버 목록
 claude mcp remove docs-mcp   # 등록 해제
 ```
 
-### 3. 제공되는 도구 (Tools)
+### 3. uvx로 실행 (uv 프로젝트 설치 없이 실행)
+
+`pyproject.toml`의 `[project.scripts]`에 `docs-mcp = "app.mcp.server:main"`이
+등록되어 있어, `uv sync` 로 이 프로젝트에 의존성을 설치하지 않고도
+[uvx](https://docs.astral.sh/uv/guides/tools/)로 격리된 환경에서 바로 실행할
+수 있습니다.
+
+```bash
+uvx --from /path/to/docs-mcp docs-mcp
+```
+
+MCP 클라이언트 등록 시 `command`+`args`를 `uv run python -m app.mcp.server`
+대신 아래처럼 바꾸면 됩니다.
+
+```json
+{
+  "mcpServers": {
+    "docs-mcp": {
+      "command": "uvx",
+      "args": ["--from", "/path/to/docs-mcp", "docs-mcp"],
+      "env": {
+        "DOCS_MCP_DATABASE_URL": "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
+      }
+    }
+  }
+}
+```
+
+> **`uvx`는 애플리케이션 코드만 격리 설치할 뿐, DB를 대신 띄워주지 않습니다.**
+> `uvx` 실행 전에 PostgreSQL(+pgvector)이 별도로 떠 있어야 하고,
+> `DOCS_MCP_DATABASE_URL`로 그 위치를 알려줘야 합니다. 이 저장소의
+> `docker-compose.yml`(`pgvector/pgvector:pg16` 이미지)을 온프레미 서버(사내
+> 서버, NAS, 개인 VM 등 어디든)에 그대로 올려 `docker compose up -d postgres`로
+> 띄우면 되며, 클라우드 관리형 Postgres가 필수 조건은 아닙니다 — pgvector
+> 확장이 설치된 PostgreSQL 인스턴스 하나만 있으면 됩니다.
+>
+> Postgres 자체를 다른 DB(SQLite 등)로 교체하는 것은 별개 작업입니다.
+> `app/models/openapi.py`의 임베딩 컬럼이 `pgvector.sqlalchemy.Vector` 타입과
+> HNSW 코사인 인덱스(`vector_cosine_ops`)를 직접 사용하므로, DB 교체는
+> 모델·리포지토리 계층 재작성이 필요한 코드 변경 작업입니다.
+
+### 4. 제공되는 도구 (Tools)
 
 <!-- AUTO-GENERATED: app/mcp/server.py 도구 docstring 기준 -->
-| 도구 | 설명 | 반환 필드 |
-|------|------|-----------|
-| `list_documents` | 등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체) | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at |
-| `register_document` | 신규 문서를 등록한다. `project`(필수)와 URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별) | document_id, title, version, doc_type, project, endpoints_count, sections_count, chunks_count, status |
-| `search_endpoints` | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조). `project`/`document_id` 로 범위를 제한할 수 있다 | items[{endpoint_id, method, path, summary, match_type}] |
-| `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함) | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
-| `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다 | name, document_id, fields[{name, type, required, description}] |
-| `list_tags` | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다 | tags[{name, endpoint_count}] |
-| `search_documents` | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다 | items[{title, source, project, url, snippet, score}] |
-| `get_document` | `source`("drive"/"notion")와 `external_id`(Drive file ID 또는 Notion page ID)로 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님) | title, source, url, content |
-| `refresh_index` | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다 | synced, added, updated, removed, failed_sources |
-| `register_drive_source` | 프로젝트에 Google Drive 폴더를 매핑한다(upsert, 같은 project 재호출 시 폴더 교체) | project, folder_id, status |
-| `list_drive_sources` | 등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, folder_id, created_at, updated_at}] |
-| `remove_drive_source` | 프로젝트의 Drive 폴더 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
-| `register_notion_source` | 프로젝트에 Notion 데이터베이스를 매핑한다(upsert, 같은 project 재호출 시 DB 교체). 한 project 는 database 매핑과 page 매핑을 동시에 가질 수 없다(나중 호출이 이전 매핑을 덮어씀) | project, database_id, status |
-| `register_notion_page` | 프로젝트에 Notion 허브 페이지를 매핑한다(upsert). 지정한 페이지 바로 아래(1단계, 재귀 없음)의 하위 페이지들이 검색 대상이 된다 | project, page_id, status |
-| `list_notion_sources` | 등록된 프로젝트→Notion 데이터베이스/페이지 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, database_id, kind, created_at, updated_at}] |
-| `remove_notion_source` | 프로젝트의 Notion 데이터베이스/페이지 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
+
+| 도구                     | 설명                                                                                                                                                                             | 반환 필드                                                                                                               |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `list_documents`         | 등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체)                                                                       | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at                                 |
+| `register_document`      | 신규 문서를 등록한다. `project`(필수)와 URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별)                            | document_id, title, version, doc_type, project, endpoints_count, sections_count, chunks_count, status                   |
+| `search_endpoints`       | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조). `project`/`document_id` 로 범위를 제한할 수 있다                                      | items[{endpoint_id, method, path, summary, match_type}]                                                                 |
+| `get_endpoint_details`   | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함)                                                                                            | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
+| `resolve_ref`            | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다                       | name, document_id, fields[{name, type, required, description}]                                                          |
+| `list_tags`              | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다                                                                        | tags[{name, endpoint_count}]                                                                                            |
+| `search_documents`       | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다                                          | items[{title, source, project, url, snippet, score}]                                                                    |
+| `get_document`           | `source`("drive"/"notion")와 `external_id`(Drive file ID 또는 Notion page ID)로 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님)                               | title, source, url, content                                                                                             |
+| `refresh_index`          | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다                                                         | synced, added, updated, removed, failed_sources                                                                         |
+| `register_drive_source`  | 프로젝트에 Google Drive 폴더를 매핑한다(upsert, 같은 project 재호출 시 폴더 교체)                                                                                                | project, folder_id, status                                                                                              |
+| `list_drive_sources`     | 등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다                                                                            | items[{project, folder_id, created_at, updated_at}]                                                                     |
+| `remove_drive_source`    | 프로젝트의 Drive 폴더 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님)                                                                                                        | project, removed                                                                                                        |
+| `register_notion_source` | 프로젝트에 Notion 데이터베이스를 매핑한다(upsert, 같은 project 재호출 시 DB 교체). 한 project 는 database 매핑과 page 매핑을 동시에 가질 수 없다(나중 호출이 이전 매핑을 덮어씀) | project, database_id, status                                                                                            |
+| `register_notion_page`   | 프로젝트에 Notion 허브 페이지를 매핑한다(upsert). 지정한 페이지 바로 아래(1단계, 재귀 없음)의 하위 페이지들이 검색 대상이 된다                                                   | project, page_id, status                                                                                                |
+| `list_notion_sources`    | 등록된 프로젝트→Notion 데이터베이스/페이지 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다                                                            | items[{project, database_id, kind, created_at, updated_at}]                                                             |
+| `remove_notion_source`   | 프로젝트의 Notion 데이터베이스/페이지 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님)                                                                                        | project, removed                                                                                                        |
 
 협업 문서(Drive/Notion)는 사전 색인하지 않고 `search_documents` 호출 시점에
 본문을 실시간 조회한다(캐시엔 제목·URL·수정일만 저장). 새로 만든 문서가
@@ -200,9 +245,10 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
 (응답 스키마는 `app/mcp/types.py` 참고).
+
 <!-- /AUTO-GENERATED -->
 
-### 4. 문서별 등록 방법
+### 5. 문서별 등록 방법
 
 준비 단계(1~3)와 MCP 서버 등록은 이미 끝났다고 가정합니다 →
 [시작하기](#시작하기), [MCP 연동](#mcp-model-context-protocol-연동).
@@ -268,7 +314,7 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 > 시점에 원본을 실시간 조회합니다. 새로 만든 문서가 검색되지 않으면
 > `refresh_index` 를 먼저 실행하세요(자세한 내용은 위 도구 표 아래 설명 참고).
 
-### 5. 프로젝트 격리
+### 6. 프로젝트 격리
 
 이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
 서비스합니다. `register_document` 는 `project` 지정이 필수이고, 조회·검색
@@ -303,7 +349,7 @@ folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
 재등록하거나, DB 에 직접 SQL 로 `project` 컬럼을 갱신해야 합니다(제공되는
 도구 중에는 기존 문서의 project 를 바꾸는 기능이 없습니다).
 
-### 6. 제공되는 리소스 (Resources)
+### 7. 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
 

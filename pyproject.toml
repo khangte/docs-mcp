@@ -3,7 +3,7 @@
 [project]
 name = "docs-mcp"
 version = "0.1.0"
-description = "OpenAPI RAG 서버 (MVP)"
+description = "OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 하이브리드 검색(키워드+벡터)으로 제공하는 MCP 서버"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -32,6 +32,9 @@ test = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+docs-mcp = "app.mcp.server:main"
 
 [build-system]
 requires = ["setuptools>=68"]
