@@ -5,14 +5,11 @@ SQLite 에서도 동작하도록 LOWER + LIKE 대신 Python 레벨 토큰 매칭
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from app.models.openapi import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
-
-
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+from app.services.search.tokenize import tokenize
 
 
 @dataclass
@@ -21,11 +18,6 @@ class KeywordHit:
 
     chunk_id: str
     score: float
-
-
-def tokenize(text: str) -> list[str]:
-    """텍스트를 영숫자/언더스코어 단위로 잘라 소문자 토큰 리스트로 반환한다."""
-    return [t.lower() for t in _TOKEN_RE.findall(text or "")]
 
 
 class KeywordSearch:

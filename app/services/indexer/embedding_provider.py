@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-import re
 import time
 from typing import Protocol
 
@@ -20,10 +19,9 @@ from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 
 from app.core.errors import IntegrationError
+from app.services.search.tokenize import tokenize
 
 logger = logging.getLogger(__name__)
-
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
 class EmbeddingProvider(Protocol):
@@ -60,7 +58,7 @@ class HashEmbeddingProvider:
     def _embed_one(self, text: str) -> list[float]:
         """텍스트 한 건을 토큰 해시 버킷 누적 후 L2 정규화한 벡터로 만든다."""
         vector = [0.0] * self._dim
-        tokens = _tokenize(text)
+        tokens = tokenize(text)
         if not tokens:
             # 빈 입력도 결정적: zero 벡터 금지를 위해 한 bucket 에 1 을 박는다
             bucket = int(hashlib.sha256(b"__empty__").hexdigest(), 16) % self._dim
@@ -147,11 +145,6 @@ class GeminiEmbeddingProvider:
         raise last_exc
 
 
-def _tokenize(text: str) -> list[str]:
-    """입력 텍스트에서 영숫자/언더스코어 토큰을 소문자 리스트로 추출한다."""
-    return [t.lower() for t in _TOKEN_RE.findall(text or "")]
-
-
 def _l2_normalize(vector: list[float]) -> list[float]:
     """벡터를 L2 노름으로 나눠 단위 벡터로 만든다(0 벡터는 그대로 반환)."""
     norm_sq = sum(v * v for v in vector)
@@ -159,19 +152,3 @@ def _l2_normalize(vector: list[float]) -> list[float]:
         return vector
     norm = math.sqrt(norm_sq)
     return [v / norm for v in vector]
-
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """코사인 유사도. 벡터가 동일 차원이고 정규화돼 있으면 내적과 동치."""
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    dot = 0.0
-    na = 0.0
-    nb = 0.0
-    for x, y in zip(a, b, strict=True):
-        dot += x * y
-        na += x * x
-        nb += y * y
-    if na <= 0 or nb <= 0:
-        return 0.0
-    return dot / (math.sqrt(na) * math.sqrt(nb))
