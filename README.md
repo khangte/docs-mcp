@@ -1,6 +1,8 @@
-# docs-mcp: OpenAPI RAG Server
+# docs-mcp: OpenAPI RAG MCP Server
 
-OpenAPI(Swagger) 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터) 기술을 활용하여 API 명세에 대한 검색 서비스를 제공하는 서버입니다. 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
+OpenAPI(Swagger) 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터) 기술을 활용하여 API 명세에 대한 검색 서비스를 제공하는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하는 것이 주 용도이며, 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
+
+FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI 확인·디버깅용 부차 경로입니다. 실제 사용은 아래 [MCP 연동](#mcp-model-context-protocol-연동)으로 등록하는 방식이 메인입니다.
 
 ## 주요 기능
 
@@ -48,6 +50,12 @@ app/
 
 ## 시작하기
 
+아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 어느 실행 방식이든 공통 준비 단계입니다.
+준비가 끝나면 두 갈래로 나뉩니다:
+
+- **MCP 서버로 연동 (주 사용법)** → [MCP 연동](#mcp-model-context-protocol-연동)으로 이동. 별도로 웹서버를 띄울 필요 없이 MCP 클라이언트가 프로세스를 직접 실행합니다.
+- **FastAPI 웹서버 직접 실행 (선택 / 개발용)** → 아래 [4. 웹서버 실행](#4-웹서버-실행-선택--개발용). Swagger UI로 API를 확인하거나 디버깅할 때만 필요합니다.
+
 ### 1. 의존성 설치
 
 이 프로젝트는 [uv](https://docs.astral.sh/uv/)로 의존성을 관리합니다.
@@ -94,23 +102,28 @@ Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 �
 Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
 해당 Integration 에 연결합니다.
 
-### 4. 서버 실행
+여기까지가 공통 준비입니다. 주 사용법인 MCP 등록은 다음 절 [MCP 연동](#mcp-model-context-protocol-연동)을 참고하세요. 아래 4번은 선택 사항입니다.
+
+### 4. 웹서버 실행 (선택 / 개발용)
+
+> MCP로 쓸 때는 이 단계가 **필요 없습니다.** Swagger UI로 API를 훑어보거나 디버깅할 때만 실행하세요.
 
 ```bash
 uv run uvicorn app.main:create_app --factory --reload
 ```
 
-서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI를 통해 API를 테스트할 수 있습니다.
-
-## 주요 API 가이드
-
-- **문서 등록**: `POST /documents` (URL 또는 raw_document 전달)
-- **하이브리드 검색**: `GET /search?query=...&mode=hybrid`
-- **예시 생성**: `GET /endpoints/{endpoint_id}/example?format=curl`
+서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI로 전체 API 목록과 스키마를 확인하고 직접 테스트할 수 있습니다.
 
 ## MCP (Model Context Protocol) 연동
 
 이 프로젝트는 Claude Desktop 및 기타 MCP 호환 클라이언트에서 도구로 사용할 수 있는 MCP 서버 기능을 제공합니다.
+
+> **`uv run uvicorn ...` (FastAPI 웹서버)를 미리 띄워둘 필요는 없습니다.**
+> `app/mcp_server.py`는 별도 진입점이며, 아래처럼 등록해두면 MCP 클라이언트(Claude
+> Desktop/Code 등)가 필요할 때마다 `command`+`args`로 직접 프로세스를 실행해 stdio로
+> 통신합니다. 단, **PostgreSQL(+pgvector)은 미리 떠 있어야** 합니다 — MCP 서버가
+> 내부적으로 이 DB에 접속하므로, 등록 전에 `docker compose up -d postgres` 와
+> `uv run alembic upgrade head` 는 실행해 두세요.
 
 ### 1. Claude Desktop 설정 (macOS/Windows)
 
@@ -155,16 +168,9 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 | `list_notion_sources` | 등록된 프로젝트→Notion 데이터베이스 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, database_id, created_at, updated_at}] |
 | `remove_notion_source` | 프로젝트의 Notion 데이터베이스 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
 
-검색은 **후보 압축**과 **상세 조회**를 분리한다. `search_endpoints`로 후보를
-추린 뒤, 필요한 것만 `get_endpoint_details`로 상세를 보고, 스키마가 더
-필요하면 `resolve_ref`로 한 단계씩 펼친다. 최종 자연어 답변 생성은 서버가
-아니라 호출 LLM(Claude/ChatGPT)이 담당한다.
-
-협업 문서(Drive/Notion)는 성격이 달라 **별도 경로**로 병존한다. 정형 스펙인
-OpenAPI 는 사전 색인하지만, 수시로 바뀌는 협업 문서는 본문을 저장하지 않고
-`search_documents` 호출 시점에 실시간으로 가져온다. `document_meta` 에는
-제목·URL·수정일만 캐시하며, 새로 만든 문서가 검색되지 않으면 `refresh_index`
-를 먼저 실행한다.
+협업 문서(Drive/Notion)는 사전 색인하지 않고 `search_documents` 호출 시점에
+본문을 실시간 조회한다(캐시엔 제목·URL·수정일만 저장). 새로 만든 문서가
+검색되지 않으면 `refresh_index` 를 먼저 실행한다.
 
 Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호출 시 "미구성"
 `IntegrationError`(`no document source is configured: ...`)를 반환한다.
@@ -180,11 +186,10 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 ### 3. 프로젝트 격리
 
 이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
-서비스합니다. 문서를 등록할 때(`register_document`) 반드시 `project` 를
-지정해야 하고, 조회·검색 도구들(`list_documents`, `search_endpoints`,
-`list_tags`, `resolve_ref`, `search_documents`, `refresh_index`)은 선택적으로
-`project` 를 지정해 그 범위로 결과를 좁힐 수 있습니다. 생략하면 등록된 모든
-프로젝트를 대상으로 동작합니다(하위 호환).
+서비스합니다. `register_document` 는 `project` 지정이 필수이고, 조회·검색
+도구들(`list_documents`, `search_endpoints`, `list_tags`, `resolve_ref`,
+`search_documents`, `refresh_index`)은 `project` 로 범위를 좁힐 수
+있습니다(생략 시 전체 프로젝트 대상 — 하위 호환).
 
 > **`project` 는 단순 문자열 태그이며 보안 경계가 아닙니다.** 인증도, 접근
 > 제어도 하지 않습니다. 같은 서버·같은 DB 자격증명에 접근할 수 있는 누구나
@@ -195,19 +200,15 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 
 **프로젝트별 Drive 폴더/Notion DB 등록**: `register_drive_source(project,
 folder_id)` / `register_notion_source(project, database_id)` 로 프로젝트마다
-다른 Drive 폴더·Notion 데이터베이스를 매핑한 뒤, `refresh_index` 를 실행하면
-매핑된 소스들의 메타 캐시가 채워집니다. 매핑을 등록/변경해도 서버를
-재시작할 필요가 없습니다 — 다음 `search_documents`/`refresh_index` 호출부터
-바로 반영됩니다. `list_drive_sources`/`list_notion_sources` 로 현재 매핑을
-확인하고, `remove_drive_source`/`remove_notion_source` 로 제거할 수 있습니다
-(등록되지 않은 project 를 제거해도 오류가 아니라 `removed: false` 입니다).
+다른 소스를 매핑한 뒤 `refresh_index` 를 실행하면 메타 캐시가 채워집니다.
+매핑 등록/변경은 서버 재시작 없이 다음 호출부터 바로 반영됩니다.
+`list_*_sources` 로 확인하고 `remove_*_source` 로 제거합니다(미등록 project
+제거는 오류 아님 — `removed: false`).
 
-**자격증명은 전역 공유, 폴더/DB 는 프로젝트별**: Google Drive 서비스 계정
-자격증명(`DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`/`_JSON`)과 Notion Integration
-Token(`DOCS_MCP_NOTION_TOKEN`)은 서버 전체가 **하나씩만** 갖습니다. 프로젝트마다
-달라지는 것은 그 자격증명으로 접근할 **폴더/데이터베이스 범위**뿐입니다. 즉
-모든 프로젝트가 같은 서비스 계정·같은 Integration 을 공유하되, 각자 자신에게
-매핑된 폴더/DB 만 봅니다(대칭 구조: Drive ↔ Notion 동일 원칙).
+자격증명(`DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`/`_JSON`,
+`DOCS_MCP_NOTION_TOKEN`)은 서버 전체가 **하나씩만** 갖고, 프로젝트별로
+달라지는 것은 그 자격증명으로 접근할 **폴더/DB 범위**뿐입니다(Drive ↔ Notion
+동일 원칙).
 
 **기존 문서의 취급**: `project` 개념이 도입되기 전에 등록된 문서는 모두
 `project="default"` 로 백필되어 있습니다. 다른 프로젝트로 옮기려면 문서를
