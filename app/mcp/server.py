@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, TypeVar
 
 import anyio
 from fastmcp import FastMCP
@@ -22,20 +22,26 @@ from app.core.errors import (
     IntegrationError,
 )
 from app.core.logging import get_logger
+from app.mcp.payloads import (
+    _to_document_content_payload,
+    _to_document_search_payload,
+    _to_drive_source_item,
+    _to_endpoint_details_payload,
+    _to_notion_source_item,
+    _to_refresh_payload,
+    _to_resolved_schema_payload,
+    _to_tag_list_payload,
+)
 from app.mcp.types import (
     DocumentContentPayload,
-    DocumentSearchItemPayload,
     DocumentSearchResponse,
     DocumentSummary,
-    DriveSourceItem,
     DriveSourceListResult,
     EndpointCandidateItem,
     EndpointDetails,
     EndpointSearchResponse,
     ErrorPayload,
-    NotionSourceItem,
     NotionSourceListResult,
-    ParameterItem,
     RefreshIndexResult,
     RegisterDocumentResult,
     RegisterDriveSourceResult,
@@ -43,26 +49,12 @@ from app.mcp.types import (
     RegisterNotionSourceResult,
     RemoveDriveSourceResult,
     RemoveNotionSourceResult,
-    RequestBodyItem,
     ResolvedSchemaResult,
-    ResponseItem,
-    SchemaFieldItem,
-    TagItem,
     TagListResult,
 )
-from app.models.project_drive_source import ProjectDriveSource
-from app.models.project_notion_source import ProjectNotionSource
 from app.repositories.document_repository import DocumentRepository
-from app.services.documents.document_index_service import RefreshResult
-from app.services.documents.document_search_service import (
-    DocumentContent,
-    DocumentSearchItem,
-    DocumentSearchOptions,
-)
-from app.services.endpoints.endpoint_details_service import EndpointDetailsResult
-from app.services.schemas.schema_ref_resolver import ResolvedSchema
+from app.services.documents.document_search_service import DocumentSearchOptions
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
-from app.services.tags.tag_catalog_service import TagSummary
 
 _LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
 
@@ -91,142 +83,6 @@ def to_error_payload(error: DomainError | IntegrationError) -> ErrorPayload:
     code = error.code if isinstance(error, DomainError) else "integration_error"
     _LOG.error("mcp tool error: %s", code, exc_info=error)
     return {"error": True, "code": code, "message": str(error)}
-
-
-def _to_endpoint_details_payload(result: EndpointDetailsResult) -> EndpointDetails:
-    """엔드포인트 상세 결과를 MCP 응답 dict 로 변환한다.
-
-    example_code 는 생성된 경우에만 키를 추가한다(include_example=False 이면
-    키 자체가 존재하지 않아야 한다).
-    """
-    parameters: list[ParameterItem] = [
-        {
-            "name": p.name,
-            "location": p.location,
-            "required": p.required,
-            "description": p.description,
-            "schema": p.schema,
-            "schema_ref": p.schema_ref,
-        }
-        for p in result.parameters
-    ]
-    request_body: RequestBodyItem | None = None
-    if result.request_body is not None:
-        request_body = {
-            "content_type": result.request_body.content_type,
-            "required": result.request_body.required,
-            "schema": result.request_body.schema,
-            "schema_ref": result.request_body.schema_ref,
-        }
-    responses: list[ResponseItem] = [
-        {
-            "status_code": r.status_code,
-            "content_type": r.content_type,
-            "description": r.description,
-            "schema": r.schema,
-            "schema_ref": r.schema_ref,
-        }
-        for r in result.responses
-    ]
-    payload: EndpointDetails = {
-        "endpoint_id": result.endpoint_id,
-        "document_id": result.document_id,
-        "method": result.method,
-        "path": result.path,
-        "summary": result.summary,
-        "description": result.description,
-        "tags": result.tags,
-        "parameters": parameters,
-        "request_body": request_body,
-        "responses": responses,
-    }
-    if result.example_code is not None:
-        payload["example_code"] = result.example_code
-    return payload
-
-
-def _to_resolved_schema_payload(resolved: ResolvedSchema) -> ResolvedSchemaResult:
-    """펼쳐진 스키마를 MCP 응답 dict 로 변환한다."""
-    fields: list[SchemaFieldItem] = [
-        {
-            "name": f.name,
-            "type": f.type,
-            "required": f.required,
-            "description": f.description,
-        }
-        for f in resolved.fields
-    ]
-    return {
-        "name": resolved.name,
-        "document_id": resolved.document_id,
-        "fields": fields,
-    }
-
-
-def _to_tag_list_payload(summaries: list[TagSummary]) -> TagListResult:
-    """태그 집계 결과를 MCP 응답 dict 로 변환한다."""
-    tags: list[TagItem] = [
-        {"name": s.name, "endpoint_count": s.endpoint_count} for s in summaries
-    ]
-    return {"tags": tags}
-
-
-def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSearchResponse:
-    """협업 문서 검색 결과를 MCP 응답 dict 로 변환한다."""
-    payload_items: list[DocumentSearchItemPayload] = [
-        {
-            "title": item.title,
-            "source": cast(Literal["drive", "notion"], item.source),
-            "project": item.project,
-            "url": item.url,
-            "snippet": item.snippet,
-            "score": item.score,
-        }
-        for item in items
-    ]
-    return {"items": payload_items}
-
-
-def _to_document_content_payload(content: DocumentContent) -> DocumentContentPayload:
-    """협업 문서 원문 조회 결과를 MCP 응답 dict 로 변환한다."""
-    return {
-        "title": content.title,
-        "source": cast(Literal["drive", "notion"], content.source),
-        "url": content.url,
-        "content": content.content,
-    }
-
-
-def _to_refresh_payload(result: RefreshResult) -> RefreshIndexResult:
-    """메타 캐시 갱신 집계를 MCP 응답 dict 로 변환한다."""
-    return {
-        "synced": result.synced,
-        "added": result.added,
-        "updated": result.updated,
-        "removed": result.removed,
-        "failed_sources": list(result.failed_sources),
-    }
-
-
-def _to_drive_source_item(row: ProjectDriveSource) -> DriveSourceItem:
-    """`ProjectDriveSource` 행을 MCP 응답 dict 로 변환한다."""
-    return {
-        "project": row.project,
-        "folder_id": row.folder_id,
-        "created_at": row.created_at.isoformat(),
-        "updated_at": row.updated_at.isoformat(),
-    }
-
-
-def _to_notion_source_item(row: ProjectNotionSource) -> NotionSourceItem:
-    """`ProjectNotionSource` 행을 MCP 응답 dict 로 변환한다."""
-    return {
-        "project": row.project,
-        "database_id": row.database_id,
-        "kind": cast(Literal["database", "page"], row.kind),
-        "created_at": row.created_at.isoformat(),
-        "updated_at": row.updated_at.isoformat(),
-    }
 
 
 def create_mcp_server(app_state: AppState) -> FastMCP:
