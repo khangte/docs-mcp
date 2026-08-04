@@ -30,7 +30,7 @@ from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import DocumentMeta
 from app.repositories.document_meta_repository import DocumentMetaRepository
-from app.services.documents.document_source import (
+from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
     FileMeta,

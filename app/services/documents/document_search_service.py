@@ -26,12 +26,12 @@ from app.core.logging import get_logger
 from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
 from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
-from app.services.documents.document_source import (
+from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
 )
 from app.services.documents.project_source_resolver import ProjectSourceResolver
-from app.services.documents.search_scorer import _body_score, _title_score, tokenize
+from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
 from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 
 _LOG = get_logger("docs_mcp.documents.search")
@@ -47,7 +47,7 @@ __all__ = [
     "DocumentSearchItem",
     "DocumentContent",
     "DocumentSearchService",
-    "tokenize",
+    "documents_tokenize",
 ]
 
 
@@ -119,7 +119,7 @@ class DocumentSearchService:
         normalized_query = self._validate(query, options)
         normalized_source = self._validate_source(options.source, allow_none=True)
         self._require_configured(normalized_source, options.project)
-        query_tokens = set(tokenize(normalized_query))
+        query_tokens = set(documents_tokenize(normalized_query))
         if not query_tokens:
             raise ValidationError("query must contain at least one searchable token")
 

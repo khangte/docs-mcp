@@ -25,14 +25,14 @@ from app.repositories.project_source_repository import (
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.documents.document_index_service import DocumentIndexService
 from app.services.documents.document_search_service import DocumentSearchService
-from app.services.documents.document_source import DocumentSource
-from app.services.documents.google_drive_source import ServiceAccountTokenProvider
+from app.services.documents.sources.document_source import DocumentSource
+from app.services.documents.sources.google_drive_source import ServiceAccountTokenProvider
 from app.services.documents.project_source_resolver import ProjectSourceResolver
 from app.services.documents.project_source_service import (
     DriveSourceService,
     NotionSourceService,
 )
-from app.services.documents.source_factory import build_drive_token_provider
+from app.services.documents.sources.source_factory import build_drive_token_provider
 from app.services.endpoints.endpoint_details_service import EndpointDetailsService
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import (

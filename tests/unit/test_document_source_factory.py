@@ -12,7 +12,7 @@ import pytest
 
 from app.core.config import Settings
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.services.documents.source_factory import (
+from app.services.documents.sources.source_factory import (
     build_drive_source,
     build_drive_token_provider,
     build_notion_source,

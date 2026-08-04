@@ -20,9 +20,9 @@ from app.repositories.project_source_repository import (
     ProjectDriveSourceRepository,
     ProjectNotionSourceRepository,
 )
-from app.services.documents.document_source import DocumentSource
-from app.services.documents.google_drive_source import ServiceAccountTokenProvider
-from app.services.documents.source_factory import build_drive_source, build_notion_source
+from app.services.documents.sources.document_source import DocumentSource
+from app.services.documents.sources.google_drive_source import ServiceAccountTokenProvider
+from app.services.documents.sources.source_factory import build_drive_source, build_notion_source
 
 
 class ProjectSourceResolver:

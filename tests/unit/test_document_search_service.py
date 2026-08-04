@@ -22,7 +22,7 @@ from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_search_service import (
     DocumentSearchOptions,
     DocumentSearchService,
-    tokenize,
+    documents_tokenize,
 )
 from tests.fixtures.document_sources import ExplodingDocumentSource
 
@@ -74,14 +74,14 @@ def search_service(db_session, default_resolver):
 # --- 토크나이저 ---------------------------------------------------------------
 
 
-def test_tokenize_handles_korean_and_ascii() -> None:
+def test_documents_tokenize_handles_korean_and_ascii() -> None:
     """한글 덩어리와 영숫자 토큰을 모두 소문자로 잘라낸다."""
-    assert tokenize("로그인 Auth_v2 설계") == ["로그인", "auth_v2", "설계"]
+    assert documents_tokenize("로그인 Auth_v2 설계") == ["로그인", "auth_v2", "설계"]
 
 
-def test_tokenize_returns_empty_for_symbols_only() -> None:
+def test_documents_tokenize_returns_empty_for_symbols_only() -> None:
     """기호만 있는 문자열은 빈 토큰 리스트가 된다."""
-    assert tokenize("!!! ???") == []
+    assert documents_tokenize("!!! ???") == []
 
 
 # --- 기능 7: 1단계 후보 압축 ---------------------------------------------------

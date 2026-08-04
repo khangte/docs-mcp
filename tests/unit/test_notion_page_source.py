@@ -15,7 +15,7 @@ import pytest
 from app.core.errors import ValidationError
 from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.project_source_repository import ProjectNotionSourceRepository
-from app.services.documents.notion_source import NotionSource
+from app.services.documents.sources.notion_source import NotionSource
 from app.services.documents.project_source_service import NotionSourceService
 
 _API_BASE = "https://api.test"
@@ -136,7 +136,7 @@ def test_list_pages_with_page_id_truncates_branch_beyond_max_depth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """MAX_PAGE_DEPTH 를 넘는 가지는 잘리고, 상한 내 페이지는 유지된다."""
-    from app.services.documents import notion_source as notion_source_module
+    from app.services.documents.sources import notion_source as notion_source_module
 
     monkeypatch.setattr(notion_source_module, "MAX_PAGE_DEPTH", 1)
 
@@ -186,7 +186,7 @@ def test_list_pages_with_page_id_stops_at_max_pages_with_warning(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """MAX_PAGES 도달 시 예외 없이 부분 결과를 반환하고 warning 을 남긴다."""
-    from app.services.documents import notion_source as notion_source_module
+    from app.services.documents.sources import notion_source as notion_source_module
 
     monkeypatch.setattr(notion_source_module, "MAX_PAGES", 2)
 
@@ -442,7 +442,7 @@ def test_build_notion_source_kind_page_sets_page_id() -> None:
     from dataclasses import replace
 
     from app.core.config import Settings
-    from app.services.documents.source_factory import build_notion_source
+    from app.services.documents.sources.source_factory import build_notion_source
 
     settings = replace(Settings(), notion_token="t1")
 
@@ -458,7 +458,7 @@ def test_build_notion_source_kind_database_sets_database_id() -> None:
     from dataclasses import replace
 
     from app.core.config import Settings
-    from app.services.documents.source_factory import build_notion_source
+    from app.services.documents.sources.source_factory import build_notion_source
 
     settings = replace(Settings(), notion_token="t1")
 
@@ -474,7 +474,7 @@ def test_build_notion_source_without_token_returns_none_regardless_of_kind() -> 
     from dataclasses import replace
 
     from app.core.config import Settings
-    from app.services.documents.source_factory import build_notion_source
+    from app.services.documents.sources.source_factory import build_notion_source
 
     settings = replace(Settings(), notion_token=None)
 

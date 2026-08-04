@@ -10,7 +10,7 @@ from app.repositories.document_meta_repository import collapse
 _TOKEN_RE = re.compile(r"[0-9A-Za-z_]+|[가-힣]+")
 
 
-def tokenize(text: str) -> list[str]:
+def documents_tokenize(text: str) -> list[str]:
     """텍스트를 영숫자/언더스코어 또는 한글 덩어리 단위 소문자 토큰으로 자른다.
 
     협업 문서 제목에는 한글이 흔하므로 OpenAPI 쪽 토크나이저와 달리 한글
@@ -21,7 +21,7 @@ def tokenize(text: str) -> list[str]:
 
 def _title_score(row: DocumentMeta, query_tokens: set[str], query: str) -> float:
     """제목(+URL)과 질의 토큰의 겹침 비율로 1단계 점수를 계산한다."""
-    haystack = set(tokenize(row.title)) | set(tokenize(row.url))
+    haystack = set(documents_tokenize(row.title)) | set(documents_tokenize(row.url))
     overlap = query_tokens & haystack
     token_score = len(overlap) / len(query_tokens) if overlap else 0.0
     collapsed_score = _collapse_match_score(
@@ -34,7 +34,7 @@ def _body_score(body: str, query_tokens: set[str], query: str) -> float:
     """본문과 질의 토큰의 겹침 비율로 2단계 점수를 계산한다."""
     if not body:
         return 0.0
-    overlap = query_tokens & set(tokenize(body))
+    overlap = query_tokens & set(documents_tokenize(body))
     token_score = len(overlap) / len(query_tokens) if overlap else 0.0
     collapsed_score = _collapse_match_score(query, collapse(body), len(query_tokens))
     return max(token_score, collapsed_score)

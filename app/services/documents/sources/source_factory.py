@@ -11,11 +11,11 @@ Drive/Notion 은 이제 project → folder_id/database_id 매핑으로부터 **�
 from __future__ import annotations
 
 from app.core.config import Settings
-from app.services.documents.google_drive_source import (
+from app.services.documents.sources.google_drive_source import (
     GoogleDriveSource,
     ServiceAccountTokenProvider,
 )
-from app.services.documents.notion_source import NotionSource
+from app.services.documents.sources.notion_source import NotionSource
 
 
 def build_drive_token_provider(settings: Settings) -> ServiceAccountTokenProvider | None:

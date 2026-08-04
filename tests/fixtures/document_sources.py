@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.core.errors import IntegrationError
-from app.services.documents.document_source import FileMeta
+from app.services.documents.sources.document_source import FileMeta
 
 
 class _FailingFileList(list):

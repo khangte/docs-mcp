@@ -17,8 +17,8 @@ import httpx
 from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_NOTION
-from app.services.documents.document_source import FileMeta
-from app.services.documents.time_parsing import parse_rfc3339
+from app.services.documents.sources.document_source import FileMeta
+from app.services.documents.sources.time_parsing import parse_rfc3339
 
 _LOG = get_logger("docs_mcp.documents.notion")
 

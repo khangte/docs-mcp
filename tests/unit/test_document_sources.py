@@ -15,15 +15,15 @@ import pytest
 
 from app.core.errors import IntegrationError
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.services.documents.document_source import DocumentSource, FileMeta
-from app.services.documents.google_drive_source import (
+from app.services.documents.sources.document_source import DocumentSource, FileMeta
+from app.services.documents.sources.google_drive_source import (
     FOLDER_MIME_TYPE,
     GOOGLE_DOC_MIME_TYPE,
     GoogleDriveSource,
     ServiceAccountTokenProvider,
 )
-from app.services.documents.notion_source import NotionSource
-from app.services.documents.time_parsing import parse_rfc3339
+from app.services.documents.sources.notion_source import NotionSource
+from app.services.documents.sources.time_parsing import parse_rfc3339
 
 _API_BASE = "https://api.test"
 

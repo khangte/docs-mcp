@@ -579,7 +579,7 @@ def test_project_with_no_mapping_raises_integration_error_distinct_from_global(
     two_project_index_service,
 ) -> None:
     """Drive/Notion 매핑이 둘 다 없는 project 는 NO_SOURCE_CONFIGURED_MESSAGE 와 구별되는 오류다."""
-    from app.services.documents.document_source import NO_SOURCE_CONFIGURED_MESSAGE
+    from app.services.documents.sources.document_source import NO_SOURCE_CONFIGURED_MESSAGE
 
     with pytest.raises(IntegrationError) as exc_info:
         two_project_index_service.refresh(project="no-such-project")
