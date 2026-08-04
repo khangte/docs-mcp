@@ -18,7 +18,7 @@ from app.repositories.project_source_repository import (
     ProjectNotionSourceRepository,
     ProjectSourceRepositoryBase,
 )
-from app.services.documents.project_scope import normalize_project
+from app.services.project_scope import normalize_project
 
 #: value(folder_id/database_id) 최대 길이. 모델 컬럼(String(256))과 일치시킨다.
 VALUE_MAX_LENGTH = 256

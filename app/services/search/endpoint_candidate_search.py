@@ -22,7 +22,7 @@ from app.models.openapi import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
-from app.services.documents.project_scope import resolve_document_scope
+from app.services.project_scope import resolve_document_scope
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
 

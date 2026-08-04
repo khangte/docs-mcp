@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
-from app.services.documents.project_scope import resolve_document_scope
+from app.services.project_scope import resolve_document_scope
 
 
 @dataclass(frozen=True)

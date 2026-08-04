@@ -14,7 +14,7 @@ from app.core.errors import ValidationError
 from app.models.openapi import ApiSchema
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
-from app.services.documents.project_scope import resolve_document_scope
+from app.services.project_scope import resolve_document_scope
 
 LOCAL_SCHEMA_REF_PREFIX = "#/components/schemas/"
 SWAGGER2_DEFINITION_REF_PREFIX = "#/definitions/"

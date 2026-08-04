@@ -10,7 +10,7 @@ import pytest
 
 from app.core.errors import DocumentNotFoundError, ValidationError
 from app.models.openapi import PROJECT_MAX_LENGTH
-from app.services.documents.project_scope import normalize_project, resolve_document_scope
+from app.services.project_scope import normalize_project, resolve_document_scope
 
 # --- normalize_project ---------------------------------------------------------
 
