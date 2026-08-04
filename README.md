@@ -199,7 +199,7 @@ MCP 클라이언트 등록 시 `command`+`args`를 `uv run python -m app.mcp.ser
 > **`uvx`는 애플리케이션 코드만 격리 설치할 뿐, DB를 대신 띄워주지 않습니다.**
 > `uvx` 실행 전에 PostgreSQL(+pgvector)이 별도로 떠 있어야 하고,
 > `DOCS_MCP_DATABASE_URL`로 그 위치를 알려줘야 합니다. 이 저장소의
-> `docker-compose.yml`(`pgvector/pgvector:pg16` 이미지)을 온프레미 서버(사내
+> `docker-compose.yml`(`pgvector/pgvector:pg16` 이미지)을 온프레미스 서버(사내
 > 서버, NAS, 개인 VM 등 어디든)에 그대로 올려 `docker compose up -d postgres`로
 > 띄우면 되며, 클라우드 관리형 Postgres가 필수 조건은 아닙니다 — pgvector
 > 확장이 설치된 PostgreSQL 인스턴스 하나만 있으면 됩니다.
