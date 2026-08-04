@@ -1,6 +1,6 @@
 # docs-mcp: OpenAPI RAG MCP Server
 
-OpenAPI(Swagger) 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터) 기술을 활용하여 API 명세에 대한 검색 서비스를 제공하는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하는 것이 주 용도이며, 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
+OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터)으로 원하는 API 엔드포인트나 문서 내용을 찾아주는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하는 것이 주 용도이며, 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
 
 FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI 확인·디버깅용 부차 경로입니다. 실제 사용은 아래 [MCP 연동](#mcp-model-context-protocol-연동)으로 등록하는 방식이 메인입니다.
 
@@ -98,9 +98,9 @@ uv run alembic upgrade head
 | `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS` | No | 문서 본문 fetch 시 잘라낼 최대 문자 수 | `200000` |
 <!-- /AUTO-GENERATED -->
 
-Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 폴더를 그 서비스
+- Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 폴더를 그 서비스 
 계정 이메일에 **뷰어로 공유**합니다. 팀원 개별 OAuth 로그인은 필요 없습니다.
-Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
+- Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
 해당 Integration 에 연결합니다.
 
 준비가 끝났으면 다음 절 [MCP 연동](#mcp-model-context-protocol-연동)에서 MCP 클라이언트에 서버를 등록하세요.
@@ -120,8 +120,8 @@ Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/�
 
 Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같이 서버를 추가합니다.
 
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
