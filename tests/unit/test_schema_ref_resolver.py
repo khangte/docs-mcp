@@ -11,7 +11,7 @@ import pytest
 
 from app.composition import build_services
 from app.core.errors import DocumentNotFoundError, ValidationError
-from app.services.schemas.schema_ref_resolver import (
+from app.services.schema_resolution.schema_ref_resolver import (
     SchemaRefNotFoundError,
     describe_type,
     extract_fields,

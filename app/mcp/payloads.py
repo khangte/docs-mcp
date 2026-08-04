@@ -28,7 +28,7 @@ from app.services.documents.document_search_service import (
     DocumentSearchItem,
 )
 from app.services.endpoints.endpoint_details_service import EndpointDetailsResult
-from app.services.schemas.schema_ref_resolver import ResolvedSchema
+from app.services.schema_resolution.schema_ref_resolver import ResolvedSchema
 from app.services.tags.tag_catalog_service import TagSummary
 
 

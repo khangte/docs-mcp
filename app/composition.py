@@ -43,7 +43,7 @@ from app.services.indexer.embedding_provider import (
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
-from app.services.schemas.schema_ref_resolver import SchemaRefResolver
+from app.services.schema_resolution.schema_ref_resolver import SchemaRefResolver
 from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.search_service import SearchService
