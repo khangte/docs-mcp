@@ -19,33 +19,36 @@ project 마다 다른 폴더/DB 를 가리키므로, 후보 행의 `project` 로
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, replace
 
 from app.core.errors import IntegrationError, ValidationError
 from app.core.logging import get_logger
 from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
 from app.models.openapi import DEFAULT_PROJECT
-from app.repositories.document_meta_repository import DocumentMetaRepository, collapse
+from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
 )
 from app.services.documents.project_source_resolver import ProjectSourceResolver
+from app.services.documents.search_scorer import _body_score, _title_score, tokenize
+from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 
 _LOG = get_logger("docs_mcp.documents.search")
 
-_TOKEN_RE = re.compile(r"[0-9A-Za-z_]+|[가-힣]+")
-
 MIN_TOP_K = 1
 MAX_TOP_K = 50
-#: 스니펫으로 잘라낼 최대 문자 수.
-SNIPPET_MAX_CHARS = 300
-#: 매칭 구간 앞쪽에 함께 보여줄 문맥 문자 수.
-SNIPPET_LEAD_CHARS = 60
 #: 최종 점수에서 제목 매칭이 차지하는 비중(나머지는 본문 매칭).
 TITLE_SCORE_WEIGHT = 0.4
 BODY_SCORE_WEIGHT = 1.0 - TITLE_SCORE_WEIGHT
+
+__all__ = [
+    "DocumentSearchOptions",
+    "DocumentSearchItem",
+    "DocumentContent",
+    "DocumentSearchService",
+    "tokenize",
+]
 
 
 @dataclass(frozen=True)
@@ -77,15 +80,6 @@ class DocumentContent:
     source: str
     url: str
     content: str
-
-
-def tokenize(text: str) -> list[str]:
-    """텍스트를 영숫자/언더스코어 또는 한글 덩어리 단위 소문자 토큰으로 자른다.
-
-    협업 문서 제목에는 한글이 흔하므로 OpenAPI 쪽 토크나이저와 달리 한글
-    음절 범위를 함께 인식한다.
-    """
-    return [t.lower() for t in _TOKEN_RE.findall(text or "")]
 
 
 class DocumentSearchService:
@@ -323,63 +317,3 @@ class DocumentSearchService:
         if document_source is None:
             raise IntegrationError(f"document source is not configured: {source}")
         return document_source
-
-
-def _title_score(row: DocumentMeta, query_tokens: set[str], query: str) -> float:
-    """제목(+URL)과 질의 토큰의 겹침 비율로 1단계 점수를 계산한다."""
-    haystack = set(tokenize(row.title)) | set(tokenize(row.url))
-    overlap = query_tokens & haystack
-    token_score = len(overlap) / len(query_tokens) if overlap else 0.0
-    collapsed_score = _collapse_match_score(
-        query, collapse(row.title) + collapse(row.url), len(query_tokens)
-    )
-    return max(token_score, collapsed_score)
-
-
-def _body_score(body: str, query_tokens: set[str], query: str) -> float:
-    """본문과 질의 토큰의 겹침 비율로 2단계 점수를 계산한다."""
-    if not body:
-        return 0.0
-    overlap = query_tokens & set(tokenize(body))
-    token_score = len(overlap) / len(query_tokens) if overlap else 0.0
-    collapsed_score = _collapse_match_score(query, collapse(body), len(query_tokens))
-    return max(token_score, collapsed_score)
-
-
-def _collapse_match_score(query: str, collapsed_haystack: str, token_count: int) -> float:
-    """공백 변형(예: '트러블슈팅' vs '트러블 슈팅')을 흡수하는 보수적 점수.
-
-    질의를 공백 제거한 문자열이 (역시 공백 제거한) haystack 에 부분
-    문자열로 포함되면, 토큰 1개가 겹친 것과 동등한 점수만 준다. 이미
-    토큰 단위로 여러 개가 겹친 경우보다 우선하지 않도록 상한을 낮게 잡아,
-    `max()` 로 기존 겹침 비율과 합성했을 때 순위 의미가 뒤집히지 않게
-    한다.
-    """
-    collapsed_query = collapse(query)
-    if not collapsed_query or not collapsed_haystack:
-        return 0.0
-    if collapsed_query not in collapsed_haystack:
-        return 0.0
-    return 1 / token_count
-
-
-def _build_snippet(body: str, query_tokens: set[str]) -> str:
-    """본문에서 질의 토큰이 처음 등장하는 구간을 잘라 스니펫을 만든다."""
-    if not body:
-        return ""
-    lowered = body.lower()
-    positions = [pos for pos in (lowered.find(t) for t in query_tokens) if pos >= 0]
-    if not positions:
-        return _clean_snippet(body[:SNIPPET_MAX_CHARS])
-    start = max(0, min(positions) - SNIPPET_LEAD_CHARS)
-    return _clean_snippet(body[start : start + SNIPPET_MAX_CHARS])
-
-
-def _clean_snippet(text: str) -> str:
-    """스니펫의 연속 공백/줄바꿈을 한 칸으로 정리한다."""
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _fallback_snippet(row: DocumentMeta, query: str) -> str:
-    """본문이 비어 스니펫을 만들 수 없을 때 쓰는 안내 문구."""
-    return f"본문에서 '{query}' 관련 구간을 찾지 못했습니다. 제목만 일치: {row.title}"
