@@ -8,7 +8,7 @@ FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI �
 
 - **다양한 문서 소스 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x/Swagger 2.0, Markdown, CSV 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
 - **하이브리드 검색**: 키워드(토큰 매칭)와 벡터 유사도 검색을 결합하여 원하는 API 엔드포인트 또는 문서 섹션을 정확하게 찾아냅니다.
-- **코드 예시 생성**: 엔드포인트 상세 정보로부터 `curl`, `fetch`, `axios`, `python(requests)` 등 다양한 포맷의 호출 예시 코드를 즉시 생성합니다.
+- **코드 예시 생성**: `get_endpoint_details`에서 `include_example=true`로 조회하면 엔드포인트 상세 정보로부터 `curl` 호출 예시 코드를 즉시 생성합니다.
 - **자동 재색인**: 문서의 내용 변경을 감지(해시 비교)하여 변경된 경우에만 지능적으로 인덱스를 업데이트합니다.
 
 ## 기술 스택
@@ -22,7 +22,7 @@ FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI �
   - 하이브리드 검색 엔진 (Keyword + Vector)
 - **문서 파서**: OpenAPI/Swagger, Markdown, CSV (`app/services/parser/document_router.py`가 자동 판별)
 - **MCP**: `fastmcp` 서드파티 패키지
-- **Documentation**: Pydantic v2 (Schema/DTO)
+- **Schema/DTO**: Pydantic v2
 <!-- /AUTO-GENERATED -->
 
 ## 프로젝트 구조
@@ -40,12 +40,14 @@ app/
 ├── schemas/         # Pydantic DTO (요청/응답 모델)
 └── services/        # 비즈니스 로직
     ├── documents/   # Drive/Notion 협업 문서 소스 어댑터·메타 캐시·검색
+    ├── endpoints/   # 엔드포인트 상세 조회 서비스
     ├── examples/    # 호출 예시 코드 생성 서비스
     ├── indexer/     # 청크 생성 및 벡터 색인 서비스
     ├── ingestor/    # 문서 수집 및 동기화 서비스
     ├── parser/      # OpenAPI/Swagger 파서 및 정규화
-    ├── rag/         # RAG 파이프라인 및 LLM 프로바이더
-    └── search/      # 하이브리드 검색 서비스
+    ├── schemas/     # $ref 스키마 해석 서비스
+    ├── search/      # 하이브리드 검색 서비스
+    └── tags/        # 태그 집계 서비스
 ```
 
 ## 시작하기
@@ -84,8 +86,7 @@ uv run alembic upgrade head
 | `DOCS_MCP_EMBEDDING_DIM` | No | 임베딩 벡터 차원 (pgvector 컬럼 생성 시 고정됨) | `256` |
 | `DOCS_MCP_HYBRID_ALPHA` | No | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만) | `0.4` |
 | `DOCS_MCP_LOG_LEVEL` | No | 로그 레벨 | `INFO` |
-| `DOCS_MCP_GEMINI_API_KEY` | No | Gemini API 키. 비워두면 LLM/임베딩이 각각 템플릿·해시 기반으로 폴백 | (없음) |
-| `DOCS_MCP_GEMINI_MODEL` | No | Gemini 답변 생성 모델 | `gemini-2.0-flash` |
+| `DOCS_MCP_GEMINI_API_KEY` | No | Gemini API 키. 비워두면 임베딩이 결정적 해시 기반(`HashEmbeddingProvider`)으로 폴백 | (없음) |
 | `DOCS_MCP_GEMINI_EMBEDDING_MODEL` | No | Gemini 임베딩 모델 | `gemini-embedding-001` |
 | `DOCS_MCP_DRIVE_FOLDER_ID` | No | 검색 범위로 고정할 Google Drive 폴더 ID(하위 폴더 재귀 포함). 비우면 Drive 소스 비활성 | (없음) |
 | `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE` | No | 서비스 계정 키 파일 경로 | (없음) |
@@ -149,14 +150,15 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 | `resolve_ref` | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다 | name, document_id, fields[{name, type, required, description}] |
 | `list_tags` | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다 | tags[{name, endpoint_count}] |
 | `search_documents` | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다 | items[{title, source, project, url, snippet, score}] |
-| `get_document` | 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님) | title, source, url, content |
+| `get_document` | `source`("drive"/"notion")와 `external_id`(Drive file ID 또는 Notion page ID)로 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님) | title, source, url, content |
 | `refresh_index` | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다 | synced, added, updated, removed, failed_sources |
 | `register_drive_source` | 프로젝트에 Google Drive 폴더를 매핑한다(upsert, 같은 project 재호출 시 폴더 교체) | project, folder_id, status |
 | `list_drive_sources` | 등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, folder_id, created_at, updated_at}] |
 | `remove_drive_source` | 프로젝트의 Drive 폴더 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
-| `register_notion_source` | 프로젝트에 Notion 데이터베이스를 매핑한다(upsert, 같은 project 재호출 시 DB 교체) | project, database_id, status |
-| `list_notion_sources` | 등록된 프로젝트→Notion 데이터베이스 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, database_id, created_at, updated_at}] |
-| `remove_notion_source` | 프로젝트의 Notion 데이터베이스 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
+| `register_notion_source` | 프로젝트에 Notion 데이터베이스를 매핑한다(upsert, 같은 project 재호출 시 DB 교체). 한 project 는 database 매핑과 page 매핑을 동시에 가질 수 없다(나중 호출이 이전 매핑을 덮어씀) | project, database_id, status |
+| `register_notion_page` | 프로젝트에 Notion 허브 페이지를 매핑한다(upsert). 지정한 페이지 바로 아래(1단계, 재귀 없음)의 하위 페이지들이 검색 대상이 된다 | project, page_id, status |
+| `list_notion_sources` | 등록된 프로젝트→Notion 데이터베이스/페이지 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다 | items[{project, database_id, kind, created_at, updated_at}] |
+| `remove_notion_source` | 프로젝트의 Notion 데이터베이스/페이지 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님) | project, removed |
 
 협업 문서(Drive/Notion)는 사전 색인하지 않고 `search_documents` 호출 시점에
 본문을 실시간 조회한다(캐시엔 제목·URL·수정일만 저장). 새로 만든 문서가
@@ -189,11 +191,14 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 > 것은 "여러 프로젝트를 한 서버에서 쓸 때 검색 결과가 서로 섞이는 문제"뿐입니다.
 
 **프로젝트별 Drive 폴더/Notion DB 등록**: `register_drive_source(project,
-folder_id)` / `register_notion_source(project, database_id)` 로 프로젝트마다
-다른 소스를 매핑한 뒤 `refresh_index` 를 실행하면 메타 캐시가 채워집니다.
-매핑 등록/변경은 서버 재시작 없이 다음 호출부터 바로 반영됩니다.
-`list_*_sources` 로 확인하고 `remove_*_source` 로 제거합니다(미등록 project
-제거는 오류 아님 — `removed: false`).
+folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
+페이지 하위 트리를 쓰려면 `register_notion_page(project, page_id)`) 로
+프로젝트마다 다른 소스를 매핑한 뒤 `refresh_index` 를 실행하면 메타 캐시가
+채워집니다. 한 project 는 Notion database 매핑과 page 매핑을 동시에 가질 수
+없습니다(나중 호출이 이전 매핑을 덮어씀). 매핑 등록/변경은 서버 재시작 없이
+다음 호출부터 바로 반영됩니다. `list_*_sources` 로 확인하고
+`remove_*_source` 로 제거합니다(미등록 project 제거는 오류 아님 —
+`removed: false`).
 
 자격증명(`DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`/`_JSON`,
 `DOCS_MCP_NOTION_TOKEN`)은 서버 전체가 **하나씩만** 갖고, 프로젝트별로
