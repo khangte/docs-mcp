@@ -50,11 +50,11 @@ app/
 
 ## 시작하기
 
-아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 어느 실행 방식이든 공통 준비 단계입니다.
-준비가 끝나면 두 갈래로 나뉩니다:
+아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 준비 단계입니다.
+준비가 끝나면 [MCP 연동](#mcp-model-context-protocol-연동) 절에서 MCP 클라이언트에 서버를 등록합니다.
+등록 후에는 클라이언트가 필요할 때마다 프로세스를 직접 실행하므로, 사용자가 서버를 따로 띄우는 단계는 없습니다.
 
-- **MCP 서버로 연동 (주 사용법)** → [MCP 연동](#mcp-model-context-protocol-연동)으로 이동. 별도로 웹서버를 띄울 필요 없이 MCP 클라이언트가 프로세스를 직접 실행합니다.
-- **FastAPI 웹서버 직접 실행 (선택 / 개발용)** → 아래 [4. 웹서버 실행](#4-웹서버-실행-선택--개발용). Swagger UI로 API를 확인하거나 디버깅할 때만 필요합니다.
+> Swagger UI로 API를 훑어보거나 디버깅하려면 FastAPI 웹서버를 직접 띄울 수도 있습니다(선택). → [개발·디버깅: 웹서버 직접 실행](#개발디버깅-fastapi-웹서버-직접-실행)
 
 ### 1. 의존성 설치
 
@@ -102,17 +102,7 @@ Google Drive 를 쓰려면 서비스 계정을 하나 만들고, 검색 대상 �
 Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
 해당 Integration 에 연결합니다.
 
-여기까지가 공통 준비입니다. 주 사용법인 MCP 등록은 다음 절 [MCP 연동](#mcp-model-context-protocol-연동)을 참고하세요. 아래 4번은 선택 사항입니다.
-
-### 4. 웹서버 실행 (선택 / 개발용)
-
-> MCP로 쓸 때는 이 단계가 **필요 없습니다.** Swagger UI로 API를 훑어보거나 디버깅할 때만 실행하세요.
-
-```bash
-uv run uvicorn app.main:create_app --factory --reload
-```
-
-서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI로 전체 API 목록과 스키마를 확인하고 직접 테스트할 수 있습니다.
+준비가 끝났으면 다음 절 [MCP 연동](#mcp-model-context-protocol-연동)에서 MCP 클라이언트에 서버를 등록하세요.
 
 ## MCP (Model Context Protocol) 연동
 
@@ -218,6 +208,16 @@ folder_id)` / `register_notion_source(project, database_id)` 로 프로젝트마
 ### 4. 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
+
+## 개발·디버깅: FastAPI 웹서버 직접 실행
+
+> 정상 사용(MCP 연동)에는 **필요 없는 선택 단계**입니다. Swagger UI로 API를 훑어보거나 디버깅할 때만 실행하세요. [시작하기](#시작하기)의 준비 단계(1~3)를 먼저 마쳐야 합니다.
+
+```bash
+uv run uvicorn app.main:create_app --factory --reload
+```
+
+서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI로 전체 API 목록과 스키마를 확인하고 직접 테스트할 수 있습니다.
 
 ## 테스트 실행
 
