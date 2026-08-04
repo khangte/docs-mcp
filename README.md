@@ -202,7 +202,73 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 (응답 스키마는 `app/mcp/types.py` 참고).
 <!-- /AUTO-GENERATED -->
 
-### 4. 프로젝트 격리
+### 4. 문서별 등록 방법
+
+준비 단계(1~3)와 MCP 서버 등록은 이미 끝났다고 가정합니다 →
+[시작하기](#시작하기), [MCP 연동](#mcp-model-context-protocol-연동).
+
+**(A) OpenAPI/Swagger — URL로 등록**
+
+```
+register_document(project="my-api", source_url="https://example.com/openapi.json")
+```
+
+`doc_type` 은 생략 가능합니다. 원문이 `{` 로 시작하거나 앞부분에
+`openapi:`/`swagger:` 가 있으면 자동으로 openapi 로 판별됩니다.
+
+**(B) OpenAPI/Markdown/CSV — 원문 직접 등록**
+
+```
+register_document(project="my-api", raw_document="<원문 문자열 또는 dict>")
+```
+
+`doc_type` 을 생략하면 다음 순서로 자동 판별합니다(`source_url` 을 함께 준
+경우 확장자가 `.md`/`.markdown`→markdown, `.csv`→csv 로 우선 적용):
+
+1. 원문이 `{` 로 시작하거나 앞 200자에 `openapi:`/`swagger:` 가 있으면 → openapi
+2. 첫 줄에 쉼표가 있고 `#` 으로 시작하지 않으면 → csv
+3. 그 외 → markdown
+
+판별이 애매하면 `doc_type="openapi"|"markdown"|"csv"` 로 직접 지정하세요.
+`raw_document` 가 dict 이면 내부적으로 JSON 문자열로 변환됩니다.
+
+**(C) PDF/DOCX — base64 원문 + doc_type 필수**
+
+```
+register_document(project="my-api", raw_document="<base64 인코딩 문자열>", doc_type="pdf")
+```
+
+PDF/DOCX 는 자동 판별 대상이 아니므로 **`doc_type` 지정이 필수**이고,
+**`source_url` 이 아니라 `raw_document` 로만** 등록할 수 있습니다(파일을
+base64 로 인코딩해 전달). 텍스트 추출 후 markdown 문서와 동일하게
+섹션화됩니다.
+
+**(D) Google Drive — 폴더 매핑**
+
+```
+register_drive_source(project="my-api", folder_id="<Drive 폴더 ID>")
+```
+
+폴더 자체를 색인하지는 않습니다. 매핑 후 `refresh_index` 를 실행해야
+메타 캐시(제목·수정일)가 채워지고 `search_documents` 대상이 됩니다.
+
+**(E) Notion — 데이터베이스 또는 페이지 매핑**
+
+```
+register_notion_source(project="my-api", database_id="<Notion DB ID>")
+# 또는: 특정 페이지 바로 아래(1단계, 재귀 없음) 하위 페이지들을 대상으로
+register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
+```
+
+한 project 는 database 매핑과 page 매핑을 동시에 가질 수 없습니다(나중
+호출이 이전 매핑을 덮어씀). Drive와 마찬가지로 매핑 후 `refresh_index` 를
+실행해야 검색 대상이 됩니다.
+
+> (D)/(E)로 매핑한 협업 문서는 사전 색인 없이 `search_documents` 호출
+> 시점에 원본을 실시간 조회합니다. 새로 만든 문서가 검색되지 않으면
+> `refresh_index` 를 먼저 실행하세요(자세한 내용은 위 도구 표 아래 설명 참고).
+
+### 5. 프로젝트 격리
 
 이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
 서비스합니다. `register_document` 는 `project` 지정이 필수이고, 조회·검색
@@ -237,7 +303,7 @@ folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
 재등록하거나, DB 에 직접 SQL 로 `project` 컬럼을 갱신해야 합니다(제공되는
 도구 중에는 기존 문서의 project 를 바꾸는 기능이 없습니다).
 
-### 5. 제공되는 리소스 (Resources)
+### 6. 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
 
