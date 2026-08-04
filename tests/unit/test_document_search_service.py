@@ -127,6 +127,30 @@ def test_title_match_document_is_included(
     assert items[0].project == DEFAULT_PROJECT
 
 
+def test_whitespace_variant_query_matches_title_without_space(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """공백 없는 질의('트러블슈팅')로 공백 있는 제목('트러블 슈팅')을 찾는다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "트러블 슈팅 가이드")
+    fake_drive_source.bodies["d1"] = "장애 대응 절차를 정리한다."
+
+    items = search_service.search("트러블슈팅", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["트러블 슈팅 가이드"]
+
+
+def test_whitespace_variant_query_matches_title_with_space(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """공백 있는 질의('트러블 슈팅')로 공백 없는 제목('트러블슈팅')을 찾는다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "트러블슈팅 가이드")
+    fake_drive_source.bodies["d1"] = "장애 대응 절차를 정리한다."
+
+    items = search_service.search("트러블 슈팅", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["트러블슈팅 가이드"]
+
+
 def test_fetch_count_never_exceeds_top_k(
     db_session, search_service, fake_drive_source
 ) -> None:

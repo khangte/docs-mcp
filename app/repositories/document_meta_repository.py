@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.document_meta import DocumentMeta
+
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def collapse(text: str) -> str:
+    """공백을 모두 제거하고 소문자화한 문자열을 반환한다.
+
+    '트러블슈팅'과 '트러블 슈팅'처럼 공백 유무만 다른 질의/제목이 서로
+    다른 토큰 집합으로 쪼개져 매칭에 실패하는 문제를 흡수하기 위한 보조
+    키다. SQL 1단계 필터(`search_by_tokens`)와 서비스 2단계 점수 계산
+    (`_title_score`/`_body_score`) 양쪽에서 이 함수 하나만 공유해 써야
+    두 계층의 판단이 어긋나지 않는다.
+    """
+    return _WHITESPACE_RE.sub("", text or "").lower()
 
 
 class DocumentMetaRepository:
@@ -77,6 +92,7 @@ class DocumentMetaRepository:
         tokens: Sequence[str],
         source: str | None = None,
         project: str | None = None,
+        query: str = "",
     ) -> Sequence[DocumentMeta]:
         """제목 또는 URL 에 토큰 중 하나라도 포함된 행만 SQL 로 걸러 반환한다.
 
@@ -87,10 +103,17 @@ class DocumentMetaRepository:
         점수 계산은 여전히 Python 이 담당한다. SQL 은 "가능성 있는 행"만
         좁혀주고, 최종 순위는 토큰 겹침 비율로 서비스가 정한다.
 
+        토큰 패턴 외에 질의 전체를 `collapse()` 한(공백 제거) 패턴도 OR 로
+        더한다. '트러블슈팅'(공백 없음) 질의로 '트러블 슈팅'(공백 있음)
+        제목을 찾거나 그 반대인 경우, 토큰 단위 매칭만으로는 이 1단계에서
+        후보가 아예 빠져 2단계(본문 fetch)까지 못 간다.
+
         Args:
             tokens: 소문자로 정규화된 질의 토큰. 비어 있으면 빈 결과를 돌려준다.
             source: 특정 출처로 범위를 제한할 때 지정.
             project: 특정 project 로 범위를 제한할 때 지정.
+            query: 원본 질의 문자열. 공백을 제거한(`collapse`) 패턴을 추가
+                매칭 조건으로 쓴다. 비어 있으면 이 추가 조건은 생략된다.
 
         Returns:
             (source, external_id) 순으로 결정적으로 정렬된 후보 행.
@@ -105,12 +128,21 @@ class DocumentMetaRepository:
         # ILIKE 는 대소문자를 무시한다. 토큰에 든 LIKE 와일드카드는 이스케이프해
         # 사용자 입력이 패턴으로 해석되지 않게 한다.
         patterns = [f"%{_escape_like(token)}%" for token in tokens]
-        stmt = stmt.where(
-            or_(
-                *[DocumentMeta.title.ilike(p, escape="\\") for p in patterns],
-                *[DocumentMeta.url.ilike(p, escape="\\") for p in patterns],
-            )
-        )
+        conditions = [
+            *[DocumentMeta.title.ilike(p, escape="\\") for p in patterns],
+            *[DocumentMeta.url.ilike(p, escape="\\") for p in patterns],
+        ]
+        collapsed_query = collapse(query)
+        if collapsed_query:
+            # title/url 도 공백을 제거한 뒤 비교해야 '트러블슈팅' 질의가
+            # '트러블 슈팅'(공백 있음) title 과 매칭된다. 원본 title 에 그냥
+            # collapse 된 패턴을 대면 공백 자체가 어긋나 항상 실패한다.
+            collapsed_pattern = f"%{_escape_like(collapsed_query)}%"
+            collapsed_title = func.replace(func.lower(DocumentMeta.title), " ", "")
+            collapsed_url = func.replace(func.lower(DocumentMeta.url), " ", "")
+            conditions.append(collapsed_title.ilike(collapsed_pattern, escape="\\"))
+            conditions.append(collapsed_url.ilike(collapsed_pattern, escape="\\"))
+        stmt = stmt.where(or_(*conditions))
         stmt = stmt.order_by(DocumentMeta.source, DocumentMeta.external_id)
         return self._session.execute(stmt).scalars().all()
 

@@ -291,6 +291,41 @@ def test_search_by_tokens_matches_underscore_literally(
     assert [m.external_id for m in repo.search_by_tokens(["auth_v2"])] == ["d1"]
 
 
+def test_search_by_tokens_query_collapses_whitespace_variant(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """공백 없는 질의로 공백 있는 제목을(양방향) 1단계에서 찾는다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "트러블 슈팅 가이드"))
+    db_session.commit()
+
+    found = repo.search_by_tokens(["트러블슈팅"], query="트러블슈팅")
+
+    assert [m.external_id for m in found] == ["d1"]
+
+
+def test_search_by_tokens_query_collapses_whitespace_variant_reverse(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """공백 있는 질의로 공백 없는 제목을 1단계에서 찾는다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "트러블슈팅 가이드"))
+    db_session.commit()
+
+    tokens = sorted({"트러블", "슈팅"})
+    found = repo.search_by_tokens(tokens, query="트러블 슈팅")
+
+    assert [m.external_id for m in found] == ["d1"]
+
+
+def test_search_by_tokens_without_query_skips_collapse_match(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """query 인자를 생략하면 기존(토큰 전용) 매칭 동작이 그대로 유지된다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "트러블 슈팅 가이드"))
+    db_session.commit()
+
+    assert list(repo.search_by_tokens(["트러블슈팅"])) == []
+
+
 def test_search_by_tokens_is_deterministically_ordered(
     db_session, repo: DocumentMetaRepository
 ) -> None:
