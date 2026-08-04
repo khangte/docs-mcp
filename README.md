@@ -29,11 +29,15 @@ FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI �
 
 ```text
 app/
-├── bootstrap.py     # AppState 팩토리 (main/mcp_server 공유)
-├── main.py          # FastAPI 앱 팩토리 + uvicorn 진입점
-├── mcp_server.py    # MCP 서버 (Claude Desktop 통합)
-├── mcp_types.py     # MCP 도구 응답 TypedDict 스키마
-├── api/             # FastAPI 라우트 및 의존성 주입
+├── bootstrap.py     # AppState 팩토리 (web/mcp 공유)
+├── composition.py   # 컴포지션 루트 (AppState/ServiceBundle/build_services)
+├── web/             # FastAPI 웹 진입점
+│   ├── main.py      # FastAPI 앱 팩토리 + uvicorn 진입점
+│   ├── dependency_providers.py  # FastAPI 의존성 주입 함수
+│   └── routes/      # FastAPI 라우트
+├── mcp/             # MCP 서버 진입점
+│   ├── server.py    # MCP 서버 (Claude Desktop 통합)
+│   └── types.py     # MCP 도구 응답 TypedDict 스키마
 ├── core/            # 공통 설정, DB 엔진, 예외 및 로깅
 ├── models/          # SQLAlchemy ORM 모델 (Base, ApiDocument 등)
 ├── repositories/    # 데이터베이스 액세스 레이어 (CRUD)
@@ -110,7 +114,7 @@ uv run alembic upgrade head
 이 프로젝트는 Claude Desktop 및 기타 MCP 호환 클라이언트에서 도구로 사용할 수 있는 MCP 서버 기능을 제공합니다.
 
 > **`uv run uvicorn ...` (FastAPI 웹서버)를 미리 띄워둘 필요는 없습니다.**
-> `app/mcp_server.py`는 별도 진입점이며, 아래처럼 등록해두면 MCP 클라이언트(Claude
+> `app/mcp/server.py`는 별도 진입점이며, 아래처럼 등록해두면 MCP 클라이언트(Claude
 > Desktop/Code 등)가 필요할 때마다 `command`+`args`로 직접 프로세스를 실행해 stdio로
 > 통신합니다. 단, **PostgreSQL(+pgvector)은 미리 떠 있어야** 합니다 — MCP 서버가
 > 내부적으로 이 DB에 접속하므로, 등록 전에 `docker compose up -d postgres` 와
@@ -128,7 +132,7 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
   "mcpServers": {
     "docs-mcp": {
       "command": "uv",
-      "args": ["run", "python", "-m", "app.mcp_server"],
+      "args": ["run", "python", "-m", "app.mcp.server"],
       "cwd": "/path/to/docs-mcp",
       "env": {
         "DOCS_MCP_DATABASE_URL": "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
@@ -140,7 +144,7 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 
 ### 2. 제공되는 도구 (Tools)
 
-<!-- AUTO-GENERATED: app/mcp_server.py 도구 docstring 기준 -->
+<!-- AUTO-GENERATED: app/mcp/server.py 도구 docstring 기준 -->
 | 도구 | 설명 | 반환 필드 |
 |------|------|-----------|
 | `list_documents` | 등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체) | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at |
@@ -172,7 +176,7 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
-(응답 스키마는 `app/mcp_types.py` 참고).
+(응답 스키마는 `app/mcp/types.py` 참고).
 <!-- /AUTO-GENERATED -->
 
 ### 3. 프로젝트 격리
@@ -219,7 +223,7 @@ folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
 > 정상 사용(MCP 연동)에는 **필요 없는 선택 단계**입니다. Swagger UI로 API를 훑어보거나 디버깅할 때만 실행하세요. [시작하기](#시작하기)의 준비 단계(1~3)를 먼저 마쳐야 합니다.
 
 ```bash
-uv run uvicorn app.main:create_app --factory --reload
+uv run uvicorn app.web.main:create_app --factory --reload
 ```
 
 서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI로 전체 API 목록과 스키마를 확인하고 직접 테스트할 수 있습니다.
