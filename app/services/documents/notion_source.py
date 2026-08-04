@@ -30,6 +30,10 @@ PAGE_SIZE = 100
 MAX_BLOCK_DEPTH = 4
 #: 한 문서에서 순회할 블록 수 상한.
 MAX_BLOCKS = 2000
+#: 허브 페이지 하위 child_page 재귀 탐색 깊이 상한.
+MAX_PAGE_DEPTH = 4
+#: 한 허브에서 수집할 하위 페이지 수 상한.
+MAX_PAGES = 500
 UNTITLED = "(제목 없음)"
 
 
@@ -83,16 +87,19 @@ class NotionSource:
     def list_pages(self) -> list[FileMeta]:
         """설정된 범위 안의 Notion 페이지 메타데이터를 반환한다.
 
-        `page_id` 가 설정돼 있으면 그 페이지 바로 아래(1단계, 재귀 없음)
-        child_page 블록만 목록화한다(허브 페이지 하위 문서 탐색). 그 외에는
+        `page_id` 가 설정돼 있으면 그 페이지 하위 트리 전체를 child_page 를
+        통해 재귀 탐색해 목록화한다(허브 페이지 하위 문서 탐색). 그 외에는
         기존처럼 데이터베이스 쿼리 또는 워크스페이스 검색을 사용한다.
 
         Raises:
             IntegrationError: 인증 실패·rate limit·네트워크 오류 시.
         """
         if self._page_id:
+            acc: list[FileMeta] = []
+            visited: set[str] = set()
             with self._client() as client:
-                return self._list_child_pages(client, self._page_id)
+                self._collect_child_pages(client, self._page_id, acc, visited, 0)
+            return acc
         path, body = self._list_request_spec()
         with self._client() as client:
             raw_pages = self._paginate(client, path, body)
@@ -174,18 +181,36 @@ class NotionSource:
             if block.get("has_children") and block.get("id"):
                 self._collect_block_text(client, str(block["id"]), lines, depth + 1)
 
-    def _list_child_pages(self, client: httpx.Client, page_id: str) -> list[FileMeta]:
-        """page_id 바로 아래(1단계) child_page 블록만 FileMeta 목록으로 변환한다.
+    def _collect_child_pages(
+        self,
+        client: httpx.Client,
+        page_id: str,
+        acc: list[FileMeta],
+        visited: set[str],
+        depth: int,
+    ) -> None:
+        """page_id 하위 child_page 트리를 재귀 순회하며 acc 에 평탄 누적한다.
 
-        재귀하지 않는다 — child_page 안에 또 child_page 가 있어도 이 목록에는
-        포함되지 않는다(깊은 순회는 후속 스코프).
+        child_page 를 통해서만 내려간다 — 텍스트/토글 블록 안에 중첩된
+        child_page 는 이 목록에 포함되지 않는다(깊은 순회는 후속 스코프).
         """
-        child_pages: list[FileMeta] = []
+        if depth > MAX_PAGE_DEPTH:
+            return
+        if len(acc) >= MAX_PAGES:
+            _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
+            return
         for block in self._list_children(client, page_id):
             if block.get("type") != "child_page" or not block.get("id"):
                 continue
-            child_pages.append(_child_page_to_file_meta(block))
-        return child_pages
+            child_id = str(block["id"])
+            if child_id in visited:
+                continue
+            visited.add(child_id)
+            acc.append(_child_page_to_file_meta(block))
+            if len(acc) >= MAX_PAGES:
+                _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
+                return
+            self._collect_child_pages(client, child_id, acc, visited, depth + 1)
 
     def _list_children(self, client: httpx.Client, block_id: str) -> list[dict[str, Any]]:
         """블록 자식 목록을 페이지네이션까지 처리해 반환한다."""

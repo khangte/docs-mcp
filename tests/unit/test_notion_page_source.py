@@ -80,35 +80,183 @@ def test_list_pages_with_page_id_lists_only_child_page_blocks(
     assert [p.title for p in pages] == ["하위 문서 1", "하위 문서 2"]
 
 
-def test_list_pages_with_page_id_does_not_recurse_into_grandchild_pages(
+def test_list_pages_with_page_id_recurses_into_nested_child_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """child_page 안의 또 다른 child_page(손자)는 목록화되지 않는다(1단계만)."""
-    top_level = [
-        {
-            "id": "child-1",
-            "type": "child_page",
-            "has_children": True,
-            "child_page": {"title": "허브 하위 문서"},
-        },
-    ]
-    # child-1 아래에 또 child_page 가 있어도 호출되면 안 된다.
-    grandchild_calls: list[str] = []
+    """3~4 단계로 중첩된 child_page 트리 전체가 평탄 목록으로 수집된다."""
+    tree = {
+        "hub-page": [
+            {
+                "id": "child-1",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "1단계"},
+            },
+        ],
+        "child-1": [
+            {
+                "id": "child-2",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "2단계"},
+            },
+        ],
+        "child-2": [
+            {
+                "id": "child-3",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "3단계"},
+            },
+        ],
+        "child-3": [
+            {
+                "id": "child-4",
+                "type": "child_page",
+                "has_children": False,
+                "child_page": {"title": "4단계"},
+            },
+        ],
+        "child-4": [],
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         block_id = request.url.path.split("/")[2]
-        if block_id == "hub-page":
-            return _json({"results": top_level})
-        grandchild_calls.append(block_id)
-        return _json({"results": [{"id": "grandchild", "type": "child_page"}]})
+        return _json({"results": tree.get(block_id, [])})
 
     source = NotionSource(token="t1", page_id="hub-page")
     _patch_client(monkeypatch, source, handler)
 
     pages = source.list_pages()
 
-    assert [p.external_id for p in pages] == ["child-1"]
-    assert grandchild_calls == []
+    assert [p.external_id for p in pages] == ["child-1", "child-2", "child-3", "child-4"]
+
+
+def test_list_pages_with_page_id_truncates_branch_beyond_max_depth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MAX_PAGE_DEPTH 를 넘는 가지는 잘리고, 상한 내 페이지는 유지된다."""
+    from app.services.documents import notion_source as notion_source_module
+
+    monkeypatch.setattr(notion_source_module, "MAX_PAGE_DEPTH", 1)
+
+    tree = {
+        "hub-page": [
+            {
+                "id": "child-1",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "depth0"},
+            },
+        ],
+        "child-1": [
+            {
+                "id": "child-2",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "depth1"},
+            },
+        ],
+        "child-2": [
+            {
+                "id": "child-3",
+                "type": "child_page",
+                "has_children": False,
+                "child_page": {"title": "depth2 - 잘려야 함"},
+            },
+        ],
+    }
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        calls.append(block_id)
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["child-1", "child-2"]
+    assert "child-3" not in calls
+
+
+def test_list_pages_with_page_id_stops_at_max_pages_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """MAX_PAGES 도달 시 예외 없이 부분 결과를 반환하고 warning 을 남긴다."""
+    from app.services.documents import notion_source as notion_source_module
+
+    monkeypatch.setattr(notion_source_module, "MAX_PAGES", 2)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        child_id = f"{block_id}-c"
+        return _json(
+            {
+                "results": [
+                    {
+                        "id": child_id,
+                        "type": "child_page",
+                        "has_children": True,
+                        "child_page": {"title": child_id},
+                    }
+                ]
+            }
+        )
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    with caplog.at_level("WARNING"):
+        pages = source.list_pages()
+
+    assert len(pages) == 2
+    assert any("상한" in record.message for record in caplog.records)
+
+
+def test_list_pages_with_page_id_handles_cycle_without_infinite_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """순환(A→B→A)이 있어도 무한 루프 없이 A, B 각각 한 번만 수집된다."""
+    tree = {
+        "hub-page": [
+            {
+                "id": "page-a",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "A"},
+            },
+        ],
+        "page-a": [
+            {
+                "id": "page-b",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "B"},
+            },
+        ],
+        "page-b": [
+            {
+                "id": "page-a",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "A"},
+            },
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["page-a", "page-b"]
 
 
 def test_list_pages_with_page_id_untitled_child_page_uses_placeholder(
