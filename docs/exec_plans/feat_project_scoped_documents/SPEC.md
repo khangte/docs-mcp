@@ -132,15 +132,25 @@ search_documents(query="로그인", project="shop-api")
         │
         ▼
 (1) 1단계 후보 압축  ─ DocumentMetaRepository.search_by_tokens(
-        │                tokens, source=..., project="shop-api")
+        │                tokens, source=..., project="shop-api", query="로그인")
         │                → SQL WHERE project = 'shop-api' 추가
+        │                → title/url 토큰 ILIKE + collapse(query) 공백제거 ILIKE OR
         ▼
 (2) 후보 본문 fetch  ─ 각 후보 행의 (project, source) 로 어댑터를 고른다.
-        │                Drive 후보면 그 project 의 folder_id 로 만든
-        │                GoogleDriveSource 를 사용
+        │  + 점수 계산       Drive 후보면 그 project 의 folder_id 로 만든
+        │                GoogleDriveSource 를 사용. _title_score/_body_score 는
+        │                토큰 겹침 비율과 collapse 부분문자열 점수를 max 로 합성
         ▼
 [다른 프로젝트 Drive 폴더의 문서가 섞이지 않은 결과]
 ```
+
+**공백 변형 질의 매칭**: `collapse()`(공백 제거+소문자화) 보조 키를 1단계
+(`search_by_tokens` 의 title/url ILIKE)와 2단계(`_title_score`/`_body_score`)가
+**같은 함수 하나로 공유**한다. '트러블슈팅'↔'트러블 슈팅'처럼 공백 유무만 다른
+질의/제목은 토큰 집합이 달라져 순수 토큰 매칭으로는 후보에서 빠지는데, 두 계층이
+동일한 collapse 판단을 써야 1단계 필터와 2단계 점수가 어긋나지 않는다. 2단계에서
+collapse 부분문자열 매칭은 **토큰 1개 겹침과 동등한 상한**(`1/token_count`)만 주어,
+`max()` 합성 시 기존 다중 토큰 겹침 순위를 뒤집지 않는다.
 
 ### 핵심 데이터 스키마
 
@@ -389,7 +399,7 @@ search_documents(query="로그인", project="shop-api")
     - `find(project, source, external_id)` — 시그니처에 project 추가(새 UNIQUE 키와 일치).
     - `list_by_source(source, project=None)`.
     - `list_all(source=None, project=None)`.
-    - `search_by_tokens(tokens, source=None, project=None)` — SQL WHERE 에 project 조건 추가.
+    - `search_by_tokens(tokens, source=None, project=None, query="")` — SQL WHERE 에 project 조건 추가. `query`(원본 질의)를 받아 `collapse()`(공백 제거+소문자화)한 패턴을 title/url ILIKE OR 조건에 더한다. '트러블슈팅' 질의로 '트러블 슈팅' 제목을 잡는 공백 변형 매칭을 1단계 후보에서부터 살리기 위함(빈 문자열이면 이 조건은 생략).
     - 신규 `list_by_project_source(project, source)` — 갱신 시 "이 프로젝트의 이 소스" 기존 행 집합을 가져오는 전용 조회. `_refresh_source` 가 삭제 감지를 할 때 **다른 프로젝트 행까지 지우지 않도록** 하는 핵심 지점이다.
   - `app/services/documents/document_index_service.py`
     - 생성자가 `sources: list[DocumentSource]` 대신 `resolver: ProjectSourceResolver` 를 받는다.

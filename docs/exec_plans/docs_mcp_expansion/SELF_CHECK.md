@@ -423,6 +423,19 @@ Python 에 적재한다(O(N)). 같은 브랜치의 `chunk_repository.list_endpoi
 `test_search_by_tokens_matches_underscore_literally`,
 `test_search_by_tokens_escapes_like_wildcards` 로 고정했다.
 
+**후속(커밋 `875eec6`): 공백 변형 질의 매칭.** '트러블슈팅'(공백 없음) 질의로
+'트러블 슈팅'(공백 있음) 제목을 찾을 때, 토크나이저가 둘을 다른 토큰 집합으로
+쪼개 매칭이 실패하던 문제를 해소했다. `collapse()`(공백 제거+소문자화) 보조 키를
+도입해 **1단계(`search_by_tokens`)와 2단계(`_title_score`/`_body_score`)가 함수
+하나를 공유**한다. `search_by_tokens` 시그니처에 `query=""` 를 추가하고
+(`collapse(query)` 패턴을 title/url ILIKE OR 조건에 더함), 2단계 점수는
+`_collapse_match_score()` 로 collapse 부분문자열 매칭에 **토큰 1개 겹침과 동등한
+상한**(`1/token_count`)만 부여해 `max()` 합성 시 기존 다중 토큰 겹침 순위를 뒤집지
+않게 했다. 두 계층이 같은 collapse 판단을 써야 1단계 필터와 2단계 점수가 어긋나지
+않는다는 점이 핵심 설계 근거다. `search_by_tokens` 도입 때 확립한 "SQL 1단계 압축
++ Python 2단계 점수" 구조를 그대로 유지하면서, 공백 흡수를 두 단계에 일관되게
+얹었다.
+
 ### 6. [권장, 반영함] 교차 소스 삭제 회귀 테스트
 
 Evaluator 프로브로 "버그 없음"이 확인됐지만 이를 고정하는 테스트가 없었다.
