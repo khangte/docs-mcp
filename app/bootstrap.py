@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from sqlalchemy.engine import Engine
 
-from app.api.dependencies import AppState
+from app.composition import AppState
 from app.core.config import Settings, get_settings
 from app.core.db import create_db_engine, create_session_factory, managed_session
 from app.models.openapi import DEFAULT_PROJECT, create_all

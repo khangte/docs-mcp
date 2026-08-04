@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.dependencies import is_vector_fallback_available
+from app.composition import is_vector_fallback_available
 
 ENV_KEY = "DOCS_MCP_GEMINI_API_KEY"
 

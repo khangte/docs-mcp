@@ -7,8 +7,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import ServiceBundle
-from app.api.dependency_providers import get_services
+from app.composition import ServiceBundle
+from app.web.dependency_providers import get_services
 from app.core.errors import EndpointNotFoundError
 from app.models.openapi import ApiEndpoint, ApiParameter
 from app.schemas.endpoints import (

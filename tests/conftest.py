@@ -11,9 +11,9 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.dependencies import AppState
+from app.composition import AppState
 from app.core.db import create_db_engine, create_session_factory
-from app.main import create_app
+from app.web.main import create_app
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import DEFAULT_PROJECT, EMBEDDING_DIM, create_all
 from app.repositories.project_source_repository import (
@@ -323,7 +323,7 @@ def two_project_mcp(two_project_app_state, two_project_services):
     가 매핑을 미리 심어두므로, 이 서버로 바로 `register_document`/
     `refresh_index`/`search_documents` 등을 호출할 수 있다.
     """
-    from app.mcp_server import create_mcp_server
+    from app.mcp.server import create_mcp_server
 
     return create_mcp_server(two_project_app_state)
 
@@ -369,7 +369,7 @@ def app(app_state):
 @pytest.fixture()
 def services_factory(app_state):
     """app_state 기반으로 ServiceBundle 을 생성하는 헬퍼 팩토리."""
-    from app.api.dependencies import build_services
+    from app.composition import build_services
 
     def _factory():
         return next(build_services(app_state))

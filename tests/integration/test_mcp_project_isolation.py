@@ -89,7 +89,7 @@ def isolated_services_factory(two_project_app_state):
     필요할 때, isolated_mcp 가 실제로 쓰는 것과 같은 DB/엔진을 바라보는
     서비스 번들을 만든다.
     """
-    from app.api.dependencies import build_services
+    from app.composition import build_services
 
     def _factory():
         return next(build_services(two_project_app_state))

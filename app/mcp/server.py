@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeVar, cast
 import anyio
 from fastmcp import FastMCP
 
-from app.api.dependencies import AppState, ServiceBundle, build_services
+from app.composition import AppState, ServiceBundle, build_services
 from app.bootstrap import bootstrap_app_state
 from app.core.config import get_settings
 from app.core.db import managed_session
@@ -22,7 +22,7 @@ from app.core.errors import (
     IntegrationError,
 )
 from app.core.logging import get_logger
-from app.mcp_types import (
+from app.mcp.types import (
     DocumentContentPayload,
     DocumentSearchItemPayload,
     DocumentSearchResponse,

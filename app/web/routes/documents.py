@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.api.dependencies import ServiceBundle
-from app.api.dependency_providers import get_services
+from app.composition import ServiceBundle
+from app.web.dependency_providers import get_services
 from app.schemas.documents import (
     DocumentDeleteResponse,
     DocumentDetail,

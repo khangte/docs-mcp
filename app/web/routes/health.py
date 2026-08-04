@@ -7,8 +7,8 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 
-from app.api.dependencies import AppState
-from app.api.dependency_providers import get_app_state
+from app.composition import AppState
+from app.web.dependency_providers import get_app_state
 from app.models.openapi import ApiDocument
 
 router = APIRouter()

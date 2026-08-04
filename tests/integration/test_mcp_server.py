@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 from fastmcp import FastMCP
 
-from app.mcp_server import create_mcp_server
+from app.mcp.server import create_mcp_server
 
 OPENAPI_TOOL_NAMES = {
     "list_documents",

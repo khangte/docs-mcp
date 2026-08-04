@@ -13,7 +13,7 @@ from datetime import datetime
 import pytest
 from fastmcp import FastMCP
 
-from app.mcp_server import create_mcp_server
+from app.mcp.server import create_mcp_server
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import DEFAULT_PROJECT
 

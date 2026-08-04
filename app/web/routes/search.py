@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from app.api.dependencies import ServiceBundle
-from app.api.dependency_providers import get_services
+from app.composition import ServiceBundle
+from app.web.dependency_providers import get_services
 from app.core.errors import ValidationError
 from app.schemas.search import SearchItem, SearchResponse
 from app.services.search.search_service import SearchOptions

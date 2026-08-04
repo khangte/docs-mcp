@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from app.api.dependencies import build_services
+from app.composition import build_services
 from app.core.errors import DocumentNotFoundError
 
 UNTAGGED_DOC: dict = {

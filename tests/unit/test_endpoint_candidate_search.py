@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.dependencies import build_services
+from app.composition import build_services
 from app.core.errors import DocumentNotFoundError, ValidationError
 from app.services.search.endpoint_candidate_search import (
     CandidateSearchOptions,

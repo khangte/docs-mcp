@@ -11,13 +11,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.dependencies import AppState
-from app.api.routes import documents as documents_routes
-from app.api.routes import endpoints as endpoints_routes
-from app.api.routes import health as health_routes
-from app.api.routes import search as search_routes
-from app.api.routes import sync as sync_routes
 from app.bootstrap import bootstrap_app_state, seed_default_sources
+from app.composition import AppState
 from app.core.config import Settings, get_settings
 from app.core.errors import (
     APIError,
@@ -30,7 +25,12 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.logging import get_logger
-from app.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher, OpenAPIFetcher
+from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
+from app.web.routes import documents as documents_routes
+from app.web.routes import endpoints as endpoints_routes
+from app.web.routes import health as health_routes
+from app.web.routes import search as search_routes
+from app.web.routes import sync as sync_routes
 
 _LOG = get_logger("docs_mcp.api", level=get_settings().log_level)
 

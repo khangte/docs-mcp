@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.api.dependencies import build_services
+from app.composition import build_services
 from app.core.errors import EndpointNotFoundError
 from app.services.endpoints.endpoint_details_service import EndpointDetailsService
 from tests.fixtures.fakes import CountingExampleService

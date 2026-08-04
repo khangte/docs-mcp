@@ -10,7 +10,7 @@ from collections.abc import Iterator
 
 from fastapi import Request
 
-from app.api.dependencies import AppState, ServiceBundle, build_services
+from app.composition import AppState, ServiceBundle, build_services
 
 
 def get_app_state(request: Request) -> AppState:
