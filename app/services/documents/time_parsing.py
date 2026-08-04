@@ -28,7 +28,7 @@ def parse_rfc3339(value: str | None) -> datetime | None:
     """
     if not value:
         return None
-    normalized = value.strip().replace("Z", "+00:00")
+    normalized = value.strip()
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError:

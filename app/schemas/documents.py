@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -96,4 +95,3 @@ class SyncResponse(BaseModel):
     new_hash: str
     endpoints_count: int
     chunks_count: int
-    details: dict[str, Any] | None = None

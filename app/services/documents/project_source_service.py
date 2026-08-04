@@ -15,7 +15,6 @@ from app.core.errors import ValidationError
 from app.models.project_drive_source import ProjectDriveSource
 from app.models.project_notion_source import ProjectNotionSource
 from app.repositories.project_source_repository import (
-    ProjectDriveSourceRepository,
     ProjectNotionSourceRepository,
     ProjectSourceRepositoryBase,
 )
@@ -88,10 +87,6 @@ def _normalize_value(value: str | None) -> str:
 
 class DriveSourceService(ProjectSourceService[ProjectDriveSource]):
     """`ProjectDriveSourceRepository` 전용 얇은 래퍼."""
-
-    def __init__(self, session: Session, repo: ProjectDriveSourceRepository) -> None:
-        """Drive 소스 저장소로 고정한 서비스를 만든다."""
-        super().__init__(session, repo)
 
 
 class NotionSourceService(ProjectSourceService[ProjectNotionSource]):

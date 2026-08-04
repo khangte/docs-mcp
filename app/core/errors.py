@@ -22,7 +22,6 @@ class DocumentNotFoundError(DomainError):
     def __init__(self, document_id: str) -> None:
         """문서 ID 를 메시지·코드와 함께 보관한다."""
         super().__init__(f"document not found: {document_id}", code="document_not_found")
-        self.document_id = document_id
 
 
 class EndpointNotFoundError(DomainError):
@@ -31,7 +30,6 @@ class EndpointNotFoundError(DomainError):
     def __init__(self, endpoint_id: str) -> None:
         """엔드포인트 ID 를 메시지·코드와 함께 보관한다."""
         super().__init__(f"endpoint not found: {endpoint_id}", code="endpoint_not_found")
-        self.endpoint_id = endpoint_id
 
 
 class DuplicateDocumentError(DomainError):
@@ -40,7 +38,6 @@ class DuplicateDocumentError(DomainError):
     def __init__(self, source_url: str) -> None:
         """중복된 source_url 을 메시지·코드와 함께 보관한다."""
         super().__init__(f"document already registered: {source_url}", code="duplicate_document")
-        self.source_url = source_url
 
 
 class ParserError(DomainError):
@@ -57,10 +54,6 @@ class ValidationError(DomainError):
     def __init__(self, message: str) -> None:
         """검증 오류 메시지를 보관한다."""
         super().__init__(message, code="validation_error")
-
-
-class RepositoryError(Exception):
-    """DB 접근 실패 (제약 위반, 연결 실패 등)."""
 
 
 class IntegrationError(Exception):

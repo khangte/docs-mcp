@@ -21,7 +21,6 @@ from app.core.errors import (
     DuplicateDocumentError,
     EndpointNotFoundError,
     IntegrationError,
-    RepositoryError,
     ValidationError,
 )
 from app.core.logging import get_logger
@@ -115,7 +114,6 @@ _DOMAIN_ERROR_STATUS: list[tuple[type[Exception], int]] = [
     (DuplicateDocumentError, 409),
     (DomainError, 400),
     (IntegrationError, 502),
-    (RepositoryError, 500),
 ]
 
 

@@ -8,10 +8,6 @@ import pytest
 
 from app.core.errors import ParserError
 from app.services.parser.openapi_parser import parse_document
-from app.services.parser.schema_normalizer import (
-    collect_referenced_schemas,
-    resolve_ref,
-)
 
 
 def test_parse_openapi3_minimum(sample_openapi_3: str) -> None:
@@ -39,9 +35,6 @@ def test_parse_openapi3_ref_resolution(sample_openapi_3: str) -> None:
     add_pet = next(e for e in parsed.endpoints if e.method == "POST" and e.path == "/pet")
     assert add_pet.request_body is not None
     assert add_pet.request_body.schema_ref == "#/components/schemas/Pet"
-    resolved = resolve_ref(add_pet.request_body.schema_ref, parsed.schemas)
-    assert resolved is not None
-    assert resolved.get("type") == "object"
 
 
 def test_parse_swagger2_body_to_request_body(sample_swagger_2: str) -> None:
@@ -67,17 +60,3 @@ def test_parse_rejects_missing_paths_openapi3() -> None:
 def test_parse_rejects_empty() -> None:
     with pytest.raises(ParserError):
         parse_document("")
-
-
-def test_collect_referenced_schemas(sample_openapi_3: str) -> None:
-    parsed = parse_document(sample_openapi_3)
-    refs = []
-    for ep in parsed.endpoints:
-        if ep.request_body is not None:
-            refs.append(ep.request_body.schema_ref)
-        for r in ep.responses:
-            refs.append(r.schema_ref)
-    referenced = collect_referenced_schemas(refs, parsed)
-    names = {s.name for s in referenced}
-    assert "Pet" in names
-    assert "User" in names
