@@ -142,7 +142,30 @@ Claude Desktop의 설정 파일(`claude_desktop_config.json`)에 다음과 같�
 }
 ```
 
-### 2. 제공되는 도구 (Tools)
+### 2. Claude Code (CLI) 설정
+
+`claude mcp add` 로 등록합니다. `--` 뒤가 MCP 서버를 실제로 실행할 `command`+`args`이며,
+stdio 가 기본 전송이라 `--transport` 는 필요 없습니다.
+
+```bash
+claude mcp add docs-mcp -s user \
+  -e DOCS_MCP_DATABASE_URL=postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp \
+  -- uv run --directory /path/to/docs-mcp python -m app.mcp.server
+```
+
+- `/path/to/docs-mcp` 는 이 저장소의 **실제 절대경로**로 바꾸세요. `--directory` 로 프로젝트
+  경로를 고정하므로(현재 작업 디렉터리와 무관), Desktop JSON 의 `cwd` 에 대응합니다.
+- `-s user` 는 전역(모든 프로젝트) 등록입니다. 생략하면 `local`(현재 폴더에서만) 이 되고,
+  특정 프로젝트에만 쓰려면 `-s` 를 생략하거나 `-s project` 로 등록하세요.
+
+등록 확인·제거:
+
+```bash
+claude mcp list              # 등록된 MCP 서버 목록
+claude mcp remove docs-mcp   # 등록 해제
+```
+
+### 3. 제공되는 도구 (Tools)
 
 <!-- AUTO-GENERATED: app/mcp/server.py 도구 docstring 기준 -->
 | 도구 | 설명 | 반환 필드 |
@@ -179,7 +202,7 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 (응답 스키마는 `app/mcp/types.py` 참고).
 <!-- /AUTO-GENERATED -->
 
-### 3. 프로젝트 격리
+### 4. 프로젝트 격리
 
 이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
 서비스합니다. `register_document` 는 `project` 지정이 필수이고, 조회·검색
@@ -214,7 +237,7 @@ folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
 재등록하거나, DB 에 직접 SQL 로 `project` 컬럼을 갱신해야 합니다(제공되는
 도구 중에는 기존 문서의 project 를 바꾸는 기능이 없습니다).
 
-### 4. 제공되는 리소스 (Resources)
+### 5. 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
 
