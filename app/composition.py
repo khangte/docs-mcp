@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.db import create_session_factory
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
@@ -25,6 +25,7 @@ from app.repositories.project_source_repository import (
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.documents.document_index_service import DocumentIndexService
 from app.services.documents.document_search_service import DocumentSearchService
+from app.services.documents.query_expander import GeminiQueryExpander, QueryExpander
 from app.services.documents.sources.document_source import DocumentSource
 from app.services.documents.sources.google_drive_source import ServiceAccountTokenProvider
 from app.services.documents.project_source_resolver import ProjectSourceResolver
@@ -70,6 +71,9 @@ class AppState:
     #: (notion_id, kind) → Notion 어댑터 팩토리. 테스트에서 페이크를 주입하는
     #: 지점. None 이면 `build_notion_source` 가 기본으로 쓰인다.
     notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None
+    #: search_documents 1단계 SQL 후보 필터를 넓히는 LLM 질의확장기.
+    #: Gemini API 키가 없으면 None(확장 없이 원본 토큰만 사용).
+    query_expander: QueryExpander | None = None
 
     @classmethod
     def from_engine(
@@ -81,6 +85,7 @@ class AppState:
         vector_fallback_enabled: bool | None = None,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
+        query_expander: QueryExpander | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
@@ -109,6 +114,9 @@ class AppState:
             drive_token_provider=build_drive_token_provider(settings),
             drive_source_builder=drive_source_builder,
             notion_source_builder=notion_source_builder,
+            query_expander=(
+                query_expander if query_expander is not None else _build_query_expander(settings)
+            ),
         )
 
 
@@ -132,6 +140,16 @@ def _build_embedding_provider(embedding_dim: int) -> EmbeddingProvider:
         api_key=settings.gemini_api_key,
         model=settings.gemini_embedding_model,
         dim=embedding_dim,
+    )
+
+
+def _build_query_expander(settings: Settings) -> QueryExpander | None:
+    """Gemini API 키가 있으면 GeminiQueryExpander, 없으면 None(질의확장 비활성)."""
+    if not settings.gemini_api_key:
+        return None
+    return GeminiQueryExpander(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_query_expansion_model,
     )
 
 
@@ -235,6 +253,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         document_search_service = DocumentSearchService(
             meta_repo=document_meta_repo,
             resolver=project_source_resolver,
+            query_expander=state.query_expander,
         )
         document_index_service = DocumentIndexService(
             session=session,

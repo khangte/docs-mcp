@@ -541,3 +541,158 @@ def test_get_document_picks_most_recently_synced_project_when_shared(
 
     assert content.title == "B 문서"
     assert content.content == "B 본문"
+
+
+# --- LLM 질의확장(1단계 SQL 후보 게이트 확장) -----------------------------------
+
+
+class _FakeQueryExpander:
+    """호출 횟수·인자를 기록하는 페이크 QueryExpander."""
+
+    def __init__(self, tokens_by_query: dict[str, list[str]] | None = None) -> None:
+        self._tokens_by_query = tokens_by_query or {}
+        self.calls: list[str] = []
+        self.should_raise = False
+
+    def expand(self, query: str) -> list[str]:
+        self.calls.append(query)
+        if self.should_raise:
+            raise IntegrationError("fake query expander failure")
+        return self._tokens_by_query.get(query, [])
+
+
+def test_query_expansion_widens_sql_candidate_gate(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """제목에 원본 질의 토큰이 없어도 LLM 확장 토큰과 일치하면 후보에 포함된다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "결제 내역 조회 가이드")
+    fake_drive_source.bodies["d1"] = "주문 상태를 확인하는 방법을 설명한다."
+    expander = _FakeQueryExpander({"주문조회 API": ["결제", "내역"]})
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        query_expander=expander,
+    )
+
+    items = service.search("주문조회 API", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["결제 내역 조회 가이드"]
+    assert expander.calls == ["주문조회 API"]
+
+
+def test_query_expansion_tokens_do_not_affect_score(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """확장 토큰은 후보를 넓히는 용도로만 쓰이고, 점수 계산에는 원본 토큰만 반영된다.
+
+    "로그인"만 검색해도 확장 토큰("계정")이 점수 계산에 섞이면 제목에
+    "계정"만 있고 "로그인"이 없는 문서도 원본 토큰 일치 문서와 동일하거나
+    더 높은 점수를 받을 수 있다. 원본 토큰만 점수에 반영돼야 순위가
+    질의 그대로의 정합성을 유지한다.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "exact", "로그인 설계서")
+    _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
+    fake_drive_source.bodies["exact"] = "로그인 흐름 설명"
+    fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
+    expander = _FakeQueryExpander({"로그인": ["계정"]})
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        query_expander=expander,
+    )
+
+    items = service.search("로그인", DocumentSearchOptions())
+
+    titles = [i.title for i in items]
+    assert "로그인 설계서" in titles
+    assert titles.index("로그인 설계서") < (
+        titles.index("계정 관리 문서") if "계정 관리 문서" in titles else len(titles)
+    )
+
+
+def test_query_expansion_failure_falls_back_to_original_tokens(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """LLM 질의확장 호출이 예외를 던져도 검색은 원본 토큰만으로 계속 동작한다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+    expander = _FakeQueryExpander()
+    expander.should_raise = True
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        query_expander=expander,
+    )
+
+    items = service.search("로그인", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["로그인 설계서"]
+
+
+def test_no_query_expander_behaves_like_before(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """query_expander 를 주지 않으면(기본 None) 기존 동작과 동일하게 원본 토큰만 쓴다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session), resolver=default_resolver
+    )
+
+    items = service.search("로그인", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["로그인 설계서"]
+
+
+def test_top_k_one_original_match_wins_fetch_slot_over_expansion_only(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """top_k=1 이고 원본매치 1건 + 확장전용매치 1건이 동시 후보일 때, 원본매치만 반환된다.
+
+    top_k 는 2단계 본문 fetch 상한(rate limit 보호)의 핵심 장치다. 확장
+    토큰으로만 걸린 후보가 이 한정된 fetch 슬롯을 원본 매치 문서로부터
+    빼앗으면 rate limit 보호 의도가 깨진다. 정렬키 (title_score<=0 오름차순
+    1순위)가 원본매치를 항상 앞세워야 하는 회귀 방지 테스트.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "original", "로그인 설계서")
+    _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
+    fake_drive_source.bodies["original"] = "로그인 흐름 설명"
+    fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
+    expander = _FakeQueryExpander({"로그인": ["계정"]})
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        query_expander=expander,
+    )
+
+    items = service.search("로그인", DocumentSearchOptions(top_k=1))
+
+    assert [i.title for i in items] == ["로그인 설계서"]
+    assert fake_drive_source.fetch_call_count == 1
+    assert "expanded_only" not in fake_drive_source.fetched_ids
+
+
+def test_top_k_two_includes_both_but_original_match_ranks_first(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """top_k=2 로 슬롯이 남으면 확장전용매치도 포함되지만, 원본매치가 항상 상위다.
+
+    정렬키 1순위(title_score<=0)가 두 그룹을 분리한 뒤, fetch 슬롯이 남으면
+    확장전용매치도 2단계까지 진출할 수 있어야 한다(확장의 목적). 다만 최종
+    결과 순서에서도 원본매치가 앞서야 한다.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "original", "로그인 설계서")
+    _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
+    fake_drive_source.bodies["original"] = "로그인 흐름 설명"
+    fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
+    expander = _FakeQueryExpander({"로그인": ["계정"]})
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        query_expander=expander,
+    )
+
+    items = service.search("로그인", DocumentSearchOptions(top_k=2))
+
+    assert {i.title for i in items} == {"로그인 설계서", "계정 관리 문서"}
+    assert items[0].title == "로그인 설계서"

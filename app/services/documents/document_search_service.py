@@ -31,6 +31,7 @@ from app.services.documents.sources.document_source import (
     DocumentSource,
 )
 from app.services.documents.project_source_resolver import ProjectSourceResolver
+from app.services.documents.query_expander import QueryExpander
 from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
 from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 
@@ -89,15 +90,19 @@ class DocumentSearchService:
         self,
         meta_repo: DocumentMetaRepository,
         resolver: ProjectSourceResolver,
+        query_expander: QueryExpander | None = None,
     ) -> None:
         """저장소와 프로젝트 소스 리졸버를 보관한다.
 
         Args:
             meta_repo: `document_meta` 저장소(1단계 후보 조회용).
             resolver: project → Drive/Notion 어댑터 요청 시점 팩토리.
+            query_expander: LLM 기반 질의확장기. None 이면 확장 없이 원본
+                토큰만으로 1단계 SQL 후보를 찾는다(기존 동작과 동일).
         """
         self._meta_repo = meta_repo
         self._resolver = resolver
+        self._query_expander = query_expander
 
     def search(self, query: str, options: DocumentSearchOptions) -> list[DocumentSearchItem]:
         """질의에 관련된 협업 문서를 찾아 스니펫과 점수를 붙여 반환한다.
@@ -123,8 +128,9 @@ class DocumentSearchService:
         if not query_tokens:
             raise ValidationError("query must contain at least one searchable token")
 
+        filter_tokens = query_tokens | self._expand_tokens(normalized_query)
         candidates = self._select_candidates(
-            query_tokens, normalized_query, replace(options, source=normalized_source)
+            filter_tokens, query_tokens, normalized_query, replace(options, source=normalized_source)
         )
         if not candidates:
             # 2단계를 건너뛴다: 후보가 없으면 외부 API 를 한 번도 호출하지 않는다.
@@ -189,8 +195,28 @@ class DocumentSearchService:
 
     # --- 1단계: 메타 캐시 후보 압축 ----------------------------------------
 
+    def _expand_tokens(self, query: str) -> set[str]:
+        """LLM 질의확장으로 SQL 후보 필터를 넓힐 추가 토큰을 얻는다.
+
+        확장기가 없거나 호출이 실패하면 빈 집합을 반환해 원본 토큰만으로
+        폴백한다(QueryExpander 구현체가 예외를 삼키지만, 이중 방어로 여기서도
+        감싼다).
+        """
+        if self._query_expander is None:
+            return set()
+        try:
+            expanded = self._query_expander.expand(query)
+        except Exception as exc:  # noqa: BLE001 - 확장 실패가 검색 전체를 죽이면 안 된다.
+            _LOG.warning("질의확장 호출 실패(원본 토큰만으로 폴백): query=%s (%s)", query, exc)
+            return set()
+        return set(documents_tokenize(" ".join(expanded)))
+
     def _select_candidates(
-        self, query_tokens: set[str], query: str, options: DocumentSearchOptions
+        self,
+        filter_tokens: set[str],
+        score_tokens: set[str],
+        query: str,
+        options: DocumentSearchOptions,
     ) -> list[tuple[DocumentMeta, float]]:
         """제목/URL 토큰 매칭으로 상위 top_k 후보만 추린다.
 
@@ -198,19 +224,29 @@ class DocumentSearchService:
         순위 결정만 Python 이 한다. 전체 행을 적재하지 않으므로 캐시 규모가
         커져도 1단계가 가볍게 유지된다.
 
-        2단계에서 fetch 하는 문서 수가 top_k 를 넘지 않도록, 여기서 이미
-        top_k 로 잘라 반환한다.
+        `filter_tokens` (원본 + LLM 확장 토큰)는 SQL 후보 게이트를 넓히는
+        데만 쓰고, 점수 계산은 반드시 `score_tokens`(원본 질의 토큰)만
+        사용한다 — 확장 토큰이 점수·순위 계산에 섞이면 무관한 문서가 원본
+        질의와의 정합성 없이 상위에 노출될 수 있다.
+
+        제목에 원본 토큰이 전혀 없어(title_score=0.0) 확장 토큰으로만 SQL
+        에 걸린 행도 후보 자체에서는 제외하지 않는다 — 애초에 "질의와 문서
+        표현이 달라 제목 매칭이 실패하는" 문제를 확장 토큰으로 SQL 후보만
+        넓혀 해결하는 것이므로, 여기서 다시 title_score 로 걸러내면 확장
+        효과가 무력화된다.
+
+        다만 top_k 는 2단계 본문 fetch 상한(rate limit 보호)이므로 한정된
+        fetch 예산을 원본 신호가 있는 행에 먼저 배분한다: 정렬은
+        (원본 매치 여부 내림차순, title_score 내림차순, external_id) 순이며,
+        원본 매치 행이 top_k 를 채우고 남는 자리만 확장-only 매치 행이
+        채운다. 최종 관련성 판단은 2단계 본문 fetch 후 body_score(역시
+        원본 토큰만)가 맡는다.
         """
         rows = self._meta_repo.search_by_tokens(
-            sorted(query_tokens), source=options.source, project=options.project, query=query
+            sorted(filter_tokens), source=options.source, project=options.project, query=query
         )
-        scored = [
-            (row, score)
-            for row, score in ((row, _title_score(row, query_tokens, query)) for row in rows)
-            if score > 0.0
-        ]
-        # 동점 시 external_id 로 결정적 정렬(같은 입력 → 같은 후보 집합).
-        scored.sort(key=lambda pair: (-pair[1], pair[0].external_id))
+        scored = [(row, _title_score(row, score_tokens, query)) for row in rows]
+        scored.sort(key=lambda pair: (pair[1] <= 0.0, -pair[1], pair[0].external_id))
         return scored[: options.top_k]
 
     # --- 2단계: 후보 본문 실시간 fetch ------------------------------------
