@@ -11,18 +11,16 @@
 ## 2. 시스템 구조
 
 ```
-         [관리자]                         [Claude / MCP 클라이언트]
-            |                                       |
-     (OpenAPI URL 등록,                   (자연어 질의, 도구 호출)
-      재색인 트리거)                               |
-            |                                       |
-            v                                       v
-   +-------------------+                 +-----------------------+
-   |   관리 HTTP API   |                 |      MCP 서버         |
-   |  (FastAPI routes) |                 |  (tools / adapters)   |
-   +---------+---------+                 +-----------+-----------+
-             |                                       |
-             +------------------+--------------------+
+                      [Claude / MCP 클라이언트]
+                                |
+                (자연어 질의, 도구 호출, 문서 등록/재색인)
+                                |
+                                v
+                      +-----------------------+
+                      |      MCP 서버         |
+                      |  (tools / adapters)   |
+                      +-----------+-----------+
+                                |
                                 v
                       +-------------------+
                       |  내부 서비스 계층 |
@@ -44,7 +42,7 @@
 
 ```text
 app/
-├── bootstrap.py     # AppState 팩토리 (web/mcp 공유)
+├── bootstrap.py     # AppState 팩토리
 ├── composition.py   # 컴포지션 루트 (AppState/ServiceBundle/build_services)
 ├── mcp/             # MCP 서버 진입점
 │   ├── server.py    # MCP 서버 (Claude Desktop 통합, 도구 등록은 tools/ 위임)
@@ -71,8 +69,7 @@ app/
 
 ### 4-1. 레이어 역할
 
-- `entry points`: `app/main.py` (FastAPI), `app/mcp_server.py` (MCP Server)
-- `api`: HTTP 라우터 및 의존성 주입 (`app/api/routes`)
+- `entry points`: `app/mcp_server.py` (MCP Server)
 - `services`: 도메인 로직 (수집, 파싱, 색인, 검색, 예시 생성)
 - `repositories`: DB 접근 (SQLAlchemy)
 - `models/schemas`: 데이터 모델 및 DTO (Pydantic)
@@ -80,7 +77,7 @@ app/
 
 ### 4-2. 의존 방향
 
-`api / mcp_server` → `services` → `repositories` → `models`
+`mcp_server` → `services` → `repositories` → `models`
 _(단방향 유지, 역참조 및 순환 참조 금지)_
 
 ## 5. 핵심 데이터 흐름
@@ -132,7 +129,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
 
 ## 7. 기술 스택 및 보안
 
-- **Language/Framework**: Python 3.11+, FastAPI, `fastmcp`
+- **Language/Framework**: Python 3.11+, `fastmcp`
 - **Database**: PostgreSQL + pgvector (HNSW index), Alembic 마이그레이션
 - **LLM/임베딩**: Gemini API(`GeminiLLMProvider`, `GeminiEmbeddingProvider`) 우선 사용,
   API 키 미설정 시 `TemplateLLMProvider`/`HashEmbeddingProvider`로 자동 폴백

@@ -13,7 +13,7 @@ OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 �
 
 <!-- AUTO-GENERATED: pyproject.toml, docker-compose.yml, app/core/config.py 기준 -->
 
-- **Backend**: Python 3.11+, FastAPI
+- **Backend**: Python 3.11+
 - **Database**: PostgreSQL(+`pgvector` 확장) — SQLAlchemy 2.0, Alembic 마이그레이션
 - **Search**:
   - pgvector 코사인 거리(`<=>`, HNSW 인덱스) 기반 벡터 검색
