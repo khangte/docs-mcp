@@ -1,4 +1,4 @@
-"""FastAPI 의존성 컨테이너.
+"""의존성 컨테이너.
 
 앱 시작 시 만들어진 엔진/프로바이더를 요청 범위 객체와 합쳐 서비스 인스턴스를 만든다.
 테스트에서는 `app.dependency_overrides` 로 교체할 수 있게 함수 인터페이스로 제공.
@@ -162,7 +162,7 @@ class ServiceBundle:
 
 
 def build_services(state: AppState) -> Iterator[ServiceBundle]:
-    """FastAPI Depends 로 사용되는 생성기.
+    """요청 스코프 ServiceBundle 을 생성하는 제너레이터.
 
     요청 종료 시 세션 close.
     """

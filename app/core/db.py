@@ -26,7 +26,7 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def session_scope(session_factory: sessionmaker[Session]) -> Iterator[Session]:
-    """요청 범위 세션 생성기 (FastAPI Depends 호환 형태)."""
+    """요청 범위 세션 생성기."""
     session = session_factory()
     try:
         yield session
