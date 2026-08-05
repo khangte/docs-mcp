@@ -110,7 +110,7 @@ class SyncService:
         self._session.flush()
 
         endpoints_count, chunks_count = self._indexer.index_document(
-            document=document, parsed=parsed, is_reindex=False
+            document=document, parsed=parsed
         )
         schemas_count = len(parsed.schemas)
         sections_count = len(parsed.sections)
@@ -197,7 +197,7 @@ class SyncService:
         document.indexed_at = datetime.now(timezone.utc)
 
         endpoints_count, chunks_count = self._indexer.index_document(
-            document=document, parsed=parsed, is_reindex=True
+            document=document, parsed=parsed
         )
         schemas_count = len(parsed.schemas)
         sections_count = len(parsed.sections)

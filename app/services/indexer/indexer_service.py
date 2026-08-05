@@ -51,7 +51,7 @@ class IndexerService:
         self._embedding_provider = embedding_provider
 
     def index_document(
-        self, document: ApiDocument, parsed: ParsedDocument, is_reindex: bool
+        self, document: ApiDocument, parsed: ParsedDocument
     ) -> tuple[int, int]:
         """엔드포인트/스키마/청크를 DB 에 저장한다.
 
