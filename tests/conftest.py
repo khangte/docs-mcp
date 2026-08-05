@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.composition import AppState
 from app.core.db import create_db_engine, create_session_factory
-from app.web.main import create_app
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import DEFAULT_PROJECT, EMBEDDING_DIM, create_all
 from app.repositories.project_source_repository import (
@@ -362,11 +361,6 @@ def counting_embedding_provider(app_state):
 
 
 @pytest.fixture()
-def app(app_state):
-    return create_app(app_state=app_state)
-
-
-@pytest.fixture()
 def services_factory(app_state):
     """app_state 기반으로 ServiceBundle 을 생성하는 헬퍼 팩토리."""
     from app.composition import build_services
@@ -375,15 +369,6 @@ def services_factory(app_state):
         return next(build_services(app_state))
 
     return _factory
-
-
-@pytest.fixture()
-def async_client(app):
-    """httpx AsyncClient + ASGITransport 기반 테스트 클라이언트."""
-    from httpx import ASGITransport, AsyncClient
-
-    transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://testserver")
 
 
 @pytest.fixture()

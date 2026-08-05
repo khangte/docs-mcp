@@ -46,10 +46,6 @@
 app/
 ├── bootstrap.py     # AppState 팩토리 (web/mcp 공유)
 ├── composition.py   # 컴포지션 루트 (AppState/ServiceBundle/build_services)
-├── web/             # FastAPI 웹 진입점
-│   ├── main.py      # FastAPI 앱 팩토리 + uvicorn 진입점
-│   ├── dependency_providers.py  # FastAPI 의존성 주입 함수
-│   └── routes/      # FastAPI 라우트
 ├── mcp/             # MCP 서버 진입점
 │   ├── server.py    # MCP 서버 (Claude Desktop 통합, 도구 등록은 tools/ 위임)
 │   ├── tools/       # 도메인별 MCP 도구 정의 (documents/endpoints/sources)

@@ -2,8 +2,6 @@
 
 OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터)으로 원하는 API 엔드포인트나 문서 내용을 찾아주는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하는 것이 주 용도이며, 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
 
-FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI 확인·디버깅용 부차 경로입니다. 실제 사용은 아래 [MCP 연동](#mcp-model-context-protocol-연동)으로 등록하는 방식이 메인입니다.
-
 ## 주요 기능
 
 - **다양한 문서 소스 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x/Swagger 2.0, Markdown, CSV 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
@@ -31,8 +29,6 @@ FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI �
 아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 준비 단계입니다.
 준비가 끝나면 [MCP 연동](#mcp-model-context-protocol-연동) 절에서 MCP 클라이언트에 서버를 등록합니다.
 등록 후에는 클라이언트가 필요할 때마다 프로세스를 직접 실행하므로, 사용자가 서버를 따로 띄우는 단계는 없습니다.
-
-> Swagger UI로 API를 훑어보거나 디버깅하려면 FastAPI 웹서버를 직접 띄울 수도 있습니다(선택). → [개발·디버깅: 웹서버 직접 실행](#개발디버깅-fastapi-웹서버-직접-실행)
 
 ### 1. 의존성 설치
 
@@ -87,7 +83,6 @@ uv run alembic upgrade head
 
 이 프로젝트는 Claude Desktop 및 기타 MCP 호환 클라이언트에서 도구로 사용할 수 있는 MCP 서버 기능을 제공합니다.
 
-> **`uv run uvicorn ...` (FastAPI 웹서버)를 미리 띄워둘 필요는 없습니다.**
 > `app/mcp/server.py`는 별도 진입점이며, 아래처럼 등록해두면 MCP 클라이언트(Claude
 > Desktop/Code 등)가 필요할 때마다 `command`+`args`로 직접 프로세스를 실행해 stdio로
 > 통신합니다. 단, **PostgreSQL(+pgvector)은 미리 떠 있어야** 합니다 — MCP 서버가
@@ -340,16 +335,6 @@ folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
 ### 7. 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
-
-## 개발·디버깅: FastAPI 웹서버 직접 실행
-
-> 정상 사용(MCP 연동)에는 **필요 없는 선택 단계**입니다. Swagger UI로 API를 훑어보거나 디버깅할 때만 실행하세요. [시작하기](#시작하기)의 준비 단계(1~3)를 먼저 마쳐야 합니다.
-
-```bash
-uv run uvicorn app.web.main:create_app --factory --reload
-```
-
-서버가 실행되면 `http://localhost:8000/docs`에서 Swagger UI로 전체 API 목록과 스키마를 확인하고 직접 테스트할 수 있습니다.
 
 ## 테스트 실행
 
