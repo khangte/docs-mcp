@@ -7,6 +7,8 @@ from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
 from app.core.errors import DomainError, IntegrationError
+from app.core.logging import get_logger
+from app.core.config import get_settings
 from app.mcp.payloads import _to_drive_source_item, _to_notion_source_item, _to_refresh_payload
 from app.mcp.tools._common import _run_bundle, to_error_payload
 from app.mcp.types import (
@@ -14,6 +16,7 @@ from app.mcp.types import (
     ErrorPayload,
     NotionSourceListResult,
     RefreshIndexResult,
+    RegisteredResyncResult,
     RegisterDriveSourceResult,
     RegisterNotionPageResult,
     RegisterNotionSourceResult,
@@ -21,13 +24,18 @@ from app.mcp.types import (
     RemoveNotionSourceResult,
 )
 
+_LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
+
 
 def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
     """소스 관련 MCP 도구(refresh_index, drive/notion 매핑 CRUD)를 등록한다."""
 
     @mcp.tool()
     async def refresh_index(
-        source: str | None = None, project: str | None = None
+        source: str | None = None,
+        project: str | None = None,
+        include_registered: bool = False,
+        force: bool = False,
     ) -> RefreshIndexResult | ErrorPayload:
         """협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다.
 
@@ -36,9 +44,19 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Args:
             source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
-                모든 소스를 갱신한다.
+                모든 소스를 갱신한다. api_document 재동기화에는 관여하지
+                않는다(drive/notion 개념이 없다).
             project: 특정 프로젝트만 갱신할 때 지정. 생략하면 등록된 전
-                프로젝트를 순회한다.
+                프로젝트를 순회한다. include_registered=True 일 때는
+                api_document 대상도 이 project 로 좁힌다.
+            include_registered: True 면 register_document 로 등록한
+                ApiDocument 중 source_url 이 있는(URL 기반) 문서도 원본을
+                다시 가져와 재동기화한다. raw_document 로 등록한 문서는
+                원본 재fetch가 불가능하므로 자동 제외된다. 기본 False —
+                문서마다 원본 재fetch + 재파싱 + 재색인이 필요해 비용이
+                크므로 옵트인이다.
+            force: include_registered=True 일 때, 해시가 같아도 강제
+                재색인할지 여부. include_registered=False 면 무시된다.
 
         Returns:
             synced(조회 건수), added, updated, removed, failed_sources 를 담은
@@ -47,12 +65,19 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             실패한 항목이 failed_sources 에 담긴다. 대상이 하나도 구성돼
             있지 않거나 전부 실패하면 error/code/message 필드를 담은
             ErrorPayload를 대신 반환한다.
+            include_registered=True 면 registered 키(total/reindexed/
+            skipped/failed)가 추가된다. failed 는 resync 에 실패한
+            document_id 목록이며, 개별 실패는 다른 문서 처리를 막지 않는다.
+            include_registered=False 면 registered 키 자체가 없다(하위호환).
         """
         def _sync() -> RefreshIndexResult | ErrorPayload:
             def _inner(bundle) -> RefreshIndexResult:
-                return _to_refresh_payload(
+                payload = _to_refresh_payload(
                     bundle.document_index_service.refresh(source=source, project=project)
                 )
+                if include_registered:
+                    payload["registered"] = _resync_registered(bundle, project=project, force=force)
+                return payload
             try:
                 return _run_bundle(app_state, _inner)
             except (DomainError, IntegrationError) as e:
@@ -253,3 +278,35 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             except (DomainError, IntegrationError) as e:
                 return to_error_payload(e)
         return await anyio.to_thread.run_sync(_sync)
+
+
+def _resync_registered(
+    bundle: ServiceBundle, *, project: str | None, force: bool
+) -> RegisteredResyncResult:
+    """URL 기반 ApiDocument 를 순회하며 개별 resync 하고 결과를 집계한다.
+
+    문서 하나가 실패해도 나머지는 계속 진행한다(부분 실패 허용). resync 는
+    문서마다 자체 커밋하므로 한 문서의 실패가 다른 문서 결과를 롤백하지 않는다.
+    """
+    documents = bundle.document_repo.list_resyncable(project)
+    reindexed = 0
+    skipped = 0
+    failed: list[str] = []
+    for document in documents:
+        try:
+            result = bundle.sync_service.resync(document.id, force=force)
+        except (DomainError, IntegrationError) as e:
+            _LOG.error("registered resync failed: document_id=%s", document.id, exc_info=e)
+            bundle.session.rollback()
+            failed.append(document.id)
+            continue
+        if result.status == "reindexed":
+            reindexed += 1
+        else:
+            skipped += 1
+    return {
+        "total": len(documents),
+        "reindexed": reindexed,
+        "skipped": skipped,
+        "failed": failed,
+    }

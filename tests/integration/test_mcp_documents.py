@@ -162,6 +162,156 @@ async def test_refresh_index_no_project_mapping_returns_error_payload(
     assert payload["code"] == "integration_error"
 
 
+@pytest.mark.asyncio()
+async def test_refresh_index_default_omits_registered_key(
+    mcp_server: FastMCP, seed_default_project_sources
+) -> None:
+    """include_registered 를 생략하면(기존 호출) registered 키가 없다(하위호환)."""
+    payload = _result(await mcp_server.call_tool("refresh_index", arguments={}))
+
+    assert "registered" not in payload
+
+
+@pytest.mark.asyncio()
+async def test_refresh_index_include_registered_resyncs_url_documents(
+    mcp_server: FastMCP,
+    app_state,
+    in_memory_fetcher,
+    seed_default_project_sources,
+    sample_openapi_3: str,
+) -> None:
+    """include_registered=True 면 URL 기반 문서만 resync 되고 raw_document 문서는 제외된다."""
+    from app.composition import build_services
+
+    in_memory_fetcher.put("https://example.com/openapi.json", sample_openapi_3)
+    services = next(build_services(app_state))
+    services.sync_service.register(
+        project="default", source_url="https://example.com/openapi.json", raw_document=None
+    )
+    services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
+
+    payload = _result(
+        await mcp_server.call_tool("refresh_index", arguments={"include_registered": True})
+    )
+
+    assert payload["registered"]["total"] == 1
+    assert payload["registered"]["skipped"] == 1
+    assert payload["registered"]["reindexed"] == 0
+    assert payload["registered"]["failed"] == []
+
+
+@pytest.mark.asyncio()
+async def test_refresh_index_include_registered_zero_targets_returns_empty_aggregate(
+    mcp_server: FastMCP, seed_default_project_sources
+) -> None:
+    """URL 기반 문서가 하나도 없으면 registered 는 0 집계로 정상 반환된다."""
+    payload = _result(
+        await mcp_server.call_tool("refresh_index", arguments={"include_registered": True})
+    )
+
+    assert payload["registered"] == {"total": 0, "reindexed": 0, "skipped": 0, "failed": []}
+
+
+@pytest.mark.asyncio()
+async def test_refresh_index_include_registered_partial_failure_continues(
+    mcp_server: FastMCP,
+    app_state,
+    in_memory_fetcher,
+    seed_default_project_sources,
+    sample_openapi_3: str,
+) -> None:
+    """문서 하나의 resync 가 실패해도 나머지는 계속 진행되고 failed 에 담긴다."""
+    from app.composition import build_services
+
+    in_memory_fetcher.put("https://example.com/ok.json", sample_openapi_3)
+    in_memory_fetcher.put("https://example.com/bad.json", sample_openapi_3)
+    services = next(build_services(app_state))
+    ok_result = services.sync_service.register(
+        project="default", source_url="https://example.com/ok.json", raw_document=None
+    )
+    bad_result = services.sync_service.register(
+        project="default", source_url="https://example.com/bad.json", raw_document=None
+    )
+    # 등록 후 매핑을 제거해 resync 시점에만 IntegrationError 가 발생하게 한다
+    in_memory_fetcher.remove("https://example.com/bad.json")
+
+    payload = _result(
+        await mcp_server.call_tool("refresh_index", arguments={"include_registered": True})
+    )
+
+    assert payload["registered"]["total"] == 2
+    assert payload["registered"]["failed"] == [bad_result.document.id]
+    assert ok_result.document.id not in payload["registered"]["failed"]
+
+
+@pytest.mark.asyncio()
+async def test_refresh_index_include_registered_rolls_back_failed_reindex(
+    mcp_server: FastMCP,
+    app_state,
+    in_memory_fetcher,
+    seed_default_project_sources,
+    sample_openapi_3: str,
+) -> None:
+    """delete+flush 이후(색인 단계) 실패한 문서의 미커밋 삭제가 다음 문서의
+    commit 에 딸려가 커밋되지 않는다(세션 공유로 인한 데이터 유실 방지)."""
+    from app.core.errors import IntegrationError
+
+    class _FailOnceEmbeddingProvider:
+        """첫 embed 호출만 실패하고 이후 호출은 정상 위임하는 페이크."""
+
+        def __init__(self, delegate) -> None:
+            self._delegate = delegate
+            self._calls = 0
+
+        @property
+        def dim(self) -> int:
+            return self._delegate.dim
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            self._calls += 1
+            if self._calls == 1:
+                raise IntegrationError("embedding provider unavailable")
+            return self._delegate.embed(texts)
+
+    in_memory_fetcher.put("https://example.com/doc-a.json", sample_openapi_3)
+    in_memory_fetcher.put("https://example.com/doc-b.json", sample_openapi_3)
+    from app.composition import build_services
+
+    services = next(build_services(app_state))
+    doc_a = services.sync_service.register(
+        project="default", source_url="https://example.com/doc-a.json", raw_document=None
+    )
+    doc_b = services.sync_service.register(
+        project="default", source_url="https://example.com/doc-b.json", raw_document=None
+    )
+    before_counts = {
+        doc.document.id: (
+            len(services.endpoint_repo.list_by_document(doc.document.id)),
+            len(services.chunk_repo.list_by_document(doc.document.id)),
+        )
+        for doc in (doc_a, doc_b)
+    }
+    assert all(endpoints > 0 and chunks > 0 for endpoints, chunks in before_counts.values())
+
+    # register 단계는 이미 끝났으므로 새 페이크의 호출 카운터는 resync 단계부터
+    # 시작한다. 순회상 첫 문서만 실패하고 두 번째는 정상 재색인된다.
+    app_state.embedding_provider = _FailOnceEmbeddingProvider(app_state.embedding_provider)
+
+    payload = _result(
+        await mcp_server.call_tool("refresh_index", arguments={"include_registered": True, "force": True})
+    )
+
+    assert len(payload["registered"]["failed"]) == 1
+    failed_id = payload["registered"]["failed"][0]
+
+    verify_services = next(build_services(app_state))
+    before_endpoints, before_chunks = before_counts[failed_id]
+    assert len(verify_services.endpoint_repo.list_by_document(failed_id)) == before_endpoints
+    assert len(verify_services.chunk_repo.list_by_document(failed_id)) == before_chunks
+
+
 # --- 기능 7: search_documents --------------------------------------------------
 
 

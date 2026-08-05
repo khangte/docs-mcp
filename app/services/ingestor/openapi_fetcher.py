@@ -49,6 +49,10 @@ class InMemoryFetcher:
         """URL 에 대응하는 원문을 매핑에 등록한다."""
         self._mapping[url] = content
 
+    def remove(self, url: str) -> None:
+        """매핑에서 URL 을 제거해 이후 fetch 가 실패하도록 만든다(테스트용)."""
+        self._mapping.pop(url, None)
+
     def fetch(self, source_url: str) -> str:
         """매핑된 원문을 반환하고, 없으면 IntegrationError 를 발생시킨다."""
         if source_url not in self._mapping:

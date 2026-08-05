@@ -48,3 +48,10 @@ class DocumentRepository:
     def delete(self, document: ApiDocument) -> None:
         """문서를 세션에서 삭제한다."""
         self._session.delete(document)
+
+    def list_resyncable(self, project: str | None = None) -> Sequence[ApiDocument]:
+        """source_url 이 있는(URL 기반) 문서만 반환한다. raw_document 등록 문서는 제외."""
+        stmt = select(ApiDocument).where(ApiDocument.source_url.is_not(None))
+        if project is not None:
+            stmt = stmt.where(ApiDocument.project == project)
+        return self._session.execute(stmt).scalars().all()

@@ -175,10 +175,20 @@ class DocumentContentPayload(TypedDict):
     content: str
 
 
+class RegisteredResyncResult(TypedDict):
+    """include_registered=True 일 때 URL 기반 ApiDocument 재동기화 집계."""
+
+    total: int
+    reindexed: int
+    skipped: int
+    failed: list[str]
+
+
 class RefreshIndexResult(TypedDict):
     """refresh_index 의 반환 타입.
 
     `failed_sources` 는 부분 실패한 소스 이름 목록이다. 비어 있으면 전부 성공.
+    `registered` 는 include_registered=True 로 호출했을 때만 키가 존재한다.
     """
 
     synced: int
@@ -186,6 +196,7 @@ class RefreshIndexResult(TypedDict):
     updated: int
     removed: int
     failed_sources: list[str]
+    registered: NotRequired[RegisteredResyncResult]
 
 
 class DriveSourceItem(TypedDict):
