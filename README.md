@@ -26,37 +26,6 @@ FastAPI 웹서버(`uvicorn`)로도 실행할 수 있으나, 이는 Swagger UI �
 - **Schema/DTO**: Pydantic v2
 <!-- /AUTO-GENERATED -->
 
-## 프로젝트 구조
-
-```text
-app/
-├── bootstrap.py     # AppState 팩토리 (web/mcp 공유)
-├── composition.py   # 컴포지션 루트 (AppState/ServiceBundle/build_services)
-├── web/             # FastAPI 웹 진입점
-│   ├── main.py      # FastAPI 앱 팩토리 + uvicorn 진입점
-│   ├── dependency_providers.py  # FastAPI 의존성 주입 함수
-│   └── routes/      # FastAPI 라우트
-├── mcp/             # MCP 서버 진입점
-│   ├── server.py    # MCP 서버 (Claude Desktop 통합, 도구 등록은 tools/ 위임)
-│   ├── tools/       # 도메인별 MCP 도구 정의 (documents/endpoints/sources)
-│   └── types.py     # MCP 도구 응답 TypedDict 스키마
-├── core/            # 공통 설정, DB 엔진, 예외 및 로깅
-├── models/          # SQLAlchemy ORM 모델 (Base, ApiDocument 등)
-├── repositories/    # 데이터베이스 액세스 레이어 (CRUD)
-├── schemas/         # Pydantic DTO (요청/응답 모델)
-└── services/        # 비즈니스 로직
-    ├── project_scope.py  # project 필터 범위 해석 (documents/ 밖 공용 위치)
-    ├── documents/   # Drive/Notion 협업 문서 소스 어댑터(sources/)·메타 캐시·검색
-    ├── endpoints/   # 엔드포인트 상세 조회 서비스
-    ├── examples/    # 호출 예시 코드 생성 서비스
-    ├── indexer/     # 청크 생성 및 벡터 색인 서비스
-    ├── ingestor/    # 문서 수집 및 동기화 서비스
-    ├── parser/      # OpenAPI/Swagger 파서 및 정규화
-    ├── schema_resolution/  # $ref 스키마 해석 서비스
-    ├── search/      # 하이브리드 검색 서비스
-    └── tags/        # 태그 집계 서비스
-```
-
 ## 시작하기
 
 아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 준비 단계입니다.
