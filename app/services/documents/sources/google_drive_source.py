@@ -31,7 +31,18 @@ FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document"
 #: Google 네이티브 문서(Docs/Sheets/Slides)는 export API 로 평문 변환해야 한다.
 GOOGLE_NATIVE_MIME_PREFIX = "application/vnd.google-apps."
-EXPORT_MIME_TYPE = "text/plain"
+#: 네이티브 타입별 텍스트 export 포맷. Drive export API 는 소스 타입마다
+#: 지원하는 변환 포맷이 다르다 — Sheets 를 text/plain 으로 요청하면 400
+#: (The requested conversion is not supported)이 난다. fetch() 가 이미
+#: 조회한 mimeType 으로 여기서 사전에 올바른 포맷을 정하므로, "우선
+#: text/plain 시도 후 실패하면 재시도"하는 순차 폴백으로 인한 Sheets 마다의
+#: 불필요한 400 왕복이 없다. 매핑에 없는 네이티브 타입(그림/폼 등)은 텍스트
+#: export 를 지원하지 않으므로 export 호출 자체를 하지 않고 바로 실패한다.
+NATIVE_EXPORT_MIME_TYPES: dict[str, str] = {
+    GOOGLE_DOC_MIME_TYPE: "text/plain",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+    "application/vnd.google-apps.presentation": "text/plain",
+}
 #: Drive files.list 한 페이지 최대 개수(API 상한 1000).
 PAGE_SIZE = 200
 #: 무한 루프 방지를 위한 폴더 탐색 상한.
@@ -189,8 +200,9 @@ class GoogleDriveSource:
     def fetch(self, external_id: str) -> str:
         """Drive 파일 본문을 평문으로 반환한다.
 
-        Google 네이티브 문서(Docs 등)는 export API 로, 그 밖의 파일은
-        `alt=media` 다운로드로 가져온다.
+        Google 네이티브 문서(Docs/Sheets/Slides)는 export API 로, 그 밖의
+        파일은 `alt=media` 다운로드로 가져온다. 네이티브 타입별 export
+        포맷은 `NATIVE_EXPORT_MIME_TYPES` 매핑을 따른다.
 
         Args:
             external_id: Drive file ID.
@@ -199,7 +211,9 @@ class GoogleDriveSource:
             평문 텍스트(설정된 최대 문자 수로 잘림).
 
         Raises:
-            IntegrationError: 파일이 없거나 외부 연동에 실패한 경우.
+            IntegrationError: 파일이 없거나 외부 연동에 실패한 경우, 또는
+                네이티브 타입이지만 텍스트 export 를 지원하지 않는 경우
+                (그림/폼 등).
         """
         if not external_id:
             raise IntegrationError("drive file id must not be empty")
@@ -210,10 +224,16 @@ class GoogleDriveSource:
             )
             mime_type = str(metadata.get("mimeType") or "")
             if mime_type.startswith(GOOGLE_NATIVE_MIME_PREFIX):
+                export_mime_type = NATIVE_EXPORT_MIME_TYPES.get(mime_type)
+                if export_mime_type is None:
+                    raise IntegrationError(
+                        f"google drive file {external_id} has unsupported native type "
+                        f"for text export: {mime_type}"
+                    )
                 text = self._request_text(
                     client,
                     f"/files/{external_id}/export",
-                    params={"mimeType": EXPORT_MIME_TYPE},
+                    params={"mimeType": export_mime_type},
                 )
             else:
                 text = self._request_text(

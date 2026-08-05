@@ -203,7 +203,7 @@ def test_drive_list_files_empty_folder_returns_empty(monkeypatch: pytest.MonkeyP
 
 
 def test_drive_fetch_uses_export_for_google_docs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Google 네이티브 문서는 export API 로 평문 변환해 가져온다."""
+    """Google Docs 는 export API 로 text/plain 평문 변환해 가져온다(기존 동작 유지)."""
     seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -218,6 +218,61 @@ def test_drive_fetch_uses_export_for_google_docs(monkeypatch: pytest.MonkeyPatch
 
     assert source.fetch("f1") == "문서 평문 본문"
     assert seen[-1].endswith("/export")
+
+
+def test_drive_fetch_uses_csv_export_for_google_sheets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Google Sheets 는 text/plain 을 지원하지 않으므로 text/csv 로 export 한다.
+
+    text/plain 으로 요청하면 Drive API 가 400(The requested conversion is
+    not supported)을 반환하므로, 순차 폴백(우선 text/plain 시도 후 실패하면
+    재시도) 이 아니라 fetch 가 이미 쥐고 있는 mimeType 으로 사전에 올바른
+    export 포맷을 결정해야 한다(Sheets 마다 400 왕복이 발생하지 않도록).
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/export"):
+            assert request.url.params["mimeType"] == "text/csv"
+            return httpx.Response(200, text="ord,기능,설명\n1,회원가입,이메일로 가입")
+        return _json({"id": "f1", "mimeType": "application/vnd.google-apps.spreadsheet"})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    assert source.fetch("f1") == "ord,기능,설명\n1,회원가입,이메일로 가입"
+
+
+def test_drive_fetch_uses_plain_export_for_google_slides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Google Slides 도 text/plain 으로 export 한다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/export"):
+            assert request.url.params["mimeType"] == "text/plain"
+            return httpx.Response(200, text="슬라이드 텍스트")
+        return _json({"id": "f1", "mimeType": "application/vnd.google-apps.presentation"})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    assert source.fetch("f1") == "슬라이드 텍스트"
+
+
+def test_drive_fetch_unsupported_native_type_raises_integration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """텍스트 export 를 지원하지 않는 네이티브 타입(그림 등)은 export 호출 없이 명확히 실패한다."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return _json({"id": "f1", "mimeType": "application/vnd.google-apps.drawing"})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    with pytest.raises(IntegrationError, match="drawing"):
+        source.fetch("f1")
+
+    assert not any(path.endswith("/export") for path in calls)
 
 
 def test_drive_fetch_uses_alt_media_for_plain_files(monkeypatch: pytest.MonkeyPatch) -> None:
