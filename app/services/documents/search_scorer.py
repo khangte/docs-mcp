@@ -57,31 +57,37 @@ def _collapse_match_score(query: str, collapsed_haystack: str, token_count: int)
     return 1 / token_count
 
 
-def _match_position(body: str, query_tokens: set[str]) -> int | None:
-    """본문에서 질의와 관련된 구간이 시작되는 원본 인덱스를 찾는다.
+def _match_positions(body: str, query_tokens: set[str]) -> list[int]:
+    """토큰별 최초 매치 위치(원본 `body` 기준 인덱스) 후보 목록을 만든다.
 
     스니펫 생성(`_build_snippet`)과 점수 계산(`_title_score`/`_body_score`)이
     서로 다른 매칭 기준을 쓰면 "점수는 매치로 잡히는데 스니펫은 엉뚱한
     곳을 보여주는" 불일치가 생긴다. 이 헬퍼를 양쪽이 공유해 판단 기준을
     하나로 유지한다.
 
-    토큰마다 "정확 매치 우선, 없으면 collapse" 를 각각 독립적으로 적용한
-    뒤, 모든 토큰의 후보 위치 중 최솟값을 반환한다 — 일부 토큰만 정확
-    매치되는 멀티토큰 질의(예: '주문목록 API')에서, 흔한 토큰('api')이
-    본문 앞쪽에서 정확 매치된다는 이유로 다른 토큰('주문목록')의 collapse
-    매치 시도 자체를 건너뛰면 안 된다. collapse 를 질의 전체가 아니라
+    토큰마다 "정확 매치 우선, 없으면 collapse" 를 각각 독립적으로 적용해
+    후보를 하나씩만 낸다(후보 수 = 토큰 수로 한정 — 흔한 토큰이 본문에
+    수백 번 나와도 후보가 폭증하지 않는다). collapse 를 질의 전체가 아니라
     토큰 단위로 적용해야 '주문목록'이 본문의 '주문 목록' 구간과 제 힘으로
-    매치되어 'api' 의 위치와 동등하게 경쟁할 수 있다.
+    매치되어 'api' 의 위치와 동등한 후보로 나란히 설 수 있다.
+
+    단순히 이 후보들의 최솟값만 취하면, 흔하고 짧은 토큰이 문서 극초반에
+    우연히 있을 때 그 위치가 항상 이겨서 정작 질의의 핵심 토큰이 담긴
+    구간을 못 보여주는 문제가 있다(예: 'api'가 194번째, '주문목록'의
+    collapse 매치가 2522번째인 문서에서 'api' 위치만 선택됨). 그래서 이
+    함수는 최솟값을 고르지 않고 후보 전체를 반환한다 — 실제 스니펫 구간
+    선택(커버리지 비교)은 호출자(`_build_snippet`)의 몫이다.
 
     Args:
         body: 매치 위치를 찾을 본문.
         query_tokens: 질의 토큰 집합.
 
     Returns:
-        원본 `body` 기준 매치 시작 인덱스. 매치가 전혀 없으면 None.
+        각 토큰의 매치 위치 후보 목록(매치 없는 토큰은 제외). 중복 위치는
+        제거하지 않는다 — 호출자가 정렬해 순회한다.
     """
     if not query_tokens:
-        return None
+        return []
     lowered = body.lower()
     collapsed_body, index_map = _collapse_with_index_map(body)
     positions: list[int] = []
@@ -96,9 +102,7 @@ def _match_position(body: str, query_tokens: set[str]) -> int | None:
         collapsed_pos = collapsed_body.find(collapsed_token)
         if collapsed_pos >= 0:
             positions.append(index_map[collapsed_pos])
-    if not positions:
-        return None
-    return min(positions)
+    return positions
 
 
 def _collapse_with_index_map(text: str) -> tuple[str, list[int]]:
