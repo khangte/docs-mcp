@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from app.models.document_meta import DocumentMeta
+from app.services.documents.search_scorer import _match_position
 
 #: 스니펫으로 잘라낼 최대 문자 수.
 SNIPPET_MAX_CHARS = 300
@@ -13,14 +14,21 @@ SNIPPET_LEAD_CHARS = 60
 
 
 def _build_snippet(body: str, query_tokens: set[str]) -> str:
-    """본문에서 질의 토큰이 처음 등장하는 구간을 잘라 스니펫을 만든다."""
+    """본문에서 질의와 관련된 구간을 잘라 스니펫을 만든다.
+
+    매치 위치 판단은 `_match_position` (search_scorer.py) 을 그대로 쓴다.
+    점수 계산과 스니펫 생성이 서로 다른 매칭 기준을 쓰면, 점수는 매치로
+    잡히는데 스니펫은 본문 앞부분만 보여주는 불일치가 생기기 때문이다
+    (예: 질의 토큰이 '주문목록' 이고 본문엔 '주문 목록' 으로만 등장하는
+    경우, collapse 보정 없이는 본문 맨 앞의 다른 토큰 매치로 스니펫이
+    잘못 잡힌다).
+    """
     if not body:
         return ""
-    lowered = body.lower()
-    positions = [pos for pos in (lowered.find(t) for t in query_tokens) if pos >= 0]
-    if not positions:
+    position = _match_position(body, query_tokens)
+    if position is None:
         return _clean_snippet(body[:SNIPPET_MAX_CHARS])
-    start = max(0, min(positions) - SNIPPET_LEAD_CHARS)
+    start = max(0, position - SNIPPET_LEAD_CHARS)
     return _clean_snippet(body[start : start + SNIPPET_MAX_CHARS])
 
 

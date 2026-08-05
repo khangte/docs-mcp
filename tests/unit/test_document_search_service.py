@@ -290,6 +290,33 @@ def test_snippet_contains_query_context(
     assert "refresh" in items[0].snippet
 
 
+def test_snippet_finds_whitespace_variant_match_not_file_start(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """질의 토큰이 붙여쓰기('주문목록')여도 본문의 띄어쓰기 표현('주문 목록')
+    구간에서 스니펫이 시작되지, 본문 뒤쪽의 무관한 exact 매치로 잘못 잡히지 않는다.
+
+    실제 회귀 사례: 질의 '주문목록 API' 검색 시, 본문에 '주문목록'이라는
+    붙은 문자열이 없어 collapse 보정 없이는 다른 토큰('api')의 exact 매치
+    위치로 스니펫이 잘못 잡혔다. 이 테스트는 '주문 목록'(collapse 매치)이
+    'api'(exact 매치)보다 본문에서 더 앞에 있는 상황을 구성해, "exact 매치가
+    하나라도 있으면 collapse 시도 자체를 건너뛰는" 구버그를 재현한다 —
+    그 버그가 있으면 뒤쪽 'api' 위치가 선택돼 '주문' 관련 내용이 스니펫에
+    빠진다.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "API 명세서")
+    fake_drive_source.bodies["d1"] = (
+        "여기부터 주문 목록 조회 관련 설명이 이어진다. "
+        + "무관한 설명이 계속 이어진다. " * 60
+        + "맨 뒤쪽에서야 POST /api/user/signup 이 등장한다."
+    )
+
+    items = search_service.search("주문목록 API", DocumentSearchOptions())
+
+    assert "주문" in items[0].snippet
+    assert "signup" not in items[0].snippet
+
+
 def test_body_match_outranks_title_only_match(
     db_session, search_service, fake_drive_source
 ) -> None:

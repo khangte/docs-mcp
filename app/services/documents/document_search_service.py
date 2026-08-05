@@ -288,7 +288,8 @@ class DocumentSearchService:
                     source=row.source,
                     project=row.project,
                     url=row.url,
-                    snippet=_build_snippet(body, query_tokens) or _fallback_snippet(row, query),
+                    snippet=_build_snippet(body, query_tokens)
+                    or _fallback_snippet(row, query),
                     score=round(
                         TITLE_SCORE_WEIGHT * title_score + BODY_SCORE_WEIGHT * body_score, 4
                     ),
