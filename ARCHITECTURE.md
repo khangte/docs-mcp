@@ -113,6 +113,11 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
   database_id)으로부터 `ProjectSourceResolver` 가 만들어낸다. 서비스 계정
   자격증명(Drive)과 Integration Token(Notion)은 서버 전역에서 공유하고,
   프로젝트마다 달라지는 것은 폴더/DB 범위뿐이다.
+- Drive 원문 조회 시 Google 네이티브 문서는 export API 로 평문 변환하고,
+  PDF/DOCX/XLSX/PPTX 바이너리는 `alt=media` 로 다운로드한 뒤 MIME 타입별
+  파서(`app/services/parser/`)로 라우팅해 텍스트를 추출한다. 매핑에 없는
+  바이너리는 다운로드 자체를 하지 않고 즉시 실패시키며, `max_download_bytes`
+  로 파싱 진입 전 과대 파일을 차단한다.
 
 ## 6. MCP 도구 계약 (Interface)
 
@@ -125,7 +130,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
 5. `resolve_ref`: `$ref` 컴포넌트 스키마 필드 펼치기 (`project`/`document_id` 필터 가능)
 6. `list_tags`: 등록 문서의 태그 목록 조회 (`project`/`document_id` 필터 가능)
 
-**협업 문서 (Google Drive / Notion)** 7. `search_documents`: Drive/Notion 문서 검색 (`project` 필터 가능) 8. `get_document`: 협업 문서 원문 실시간 조회 9. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터 가능)
+**협업 문서 (Google Drive / Notion)** 7. `search_documents`: Drive/Notion 문서 검색 (`project` 필터, 결과 부족 시 `query_variants` 로 후보 필터 확장 가능) 8. `get_document`: 협업 문서 원문 실시간 조회 9. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터, `include_registered`+`force` 로 URL 기반 ApiDocument 재동기화 가능)
 
 **프로젝트→소스 매핑 (Drive/Notion 각 3종, 대칭)** 10. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록 11. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회 12. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
 

@@ -192,9 +192,9 @@ MCP 클라이언트 등록 시 `command`+`args`를 `uv run python -m app.mcp.ser
 | `get_endpoint_details`   | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함)                                                                                            | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
 | `resolve_ref`            | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다                       | name, document_id, fields[{name, type, required, description}]                                                          |
 | `list_tags`              | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다                                                                        | tags[{name, endpoint_count}]                                                                                            |
-| `search_documents`       | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다                                          | items[{title, source, project, url, snippet, score}]                                                                    |
+| `search_documents`       | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다. 결과 0건/부족 시 `query_variants`(동의어·유사 표현 목록)로 후보 필터만 넓혀 재질의할 수 있다(점수·순위엔 영향 없음) | items[{title, source, project, url, snippet, score}]                                                                    |
 | `get_document`           | `source`("drive"/"notion")와 `external_id`(Drive file ID 또는 Notion page ID)로 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님)                               | title, source, url, content                                                                                             |
-| `refresh_index`          | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다                                                         | synced, added, updated, removed, failed_sources                                                                         |
+| `refresh_index`          | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다. `include_registered=true`(기본 false)면 URL로 등록한 ApiDocument 도 원본을 재fetch+재색인한다(`raw_document` 등록분은 자동 제외, `force=true` 로 해시 동일해도 강제 재색인) | synced, added, updated, removed, failed_sources, (include_registered=true 일 때만) registered{total, reindexed, skipped, failed} |
 | `register_drive_source`  | 프로젝트에 Google Drive 폴더를 매핑한다(upsert, 같은 project 재호출 시 폴더 교체)                                                                                                | project, folder_id, status                                                                                              |
 | `list_drive_sources`     | 등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다                                                                            | items[{project, folder_id, created_at, updated_at}]                                                                     |
 | `remove_drive_source`    | 프로젝트의 Drive 폴더 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님)                                                                                                        | project, removed                                                                                                        |
@@ -212,6 +212,18 @@ Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호
 **"소스 미설정"과 "검색 결과 0건"은 구별된다** — 소스가 정상 구성됐는데 질의에
 맞는 문서가 없으면 `search_documents` 는 오류가 아니라 빈 `items` 를 돌려준다.
 어느 경우든 OpenAPI 경로는 영향받지 않는다.
+
+`search_documents` 결과가 0건이거나 기대보다 적으면 문서 제목이 질의와 다른
+표현을 쓰고 있을 가능성이 크다(예: "주문조회 API" 질의로 "결제 내역 조회"
+문서를 못 찾음). 이럴 때는 같은 `query` 로 재호출하되 `query_variants` 에
+동의어·영한 혼용·유사 표현을 담아 넘긴다:
+
+```
+search_documents(query="주문조회 API", query_variants=["결제 내역 조회", "order lookup"])
+```
+
+`query_variants` 는 1단계 SQL 후보 필터만 넓히고 점수·순위 계산에는 섞이지
+않는다 — 상위 결과는 여전히 `query` 원본 토큰과 가장 잘 맞는 문서다.
 
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
@@ -268,6 +280,11 @@ register_drive_source(project="my-api", folder_id="<Drive 폴더 ID>")
 
 폴더 자체를 색인하지는 않습니다. 매핑 후 `refresh_index` 를 실행해야
 메타 캐시(제목·수정일)가 채워지고 `search_documents` 대상이 됩니다.
+
+Google 네이티브 문서(Docs/Sheets/Slides)는 물론, PDF/DOCX/XLSX/PPTX
+바이너리 파일도 업로드해두면 텍스트를 추출해 검색 대상이 됩니다. 그 외
+바이너리(이미지/영상 등)는 텍스트 추출을 지원하지 않아 조회 시 오류로
+처리됩니다.
 
 **(E) Notion — 데이터베이스 또는 페이지 매핑**
 
