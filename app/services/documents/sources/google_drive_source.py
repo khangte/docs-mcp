@@ -17,11 +17,12 @@ from typing import Any
 
 import httpx
 
-from app.core.errors import IntegrationError
+from app.core.errors import IntegrationError, ParserError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_DRIVE
 from app.services.documents.sources.document_source import FileMeta
 from app.services.documents.sources.time_parsing import parse_rfc3339
+from app.services.parser import docx_parser, pdf_parser, pptx_parser, xlsx_parser
 
 _LOG = get_logger("docs_mcp.documents.drive")
 
@@ -42,6 +43,22 @@ NATIVE_EXPORT_MIME_TYPES: dict[str, str] = {
     GOOGLE_DOC_MIME_TYPE: "text/plain",
     "application/vnd.google-apps.spreadsheet": "text/csv",
     "application/vnd.google-apps.presentation": "text/plain",
+}
+PDF_MIME_TYPE = "application/pdf"
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+XLSX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+PPTX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+#: alt=media 로 다운로드한 뒤 텍스트를 추출할 바이너리 포맷. 파서는
+#: app/services/parser/ 의 기존 구현(PDF/DOCX 는 ingestor 경로에서 이미
+#: 검증됨, XLSX/PPTX 는 같은 패턴으로 신규 작성)을 재사용한다. 매핑에 없는
+#: 바이너리(이미지/영상 등)는 텍스트 추출을 지원하지 않으므로 명확히
+#: 실패시킨다(Sheets export MIME 미지원 처리와 같은 원칙 — 깨진 바이트를
+#: 텍스트인 척 반환하지 않는다).
+BINARY_TEXT_EXTRACTORS = {
+    PDF_MIME_TYPE: pdf_parser.extract_text,
+    DOCX_MIME_TYPE: docx_parser.extract_text,
+    XLSX_MIME_TYPE: xlsx_parser.extract_text,
+    PPTX_MIME_TYPE: pptx_parser.extract_text,
 }
 #: Drive files.list 한 페이지 최대 개수(API 상한 1000).
 PAGE_SIZE = 200
@@ -138,6 +155,7 @@ class GoogleDriveSource:
         token_provider: ServiceAccountTokenProvider,
         timeout_seconds: float = 15.0,
         max_chars: int = 200_000,
+        max_download_bytes: int = 50_000_000,
         api_base: str = DRIVE_API_BASE,
     ) -> None:
         """대상 폴더·토큰 발급기·HTTP 옵션을 보관한다.
@@ -147,6 +165,12 @@ class GoogleDriveSource:
             token_provider: 액세스 토큰 발급기.
             timeout_seconds: HTTP 타임아웃.
             max_chars: 본문 fetch 시 잘라낼 최대 문자 수(과대 응답 방지).
+            max_download_bytes: PDF/DOCX/XLSX/PPTX 바이너리 다운로드 크기
+                상한. `max_chars` 는 텍스트 추출 *이후* 자르는 값이라
+                수백MB 짜리 파일이면 파싱 자체가 메모리를 크게 잡아먹는다
+                — 파싱 진입 전에 크기를 검사해 과대 파일의 파싱을
+                차단한다(응답은 이미 `response.content` 로 전부 받은
+                뒤이므로 진짜 스트리밍 중단은 아니다).
             api_base: Drive REST API 베이스 URL(테스트에서 교체 가능).
 
         Raises:
@@ -160,6 +184,7 @@ class GoogleDriveSource:
         self._token_provider = token_provider
         self._timeout = timeout_seconds
         self._max_chars = max_chars
+        self._max_download_bytes = max_download_bytes
         self._api_base = api_base.rstrip("/")
 
     @property
@@ -200,9 +225,17 @@ class GoogleDriveSource:
     def fetch(self, external_id: str) -> str:
         """Drive 파일 본문을 평문으로 반환한다.
 
-        Google 네이티브 문서(Docs/Sheets/Slides)는 export API 로, 그 밖의
-        파일은 `alt=media` 다운로드로 가져온다. 네이티브 타입별 export
-        포맷은 `NATIVE_EXPORT_MIME_TYPES` 매핑을 따른다.
+        Google 네이티브 문서(Docs/Sheets/Slides)는 export API 로 평문
+        변환해 가져온다(`NATIVE_EXPORT_MIME_TYPES` 매핑). 그 밖의 파일은
+        `alt=media` 로 다운로드하는데, 이후 처리는 mimeType 에 따라
+        갈린다:
+
+        - `text/*` (txt/md 등): 응답을 그대로 텍스트로 쓴다.
+        - PDF/DOCX/XLSX/PPTX (`BINARY_TEXT_EXTRACTORS`): 바이트를 받아
+          기존 파서(ingestor 경로에서 이미 검증된 것과 동일 구현)로 텍스트를
+          추출한다.
+        - 그 외(이미지/영상 등): 텍스트로 변환할 방법이 없으므로 깨진
+          바이트를 텍스트인 척 반환하지 않고 명확히 실패시킨다.
 
         Args:
             external_id: Drive file ID.
@@ -211,9 +244,9 @@ class GoogleDriveSource:
             평문 텍스트(설정된 최대 문자 수로 잘림).
 
         Raises:
-            IntegrationError: 파일이 없거나 외부 연동에 실패한 경우, 또는
-                네이티브 타입이지만 텍스트 export 를 지원하지 않는 경우
-                (그림/폼 등).
+            IntegrationError: 파일이 없거나 외부 연동에 실패한 경우, 텍스트
+                추출을 지원하지 않는 형식인 경우, 또는 다운로드 크기가
+                상한을 넘는 경우.
         """
         if not external_id:
             raise IntegrationError("drive file id must not be empty")
@@ -224,22 +257,49 @@ class GoogleDriveSource:
             )
             mime_type = str(metadata.get("mimeType") or "")
             if mime_type.startswith(GOOGLE_NATIVE_MIME_PREFIX):
-                export_mime_type = NATIVE_EXPORT_MIME_TYPES.get(mime_type)
-                if export_mime_type is None:
-                    raise IntegrationError(
-                        f"google drive file {external_id} has unsupported native type "
-                        f"for text export: {mime_type}"
-                    )
-                text = self._request_text(
-                    client,
-                    f"/files/{external_id}/export",
-                    params={"mimeType": export_mime_type},
-                )
-            else:
+                text = self._fetch_native_export(client, external_id, mime_type)
+            elif mime_type.startswith("text/"):
                 text = self._request_text(
                     client, f"/files/{external_id}", params={"alt": "media"}
                 )
+            else:
+                text = self._fetch_binary_text(client, external_id, mime_type)
         return text[: self._max_chars]
+
+    def _fetch_native_export(
+        self, client: httpx.Client, external_id: str, mime_type: str
+    ) -> str:
+        """Google 네이티브 문서를 export API 로 평문 변환해 가져온다."""
+        export_mime_type = NATIVE_EXPORT_MIME_TYPES.get(mime_type)
+        if export_mime_type is None:
+            raise IntegrationError(
+                f"google drive file {external_id} has unsupported native type "
+                f"for text export: {mime_type}"
+            )
+        return self._request_text(
+            client, f"/files/{external_id}/export", params={"mimeType": export_mime_type}
+        )
+
+    def _fetch_binary_text(self, client: httpx.Client, external_id: str, mime_type: str) -> str:
+        """PDF/DOCX/XLSX/PPTX 를 다운로드해 기존 파서로 텍스트를 추출한다."""
+        extractor = BINARY_TEXT_EXTRACTORS.get(mime_type)
+        if extractor is None:
+            raise IntegrationError(
+                f"google drive file {external_id} has unsupported binary type "
+                f"for text extraction: {mime_type}"
+            )
+        data = self._request_bytes(client, f"/files/{external_id}", params={"alt": "media"})
+        if len(data) > self._max_download_bytes:
+            raise IntegrationError(
+                f"google drive file {external_id} exceeds download size limit "
+                f"({len(data)} > {self._max_download_bytes} bytes)"
+            )
+        try:
+            return extractor(data)
+        except ParserError as exc:
+            raise IntegrationError(
+                f"google drive file {external_id} failed to parse as {mime_type}: {exc}"
+            ) from exc
 
     # --- 내부 HTTP 헬퍼 ---------------------------------------------------
 
@@ -289,6 +349,12 @@ class GoogleDriveSource:
     ) -> str:
         """Drive API 를 호출해 본문을 텍스트로 반환한다."""
         return self._send(client, "GET", path, params).text
+
+    def _request_bytes(
+        self, client: httpx.Client, path: str, params: dict[str, Any] | None = None
+    ) -> bytes:
+        """Drive API 를 호출해 본문을 원시 바이트로 반환한다(바이너리 파싱용)."""
+        return self._send(client, "GET", path, params).content
 
     def _send(
         self,

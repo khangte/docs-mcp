@@ -275,6 +275,155 @@ def test_drive_fetch_unsupported_native_type_raises_integration_error(
     assert not any(path.endswith("/export") for path in calls)
 
 
+# --- Drive: fetch (PDF/DOCX/XLSX/PPTX 바이너리 텍스트 추출) ----------------------
+
+
+def test_drive_fetch_extracts_text_from_pdf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PDF 는 alt=media 로 다운로드한 뒤 pdf_parser 로 텍스트를 추출한다."""
+    from tests.unit.test_pdf_docx_parser import _make_pdf_bytes
+
+    data = _make_pdf_bytes("Drive PDF Content")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, content=data)
+        return _json({"id": "f1", "mimeType": "application/pdf"})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    assert "Drive PDF Content" in source.fetch("f1")
+
+
+def test_drive_fetch_extracts_text_from_docx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DOCX 는 alt=media 로 다운로드한 뒤 docx_parser 로 텍스트를 추출한다."""
+    from tests.unit.test_pdf_docx_parser import _make_docx_bytes
+
+    data = _make_docx_bytes(["Drive DOCX 문단"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, content=data)
+        return _json(
+            {
+                "id": "f1",
+                "mimeType": (
+                    "application/vnd.openxmlformats-officedocument"
+                    ".wordprocessingml.document"
+                ),
+            }
+        )
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    assert "Drive DOCX 문단" in source.fetch("f1")
+
+
+def test_drive_fetch_extracts_text_from_xlsx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """XLSX 는 alt=media 로 다운로드한 뒤 xlsx_parser 로 텍스트를 추출한다."""
+    from tests.unit.test_xlsx_pptx_parser import _make_xlsx_bytes
+
+    data = _make_xlsx_bytes([["강민혁", "백엔드"]])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, content=data)
+        return _json(
+            {
+                "id": "f1",
+                "mimeType": (
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
+            }
+        )
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    assert "강민혁" in source.fetch("f1")
+
+
+def test_drive_fetch_extracts_text_from_pptx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PPTX 는 alt=media 로 다운로드한 뒤 pptx_parser 로 텍스트를 추출한다."""
+    from tests.unit.test_xlsx_pptx_parser import _make_pptx_bytes
+
+    data = _make_pptx_bytes(["Drive 슬라이드 제목"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, content=data)
+        return _json(
+            {
+                "id": "f1",
+                "mimeType": (
+                    "application/vnd.openxmlformats-officedocument"
+                    ".presentationml.presentation"
+                ),
+            }
+        )
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    assert "Drive 슬라이드 제목" in source.fetch("f1")
+
+
+def test_drive_fetch_unsupported_binary_type_raises_integration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """텍스트 추출을 지원하지 않는 바이너리(이미지 등)는 다운로드 없이 명확히 실패한다."""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(dict(request.url.params)))
+        return _json({"id": "f1", "mimeType": "image/png"})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    with pytest.raises(IntegrationError, match="image/png"):
+        source.fetch("f1")
+
+    assert not any("alt" in call for call in calls)
+
+
+def test_drive_fetch_binary_exceeding_download_limit_raises_integration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """다운로드 크기가 max_download_bytes 를 넘으면 파싱 시도 없이 IntegrationError 다."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, content=b"x" * 1000)
+        return _json({"id": "f1", "mimeType": "application/pdf"})
+
+    source = GoogleDriveSource(
+        folder_id="root", token_provider=StubTokenProvider(), max_download_bytes=100
+    )
+    _patch_client(monkeypatch, source, handler)
+
+    with pytest.raises(IntegrationError, match="exceeds download size limit"):
+        source.fetch("f1")
+
+
+def test_drive_fetch_corrupt_pdf_bytes_raises_integration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PDF 파싱 실패(ParserError)는 IntegrationError 로 변환된다(계약 유지)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, content=b"not a real pdf")
+        return _json({"id": "f1", "mimeType": "application/pdf"})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    with pytest.raises(IntegrationError, match="failed to parse"):
+        source.fetch("f1")
+
+
 def test_drive_fetch_uses_alt_media_for_plain_files(monkeypatch: pytest.MonkeyPatch) -> None:
     """일반 파일은 alt=media 다운로드로 가져온다."""
 
