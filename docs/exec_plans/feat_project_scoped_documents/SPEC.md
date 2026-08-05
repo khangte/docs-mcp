@@ -1,5 +1,7 @@
 # docs-mcp: 프로젝트 단위 문서 격리 (project scoped documents)
 
+> **[2026-08-05]** 이 문서에 등장하는 FastAPI 관련 내용은 코드베이스에서 제거되었습니다. 현재는 MCP 서버 단일 진입점 구조입니다.
+
 ## 개요
 
 docs-mcp 는 현재 하나의 MCP 서버 프로세스와 하나의 Postgres DB 를 여러 개발 프로젝트가 공유한다. 그런데 `api_document` / `document_meta` 어디에도 "어느 프로젝트의 문서인가"를 나타내는 정보가 없어서, 프로젝트 A 에서 Claude Code 로 `search_endpoints("주문 조회")` 를 호출하면 프로젝트 B 의 OpenAPI 엔드포인트가 같이 나온다. Google Drive 역시 `DOCS_MCP_DRIVE_FOLDER_ID` 환경변수 하나로 폴더가 서버 전역 고정이라, 프로젝트마다 다른 Drive 폴더를 볼 수 없다.

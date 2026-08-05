@@ -1,5 +1,7 @@
 # EXEC_PLAN
 
+> **[2026-08-05]** 이 문서에 등장하는 FastAPI 관련 내용은 코드베이스에서 제거되었습니다. 현재는 MCP 서버 단일 진입점 구조입니다.
+
 ## 목표
 - 이 프로젝트를 Claude 및 ChatGPT에서 사용할 수 있는 MCP(Model Context Protocol) 서버로 전환하여, LLM이 OpenAPI 문서를 지능적으로 검색하고 자연어로 질의응답할 수 있게 한다.
 

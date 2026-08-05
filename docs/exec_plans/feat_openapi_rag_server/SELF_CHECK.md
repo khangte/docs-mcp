@@ -1,5 +1,7 @@
 # 자체 점검
 
+> **[2026-08-05]** 이 문서에 등장하는 FastAPI 관련 내용은 코드베이스에서 제거되었습니다. 현재는 MCP 서버 단일 진입점 구조입니다.
+
 ## SPEC 기능 체크
 
 - [x] 기능 1 (OpenAPI 문서 등록): `src/services/ingestor/sync_service.py::SyncService.register` + `src/api/routes/documents.py` — `tests/unit/test_sync_service.py`, `tests/integration/test_api_documents.py`

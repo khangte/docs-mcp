@@ -1,5 +1,7 @@
 # QA 검수 보고서 — OpenAPI 재구조화 (커밋 `5870f90`)
 
+> **[2026-08-05]** 이 문서에 등장하는 FastAPI 관련 내용은 코드베이스에서 제거되었습니다. 현재는 MCP 서버 단일 진입점 구조입니다.
+
 - **검수 대상**: 검수 당시 `/home/kang/projects/docs-mcp-expansion` (브랜치
   `feat/docs-mcp-expansion`). 이후 해당 워크트리는 제거됐고 작업분은
   `refactor/260727`에 머지됐다.
