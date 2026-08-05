@@ -46,7 +46,6 @@ from app.services.ingestor.sync_service import SyncService
 from app.services.schema_resolution.schema_ref_resolver import SchemaRefResolver
 from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
 from app.services.search.keyword_search import KeywordSearch
-from app.services.search.search_service import SearchService
 from app.services.search.vector_search import VectorSearch
 from app.services.tags.tag_catalog_service import TagCatalogService
 
@@ -146,7 +145,6 @@ class ServiceBundle:
     sync_history_repo: SyncHistoryRepository
     document_meta_repo: DocumentMetaRepository
     sync_service: SyncService
-    search_service: SearchService
     example_service: RequestExampleService
     candidate_search: EndpointCandidateSearch
     endpoint_details_service: EndpointDetailsService
@@ -189,13 +187,6 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         )
         keyword_search = KeywordSearch(chunk_repo)
         vector_search = VectorSearch(state.embedding_provider, chunk_repo)
-        search_service = SearchService(
-            chunk_repo=chunk_repo,
-            endpoint_repo=endpoint_repo,
-            keyword_search=keyword_search,
-            vector_search=vector_search,
-            hybrid_alpha=state.hybrid_alpha,
-        )
         example_service = RequestExampleService(endpoint_repo)
         candidate_search = EndpointCandidateSearch(
             chunk_repo=chunk_repo,
@@ -249,7 +240,6 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             sync_history_repo=sync_history_repo,
             document_meta_repo=document_meta_repo,
             sync_service=sync_service,
-            search_service=search_service,
             example_service=example_service,
             candidate_search=candidate_search,
             endpoint_details_service=endpoint_details_service,
