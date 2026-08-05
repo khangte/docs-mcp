@@ -543,47 +543,31 @@ def test_get_document_picks_most_recently_synced_project_when_shared(
     assert content.content == "B 본문"
 
 
-# --- LLM 질의확장(1단계 SQL 후보 게이트 확장) -----------------------------------
+# --- 질의확장(query_variants, 1단계 SQL 후보 게이트 확장) -----------------------
 
 
-class _FakeQueryExpander:
-    """호출 횟수·인자를 기록하는 페이크 QueryExpander."""
-
-    def __init__(self, tokens_by_query: dict[str, list[str]] | None = None) -> None:
-        self._tokens_by_query = tokens_by_query or {}
-        self.calls: list[str] = []
-        self.should_raise = False
-
-    def expand(self, query: str) -> list[str]:
-        self.calls.append(query)
-        if self.should_raise:
-            raise IntegrationError("fake query expander failure")
-        return self._tokens_by_query.get(query, [])
-
-
-def test_query_expansion_widens_sql_candidate_gate(
-    db_session, default_resolver, fake_drive_source
+def test_query_variants_widen_sql_candidate_gate(
+    db_session, search_service, fake_drive_source
 ) -> None:
-    """제목에 원본 질의 토큰이 없어도 LLM 확장 토큰과 일치하면 후보에 포함된다."""
+    """제목에 원본 질의 토큰이 없어도 query_variants 토큰과 일치하면 후보에 포함된다.
+
+    질의확장은 이제 서버(LLM 호출)가 아니라 호출자(Claude)가 search_documents
+    호출 시 query_variants 로 동의어를 함께 넘기는 방식이다.
+    """
     _seed_meta(db_session, SOURCE_DRIVE, "d1", "결제 내역 조회 가이드")
     fake_drive_source.bodies["d1"] = "주문 상태를 확인하는 방법을 설명한다."
-    expander = _FakeQueryExpander({"주문조회 API": ["결제", "내역"]})
-    service = DocumentSearchService(
-        meta_repo=DocumentMetaRepository(db_session),
-        resolver=default_resolver,
-        query_expander=expander,
+
+    items = search_service.search(
+        "주문조회 API", DocumentSearchOptions(query_variants=["결제", "내역"])
     )
 
-    items = service.search("주문조회 API", DocumentSearchOptions())
-
     assert [i.title for i in items] == ["결제 내역 조회 가이드"]
-    assert expander.calls == ["주문조회 API"]
 
 
-def test_query_expansion_tokens_do_not_affect_score(
-    db_session, default_resolver, fake_drive_source
+def test_query_variants_do_not_affect_score(
+    db_session, search_service, fake_drive_source
 ) -> None:
-    """확장 토큰은 후보를 넓히는 용도로만 쓰이고, 점수 계산에는 원본 토큰만 반영된다.
+    """query_variants 토큰은 후보를 넓히는 용도로만 쓰이고, 점수 계산에는 원본 토큰만 반영된다.
 
     "로그인"만 검색해도 확장 토큰("계정")이 점수 계산에 섞이면 제목에
     "계정"만 있고 "로그인"이 없는 문서도 원본 토큰 일치 문서와 동일하거나
@@ -594,14 +578,10 @@ def test_query_expansion_tokens_do_not_affect_score(
     _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
     fake_drive_source.bodies["exact"] = "로그인 흐름 설명"
     fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
-    expander = _FakeQueryExpander({"로그인": ["계정"]})
-    service = DocumentSearchService(
-        meta_repo=DocumentMetaRepository(db_session),
-        resolver=default_resolver,
-        query_expander=expander,
-    )
 
-    items = service.search("로그인", DocumentSearchOptions())
+    items = search_service.search(
+        "로그인", DocumentSearchOptions(query_variants=["계정"])
+    )
 
     titles = [i.title for i in items]
     assert "로그인 설계서" in titles
@@ -610,42 +590,20 @@ def test_query_expansion_tokens_do_not_affect_score(
     )
 
 
-def test_query_expansion_failure_falls_back_to_original_tokens(
-    db_session, default_resolver, fake_drive_source
+def test_no_query_variants_behaves_like_before(
+    db_session, search_service, fake_drive_source
 ) -> None:
-    """LLM 질의확장 호출이 예외를 던져도 검색은 원본 토큰만으로 계속 동작한다."""
+    """query_variants 를 주지 않으면(기본 None) 기존 동작과 동일하게 원본 토큰만 쓴다."""
     _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
     fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
-    expander = _FakeQueryExpander()
-    expander.should_raise = True
-    service = DocumentSearchService(
-        meta_repo=DocumentMetaRepository(db_session),
-        resolver=default_resolver,
-        query_expander=expander,
-    )
 
-    items = service.search("로그인", DocumentSearchOptions())
+    items = search_service.search("로그인", DocumentSearchOptions())
 
     assert [i.title for i in items] == ["로그인 설계서"]
 
 
-def test_no_query_expander_behaves_like_before(
-    db_session, default_resolver, fake_drive_source
-) -> None:
-    """query_expander 를 주지 않으면(기본 None) 기존 동작과 동일하게 원본 토큰만 쓴다."""
-    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
-    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
-    service = DocumentSearchService(
-        meta_repo=DocumentMetaRepository(db_session), resolver=default_resolver
-    )
-
-    items = service.search("로그인", DocumentSearchOptions())
-
-    assert [i.title for i in items] == ["로그인 설계서"]
-
-
-def test_top_k_one_original_match_wins_fetch_slot_over_expansion_only(
-    db_session, default_resolver, fake_drive_source
+def test_top_k_one_original_match_wins_fetch_slot_over_variant_only(
+    db_session, search_service, fake_drive_source
 ) -> None:
     """top_k=1 이고 원본매치 1건 + 확장전용매치 1건이 동시 후보일 때, 원본매치만 반환된다.
 
@@ -658,14 +616,10 @@ def test_top_k_one_original_match_wins_fetch_slot_over_expansion_only(
     _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
     fake_drive_source.bodies["original"] = "로그인 흐름 설명"
     fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
-    expander = _FakeQueryExpander({"로그인": ["계정"]})
-    service = DocumentSearchService(
-        meta_repo=DocumentMetaRepository(db_session),
-        resolver=default_resolver,
-        query_expander=expander,
-    )
 
-    items = service.search("로그인", DocumentSearchOptions(top_k=1))
+    items = search_service.search(
+        "로그인", DocumentSearchOptions(top_k=1, query_variants=["계정"])
+    )
 
     assert [i.title for i in items] == ["로그인 설계서"]
     assert fake_drive_source.fetch_call_count == 1
@@ -673,7 +627,7 @@ def test_top_k_one_original_match_wins_fetch_slot_over_expansion_only(
 
 
 def test_top_k_two_includes_both_but_original_match_ranks_first(
-    db_session, default_resolver, fake_drive_source
+    db_session, search_service, fake_drive_source
 ) -> None:
     """top_k=2 로 슬롯이 남으면 확장전용매치도 포함되지만, 원본매치가 항상 상위다.
 
@@ -685,14 +639,24 @@ def test_top_k_two_includes_both_but_original_match_ranks_first(
     _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
     fake_drive_source.bodies["original"] = "로그인 흐름 설명"
     fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
-    expander = _FakeQueryExpander({"로그인": ["계정"]})
-    service = DocumentSearchService(
-        meta_repo=DocumentMetaRepository(db_session),
-        resolver=default_resolver,
-        query_expander=expander,
-    )
 
-    items = service.search("로그인", DocumentSearchOptions(top_k=2))
+    items = search_service.search(
+        "로그인", DocumentSearchOptions(top_k=2, query_variants=["계정"])
+    )
 
     assert {i.title for i in items} == {"로그인 설계서", "계정 관리 문서"}
     assert items[0].title == "로그인 설계서"
+
+
+def test_query_variants_ignores_blank_and_empty_entries(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """query_variants 에 빈 문자열/공백만 있는 항목이 섞여 있어도 정상 동작한다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+
+    items = search_service.search(
+        "로그인", DocumentSearchOptions(query_variants=["", "   "])
+    )
+
+    assert [i.title for i in items] == ["로그인 설계서"]

@@ -49,11 +49,6 @@ class Settings:
             "DOCS_MCP_GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"
         )
     )
-    gemini_query_expansion_model: str = field(
-        default_factory=lambda: os.environ.get(
-            "DOCS_MCP_GEMINI_QUERY_EXPANSION_MODEL", "gemini-2.5-flash"
-        )
-    )
     # --- Google Drive (문서 검색 소스) ---
     drive_folder_id: str | None = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_DRIVE_FOLDER_ID") or None

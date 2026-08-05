@@ -76,10 +76,10 @@ async def test_openapi_tools_are_not_broken(mcp_server: FastMCP) -> None:
 
 @pytest.mark.asyncio()
 async def test_search_documents_signature(mcp_server: FastMCP) -> None:
-    """search_documents 는 query/top_k/source/project 네 파라미터를 노출한다."""
+    """search_documents 는 query/top_k/source/project/query_variants 다섯 파라미터를 노출한다."""
     properties = await _tool_parameters(mcp_server, "search_documents")
 
-    assert set(properties) == {"query", "top_k", "source", "project"}
+    assert set(properties) == {"query", "top_k", "source", "project", "query_variants"}
     assert properties["top_k"]["default"] == 5
 
 
@@ -386,6 +386,28 @@ async def test_search_documents_empty_query_returns_error_payload(
 
     assert payload["error"] is True
     assert payload["code"] == "validation_error"
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_query_variants_widen_candidates(seeded_mcp: FastMCP) -> None:
+    """원본 질의 토큰만으로는 0건이어도 query_variants 를 넘기면 후보를 찾는다.
+
+    seeded_mcp 는 "배포 운영 가이드" 문서를 갖고 있다. "무중단 서비스 릴리즈"
+    라는, 제목과 겹치는 토큰이 하나도 없는 질의로는 0건이어야 하고,
+    query_variants 로 "배포"를 넘기면 그 문서를 찾아야 한다.
+    """
+    empty = _result(
+        await seeded_mcp.call_tool("search_documents", {"query": "무중단 서비스 릴리즈"})
+    )
+    assert empty["items"] == []
+
+    widened = _result(
+        await seeded_mcp.call_tool(
+            "search_documents",
+            {"query": "무중단 서비스 릴리즈", "query_variants": ["배포"]},
+        )
+    )
+    assert "배포 운영 가이드" in {i["title"] for i in widened["items"]}
 
 
 @pytest.mark.asyncio()

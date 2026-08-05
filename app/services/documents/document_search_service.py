@@ -15,6 +15,11 @@ SPEC 기능 6 이후 소스는 project → folder_id/database_id 매핑에서 �
 만들어진다(`ProjectSourceResolver`). 같은 `source`(`drive`/`notion`) 라도
 project 마다 다른 폴더/DB 를 가리키므로, 후보 행의 `project` 로 어댑터를
 고른다(`row.source` 만으로는 부족).
+
+`DocumentSearchOptions.query_variants` 로 호출자(Claude)가 동의어/유사
+표현을 함께 넘기면 1단계 SQL 후보 필터만 넓어진다(서버가 자체적으로 LLM을
+호출해 질의를 확장하지 않는다 — 그 판단과 비용은 호출자 쪽 모델이 진다).
+점수 계산은 항상 원본 질의 토큰만 사용한다.
 """
 
 from __future__ import annotations
@@ -31,7 +36,6 @@ from app.services.documents.sources.document_source import (
     DocumentSource,
 )
 from app.services.documents.project_source_resolver import ProjectSourceResolver
-from app.services.documents.query_expander import QueryExpander
 from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
 from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 
@@ -59,6 +63,10 @@ class DocumentSearchOptions:
     top_k: int = 5
     source: str | None = None
     project: str | None = None
+    #: 호출자(Claude)가 원본 질의와 함께 넘기는 동의어/유사 표현.
+    #: 1단계 SQL 후보 필터(search_by_tokens)만 넓히는 데 쓰고, 점수 계산에는
+    #: 절대 섞이지 않는다 — 순위는 항상 원본 질의 토큰만으로 결정된다.
+    query_variants: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -90,26 +98,23 @@ class DocumentSearchService:
         self,
         meta_repo: DocumentMetaRepository,
         resolver: ProjectSourceResolver,
-        query_expander: QueryExpander | None = None,
     ) -> None:
         """저장소와 프로젝트 소스 리졸버를 보관한다.
 
         Args:
             meta_repo: `document_meta` 저장소(1단계 후보 조회용).
             resolver: project → Drive/Notion 어댑터 요청 시점 팩토리.
-            query_expander: LLM 기반 질의확장기. None 이면 확장 없이 원본
-                토큰만으로 1단계 SQL 후보를 찾는다(기존 동작과 동일).
         """
         self._meta_repo = meta_repo
         self._resolver = resolver
-        self._query_expander = query_expander
 
     def search(self, query: str, options: DocumentSearchOptions) -> list[DocumentSearchItem]:
         """질의에 관련된 협업 문서를 찾아 스니펫과 점수를 붙여 반환한다.
 
         Args:
             query: 검색할 자연어/키워드 질의.
-            options: top_k·source·project 필터.
+            options: top_k·source·project 필터 및 query_variants(1단계 SQL
+                후보 필터만 넓히는 호출자 제공 동의어).
 
         Returns:
             점수 내림차순 결과 리스트(최대 top_k 건). 1단계 후보가 없으면
@@ -128,7 +133,7 @@ class DocumentSearchService:
         if not query_tokens:
             raise ValidationError("query must contain at least one searchable token")
 
-        filter_tokens = query_tokens | self._expand_tokens(normalized_query)
+        filter_tokens = query_tokens | self._variant_tokens(options.query_variants)
         candidates = self._select_candidates(
             filter_tokens, query_tokens, normalized_query, replace(options, source=normalized_source)
         )
@@ -195,21 +200,15 @@ class DocumentSearchService:
 
     # --- 1단계: 메타 캐시 후보 압축 ----------------------------------------
 
-    def _expand_tokens(self, query: str) -> set[str]:
-        """LLM 질의확장으로 SQL 후보 필터를 넓힐 추가 토큰을 얻는다.
+    def _variant_tokens(self, query_variants: list[str] | None) -> set[str]:
+        """호출자가 넘긴 query_variants 를 SQL 후보 필터용 토큰으로 변환한다.
 
-        확장기가 없거나 호출이 실패하면 빈 집합을 반환해 원본 토큰만으로
-        폴백한다(QueryExpander 구현체가 예외를 삼키지만, 이중 방어로 여기서도
-        감싼다).
+        빈 문자열/공백만 있는 항목은 documents_tokenize 가 빈 리스트를
+        돌려주므로 자연히 걸러진다.
         """
-        if self._query_expander is None:
+        if not query_variants:
             return set()
-        try:
-            expanded = self._query_expander.expand(query)
-        except Exception as exc:  # noqa: BLE001 - 확장 실패가 검색 전체를 죽이면 안 된다.
-            _LOG.warning("질의확장 호출 실패(원본 토큰만으로 폴백): query=%s (%s)", query, exc)
-            return set()
-        return set(documents_tokenize(" ".join(expanded)))
+        return set(documents_tokenize(" ".join(query_variants)))
 
     def _select_candidates(
         self,
@@ -224,21 +223,21 @@ class DocumentSearchService:
         순위 결정만 Python 이 한다. 전체 행을 적재하지 않으므로 캐시 규모가
         커져도 1단계가 가볍게 유지된다.
 
-        `filter_tokens` (원본 + LLM 확장 토큰)는 SQL 후보 게이트를 넓히는
-        데만 쓰고, 점수 계산은 반드시 `score_tokens`(원본 질의 토큰)만
-        사용한다 — 확장 토큰이 점수·순위 계산에 섞이면 무관한 문서가 원본
-        질의와의 정합성 없이 상위에 노출될 수 있다.
+        `filter_tokens` (원본 + query_variants 토큰)는 SQL 후보 게이트를
+        넓히는 데만 쓰고, 점수 계산은 반드시 `score_tokens`(원본 질의
+        토큰)만 사용한다 — variant 토큰이 점수·순위 계산에 섞이면 무관한
+        문서가 원본 질의와의 정합성 없이 상위에 노출될 수 있다.
 
-        제목에 원본 토큰이 전혀 없어(title_score=0.0) 확장 토큰으로만 SQL
-        에 걸린 행도 후보 자체에서는 제외하지 않는다 — 애초에 "질의와 문서
-        표현이 달라 제목 매칭이 실패하는" 문제를 확장 토큰으로 SQL 후보만
-        넓혀 해결하는 것이므로, 여기서 다시 title_score 로 걸러내면 확장
-        효과가 무력화된다.
+        제목에 원본 토큰이 전혀 없어(title_score=0.0) variant 토큰으로만
+        SQL 에 걸린 행도 후보 자체에서는 제외하지 않는다 — 애초에 "질의와
+        문서 표현이 달라 제목 매칭이 실패하는" 문제를 variant 토큰으로 SQL
+        후보만 넓혀 해결하는 것이므로, 여기서 다시 title_score 로 걸러내면
+        확장 효과가 무력화된다.
 
         다만 top_k 는 2단계 본문 fetch 상한(rate limit 보호)이므로 한정된
         fetch 예산을 원본 신호가 있는 행에 먼저 배분한다: 정렬은
         (원본 매치 여부 내림차순, title_score 내림차순, external_id) 순이며,
-        원본 매치 행이 top_k 를 채우고 남는 자리만 확장-only 매치 행이
+        원본 매치 행이 top_k 를 채우고 남는 자리만 variant-only 매치 행이
         채운다. 최종 관련성 판단은 2단계 본문 fetch 후 body_score(역시
         원본 토큰만)가 맡는다.
         """

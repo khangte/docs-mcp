@@ -132,6 +132,7 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         top_k: int = 5,
         source: str | None = None,
         project: str | None = None,
+        query_variants: list[str] | None = None,
     ) -> DocumentSearchResponse | ErrorPayload:
         """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
 
@@ -141,6 +142,11 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         refresh_index 를 먼저 실행한다. OpenAPI 명세 검색은 이 도구가 아니라
         search_endpoints 를 쓴다.
 
+        결과가 0건이거나 기대보다 부족하면, 문서 제목이 질의와 다른 표현을
+        쓰고 있을 가능성이 크다(예: "주문조회 API" 질의로 "결제 내역 조회"
+        문서를 못 찾음). 이럴 때는 같은 query 로 동의어·영한 혼용·유사
+        표현을 query_variants 에 담아 재호출한다.
+
         Args:
             query: 검색할 자연어 또는 키워드 질의.
             top_k: 반환할 최대 결과 수(1~50). 실시간으로 본문을 가져오는 문서
@@ -148,6 +154,10 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
             source: "drive" 또는 "notion" 으로 출처를 한정할 때 지정.
             project: 특정 프로젝트로 검색 범위를 제한하고 싶을 때 지정.
                 생략하면 등록된 모든 프로젝트에서 검색한다.
+            query_variants: query 와 같은 의미의 동의어·영한 혼용·유사 표현
+                목록. 1단계 후보 필터만 넓히고 점수·순위 계산에는 영향을
+                주지 않는다 — 여전히 query 원본 토큰과 가장 잘 맞는 문서가
+                상위에 온다. 결과 0건 또는 부족 시 재질의할 때 사용.
 
         Returns:
             items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
@@ -157,7 +167,9 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _sync() -> DocumentSearchResponse | ErrorPayload:
             def _inner(bundle) -> DocumentSearchResponse:
-                options = DocumentSearchOptions(top_k=top_k, source=source, project=project)
+                options = DocumentSearchOptions(
+                    top_k=top_k, source=source, project=project, query_variants=query_variants
+                )
                 items = bundle.document_search_service.search(query, options)
                 return _to_document_search_payload(items)
             try:
