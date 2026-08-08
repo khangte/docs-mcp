@@ -110,9 +110,9 @@ class StubVectorSearch:
     빈 리스트가 된다). 이 페이크로 양수 점수를 강제해 벡터 분기를 실증한다.
     """
 
-    def __init__(self, chunk_ids: list[str], score: float = 0.9) -> None:
-        """반환할 청크 ID 목록과 고정 점수를 보관하고 호출 카운터를 초기화한다."""
-        self._chunk_ids = list(chunk_ids)
+    def __init__(self, chunks: list[tuple[str, str]], score: float = 0.9) -> None:
+        """반환할 (청크 ID, ref_id) 목록과 고정 점수를 보관하고 호출 카운터를 초기화한다."""
+        self._chunks = list(chunks)
         self._score = score
         self.call_count = 0
 
@@ -122,14 +122,14 @@ class StubVectorSearch:
         top_k: int,
         candidates: set[str] | None = None,
     ) -> list[VectorSearchHit]:
-        """보관한 청크 ID 를 고정 점수로 top_k 만큼 반환한다."""
+        """보관한 (청크 ID, ref_id) 를 고정 점수로 top_k 만큼 반환한다."""
         self.call_count += 1
         allowed = [
-            chunk_id
-            for chunk_id in self._chunk_ids
+            (chunk_id, ref_id)
+            for chunk_id, ref_id in self._chunks
             if candidates is None or chunk_id in candidates
         ]
         return [
-            VectorSearchHit(chunk_id=chunk_id, score=self._score)
-            for chunk_id in allowed[:top_k]
+            VectorSearchHit(chunk_id=chunk_id, ref_id=ref_id, score=self._score)
+            for chunk_id, ref_id in allowed[:top_k]
         ]

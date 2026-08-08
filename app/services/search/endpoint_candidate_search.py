@@ -1,12 +1,15 @@
-"""엔드포인트 후보 검색 (키워드 우선 + 벡터 보조).
+"""엔드포인트 후보 검색 (키워드+벡터 RRF 순위 융합, 롤백용 배타 전략 병존).
 
 `search_endpoints` MCP 도구 전용 검색 경로다. 기존 `SearchService`(하이브리드
-가중합)와 달리 다음 원칙을 따른다.
+가중합)와 달리 다음 원칙을 따른다(`docs/search-rrf-reevaluation.md` 5절).
 
-1. 항상 키워드/구조적 매칭을 먼저 수행한다.
-2. 키워드 결과가 **정확히 0건일 때만** 벡터 검색을 보조로 시도한다.
-   점수 임계값은 두지 않는다(SPEC Phase 0 결정 6번).
-3. 벡터 보조가 비활성(임베딩 API 키 미설정)이면 그 단계를 조용히 생략한다.
+1. **`rrf`(기본) 전략**: 키워드/벡터 두 ranker를 항상 병렬로(더 넓게) 실행해
+   RRF(Reciprocal Rank Fusion)로 순위를 융합한다.
+2. **`fallback` 전략(롤백 스위치)**: 항상 키워드를 먼저 수행하고, 결과가
+   **정확히 0건일 때만** 벡터를 보조로 시도한다(옛 SPEC Phase 0 결정 6번 —
+   이 전략에 한해 유효).
+3. 벡터 arm 이 비활성(해시 임베딩 폴백 등 `is_semantic=False`)이면 두 전략
+   모두 벡터 단계를 조용히 생략하고 키워드 단독 순위로 degrade한다.
 4. 상세 정보(파라미터·응답·스니펫)는 반환하지 않는다. 후보 식별에 필요한
    최소 필드만 돌려주고, 상세는 `get_endpoint_details` 가 담당한다.
 """
@@ -14,24 +17,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
-from app.models.openapi import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope
 from app.services.search.keyword_search import KeywordSearch
+from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
 from app.services.search.vector_search import VectorSearch
 
 _LOG = get_logger("docs_mcp.search.candidate")
 
-MatchType = Literal["keyword", "vector"]
+__all__ = [
+    "CandidateSearchOptions",
+    "EndpointCandidate",
+    "EndpointCandidateSearch",
+    "MatchType",
+]
 
 MIN_TOP_K = 1
 MAX_TOP_K = 50
+
+#: RRF 융합 전 각 ranker 에서 가져올 후보 폭(`docs/search-rrf-reevaluation.md` 5.3).
+#: 정답이 한쪽 arm 의 상위에만 있어도 융합에서 건질 수 있도록 top_k 보다 넓게 본다.
+_MIN_CANDIDATE_WIDTH = 50
+_CANDIDATE_WIDTH_MULTIPLIER = 4
 
 
 @dataclass(frozen=True)
@@ -55,7 +67,7 @@ class CandidateSearchOptions:
 
 
 class EndpointCandidateSearch:
-    """키워드 우선·벡터 보조 전략으로 엔드포인트 후보만 반환하는 검색 서비스."""
+    """RRF 순위 융합(기본) 또는 키워드 우선·벡터 보조(롤백)로 엔드포인트 후보만 반환하는 검색 서비스."""
 
     def __init__(
         self,
@@ -65,17 +77,25 @@ class EndpointCandidateSearch:
         vector_search: VectorSearch,
         vector_fallback_enabled: bool = True,
         document_repo: DocumentRepository | None = None,
+        search_strategy: str = "rrf",
     ) -> None:
-        """저장소·검색기와 벡터 보조 활성화 여부를 보관한다.
+        """저장소·검색기와 벡터 보조 활성화 여부·검색 전략을 보관한다.
 
         Args:
             chunk_repo: 후보 청크 조회용 저장소.
             endpoint_repo: 청크 ref_id → 엔드포인트 조회용 저장소.
-            keyword_search: 1차 키워드 검색기.
-            vector_search: 키워드 0건일 때만 쓰는 보조 벡터 검색기.
-            vector_fallback_enabled: False 면 벡터 보조 단계를 통째로 생략한다.
+            keyword_search: 키워드 검색기.
+            vector_search: 벡터 검색기.
+            vector_fallback_enabled: False 면 벡터 단계를 통째로 생략한다
+                (해시 임베딩 폴백 등 `is_semantic=False` 배포).
             document_repo: document_id 존재 검증용 저장소. 주입하면 미등록
                 문서 ID 를 빈 결과가 아니라 DocumentNotFoundError 로 구분한다.
+            search_strategy: "fallback"(키워드 우선, 0건일 때만 벡터 — 롤백
+                스위치)이면 옛 배타 분기, 그 외 값(기본 "rrf" 포함)은 모두
+                RRF 융합으로 처리한다. `Settings.search_strategy` 의 원시 env
+                문자열을 그대로 받는다 — `embedding_backend` 등 이 코드베이스의
+                다른 env 기반 설정과 동일하게 Literal 로 좁히지 않고 비교로
+                분기해, 인식 못 하는 값은 안전하게 rrf 로 degrade한다.
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
@@ -83,11 +103,14 @@ class EndpointCandidateSearch:
         self._vector_search = vector_search
         self._vector_fallback_enabled = vector_fallback_enabled
         self._document_repo = document_repo
+        self._search_strategy = search_strategy
 
     def search(self, query: str, options: CandidateSearchOptions) -> list[EndpointCandidate]:
         """질의에 대한 엔드포인트 후보 목록을 반환한다.
 
-        키워드 결과가 1건 이상이면 벡터 검색기(=임베딩 API)를 호출하지 않는다.
+        `search_strategy="rrf"`(기본)면 키워드·벡터 두 ranker를 항상 실행해
+        RRF로 융합한다. `search_strategy="fallback"`이면 키워드 결과가 1건
+        이상일 때 벡터 검색기(=임베딩 API)를 호출하지 않는다.
 
         Args:
             query: 검색할 자연어/키워드 질의.
@@ -105,13 +128,42 @@ class EndpointCandidateSearch:
         if not self._chunk_repo.has_endpoint_chunks(document_id=document_id, project=project):
             return []
 
-        keyword_candidates = self._search_by_keyword(
-            normalized_query, options.top_k, document_id, project
-        )
+        if self._search_strategy == "fallback":
+            return self._search_fallback(normalized_query, options.top_k, document_id, project)
+        return self._search_rrf(normalized_query, options.top_k, document_id, project)
+
+    def _search_fallback(
+        self, query: str, top_k: int, document_id: str | None, project: str | None
+    ) -> list[EndpointCandidate]:
+        """키워드 우선·벡터는 0건일 때만(롤백 스위치, 옛 배타 분기 그대로)."""
+        keyword_candidates = self._search_by_keyword(query, top_k, document_id, project)
         if keyword_candidates:
             return keyword_candidates
+        return self._search_by_vector(query, top_k, document_id, project)
 
-        return self._search_by_vector(normalized_query, options.top_k, document_id, project)
+    def _search_rrf(
+        self, query: str, top_k: int, document_id: str | None, project: str | None
+    ) -> list[EndpointCandidate]:
+        """키워드·벡터 두 ranker를 항상 병렬 실행해 RRF로 융합한다."""
+        width = max(top_k * _CANDIDATE_WIDTH_MULTIPLIER, _MIN_CANDIDATE_WIDTH)
+
+        keyword_hits = self._keyword_search.search(
+            query, top_k=width, document_id=document_id, project=project
+        )
+        keyword_ref_ids = [h.ref_id for h in keyword_hits]
+
+        vector_ref_ids: list[str] = []
+        if self._vector_fallback_enabled:
+            candidate_ids = self._chunk_repo.list_endpoint_chunk_ids(
+                document_id=document_id, project=project
+            )
+            vector_hits = self._vector_search.search(query, top_k=width, candidates=candidate_ids)
+            vector_ref_ids = [h.ref_id for h in vector_hits if h.score > 0.0]
+        else:
+            _LOG.debug("벡터 arm 생략(rrf 전략, 키워드 단독 degrade): 임베딩 백엔드 비의미론적")
+
+        fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=top_k)
+        return self._to_candidates_from_fused(fused)
 
     def _validate(
         self, query: str, options: CandidateSearchOptions
@@ -137,19 +189,6 @@ class EndpointCandidateSearch:
         )
         return normalized_query, document_id, project
 
-    def _endpoint_chunks(
-        self, document_id: str | None, project: str | None
-    ) -> list[ApiChunk]:
-        """검색 대상이 되는 endpoint 타입 청크만 SQL 필터로 조회한다.
-
-        벡터 보조(`_search_by_vector`)가 후보 스코프를 만들 때만 쓴다 —
-        키워드 검색은 `search_endpoint_by_text` 로 완전히 SQL 화되어
-        이 메서드를 거치지 않는다.
-        """
-        return list(
-            self._chunk_repo.list_endpoint_chunks(document_id=document_id, project=project)
-        )
-
     def _search_by_keyword(
         self, query: str, top_k: int, document_id: str | None, project: str | None
     ) -> list[EndpointCandidate]:
@@ -163,7 +202,7 @@ class EndpointCandidateSearch:
     def _search_by_vector(
         self, query: str, top_k: int, document_id: str | None, project: str | None
     ) -> list[EndpointCandidate]:
-        """키워드 0건일 때만 호출되는 벡터 보조 검색.
+        """키워드 0건일 때만 호출되는 벡터 보조 검색(`fallback` 전략 전용).
 
         벡터 보조가 비활성이면 임베딩 호출 없이 빈 리스트를 반환한다.
         """
@@ -171,15 +210,11 @@ class EndpointCandidateSearch:
             _LOG.debug("벡터 보조 검색 생략: 임베딩 API 키 미설정")
             return []
 
-        chunks = self._endpoint_chunks(document_id, project)
-        candidate_ids = {c.id for c in chunks}
+        candidate_ids = self._chunk_repo.list_endpoint_chunk_ids(
+            document_id=document_id, project=project
+        )
         hits = self._vector_search.search(query, top_k=top_k, candidates=candidate_ids)
-        chunk_by_id = {c.id: c for c in chunks}
-        ordered_ref_ids = [
-            chunk_by_id[h.chunk_id].ref_id
-            for h in hits
-            if h.chunk_id in chunk_by_id and h.score > 0.0
-        ]
+        ordered_ref_ids = [h.ref_id for h in hits if h.score > 0.0]
         return self._to_candidates(ordered_ref_ids, "vector", top_k)
 
     def _to_candidates(
@@ -207,4 +242,25 @@ class EndpointCandidateSearch:
             )
             if len(candidates) >= top_k:
                 break
+        return candidates
+
+    def _to_candidates_from_fused(
+        self, fused: list[FusedResult]
+    ) -> list[EndpointCandidate]:
+        """RRF 융합 결과(ref_id + match_type)를 후보 DTO 로 변환한다."""
+        candidates: list[EndpointCandidate] = []
+        for item in fused:
+            endpoint = self._endpoint_repo.get(item.ref_id)
+            if endpoint is None:
+                _LOG.warning("청크가 참조하는 엔드포인트를 찾을 수 없음: %s", item.ref_id)
+                continue
+            candidates.append(
+                EndpointCandidate(
+                    endpoint_id=endpoint.id,
+                    method=endpoint.method,
+                    path=endpoint.path,
+                    summary=endpoint.summary,
+                    match_type=item.match_type,
+                )
+            )
         return candidates

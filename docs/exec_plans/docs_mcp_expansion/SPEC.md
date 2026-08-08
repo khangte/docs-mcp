@@ -1,5 +1,7 @@
 # docs-mcp: 통합 확장 계획 (OpenAPI 재구조화 + Google Drive/Notion 검색 추가)
 
+> **후속 메모(2026-08-08)**: 아래 Phase 0 결정 6(키워드 우선·임계값 없음)은 이후 `docs/search-rrf-reevaluation.md`에서 RRF 융합 도입으로 번복됨(사용자 승인, 일시 기록). 이 문서는 시점 기록물이라 본문은 소급 수정하지 않는다.
+
 ## 개요
 
 docs-mcp는 현재 OpenAPI 문서를 사전에 Postgres(pgvector)에 등록·색인하고,

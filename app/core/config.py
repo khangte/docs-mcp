@@ -35,6 +35,11 @@ class Settings:
     hybrid_alpha: float = field(
         default_factory=lambda: float(os.environ.get("DOCS_MCP_HYBRID_ALPHA", "0.4"))
     )
+    #: "rrf"(기본, 키워드+벡터 항상 병렬 실행 후 순위 융합) | "fallback"(키워드
+    #: 우선, 0건일 때만 벡터 — 롤백 스위치로 상시 보존). search_endpoints 전용.
+    search_strategy: str = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_STRATEGY", "rrf")
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )

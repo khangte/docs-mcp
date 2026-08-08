@@ -102,9 +102,33 @@ async def test_search_returns_candidate_items_only(seeded_mcp: FastMCP) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_search_marks_keyword_match_type(seeded_mcp: FastMCP) -> None:
-    """키워드로 찾은 후보는 match_type="keyword" 로 표시된다."""
+async def test_search_marks_match_type_from_contract_values(seeded_mcp: FastMCP) -> None:
+    """후보의 match_type 은 계약값(keyword/vector/both) 중 하나이고 정답 엔드포인트를 찾는다.
+
+    기본 전략은 rrf(키워드+벡터 항상 병렬 실행)라 어느 arm 이 기여했는지는
+    임베딩 유사도에 따라 달라질 수 있다 — "both" 도 유효한 결과다
+    (`docs/search-rrf-reevaluation.md` 5.1). fallback 전략의 배타적
+    match_type="keyword" 계약은 `test_search_marks_keyword_match_type_under_fallback_strategy`
+    가 별도로 고정한다.
+    """
     candidate = await _first_candidate(seeded_mcp, "find pet by id")
+
+    assert candidate["match_type"] in ("keyword", "vector", "both")
+    assert candidate["path"] == "/pet/{petId}"
+
+
+@pytest.mark.asyncio()
+async def test_search_marks_keyword_match_type_under_fallback_strategy(
+    app_state, sample_openapi_3: str
+) -> None:
+    """롤백 스위치: fallback 전략이면 키워드로 찾은 후보는 match_type="keyword" 로 고정된다."""
+    app_state.search_strategy = "fallback"
+    mcp = create_mcp_server(app_state)
+    await mcp.call_tool(
+        "register_document", arguments={"project": "default", "raw_document": sample_openapi_3}
+    )
+
+    candidate = await _first_candidate(mcp, "find pet by id")
 
     assert candidate["match_type"] == "keyword"
     assert candidate["path"] == "/pet/{petId}"

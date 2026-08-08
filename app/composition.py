@@ -61,6 +61,9 @@ class AppState:
     fetcher: OpenAPIFetcher
     hybrid_alpha: float = 0.4
     vector_fallback_enabled: bool = True
+    #: "rrf"(기본) | "fallback"(롤백 스위치). `EndpointCandidateSearch` 로 그대로
+    #: 전달된다.
+    search_strategy: str = "rrf"
     #: Drive 서비스 계정 토큰 발급기. 자격증명이 없으면 None. project 마다
     #: 새로 만들지 않고 재사용해 credentials 캐싱 중복을 막는다.
     drive_token_provider: ServiceAccountTokenProvider | None = None
@@ -81,6 +84,7 @@ class AppState:
         embedding_provider: EmbeddingProvider | None = None,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
+        search_strategy: str | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
@@ -116,6 +120,9 @@ class AppState:
                 is_vector_fallback_available()
                 if vector_fallback_enabled is None
                 else vector_fallback_enabled
+            ),
+            search_strategy=(
+                settings.search_strategy if search_strategy is None else search_strategy
             ),
             drive_token_provider=build_drive_token_provider(settings),
             drive_source_builder=drive_source_builder,
@@ -206,6 +213,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             vector_search=vector_search,
             vector_fallback_enabled=state.vector_fallback_enabled,
             document_repo=document_repo,
+            search_strategy=state.search_strategy,
         )
         endpoint_details_service = EndpointDetailsService(
             endpoint_repo=endpoint_repo,

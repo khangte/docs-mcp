@@ -318,6 +318,75 @@ def test_has_endpoint_chunks_false_when_only_non_endpoint(db_session) -> None:
     assert repo.has_endpoint_chunks() is False
 
 
+# --- RRF: search_by_vector ref_id 프로젝션(P2 완성) --------------------------
+
+
+def test_search_by_vector_returns_ref_id(db_session) -> None:
+    """벡터 검색 결과에 ref_id 가 함께 담겨 chunk_id→ref_id 역매핑 없이 쓸 수 있다."""
+    document = ApiDocument(
+        id="doc-1",
+        project="default",
+        source_url=None,
+        title="샘플 문서",
+        content_hash="hash",
+        raw_text="{}",
+    )
+    db_session.add(document)
+    db_session.add(
+        ApiChunk(
+            id="chunk-1",
+            document_id="doc-1",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
+
+    assert len(hits) == 1
+    assert hits[0].chunk_id == "chunk-1"
+    assert hits[0].ref_id == "ep-1"
+
+
+# --- RRF: list_endpoint_chunk_ids(전체 로우 미적재 스코프 조회) ----------------
+
+
+def test_list_endpoint_chunk_ids_returns_ids_only(db_session) -> None:
+    """endpoint 청크 ID 만 가볍게 반환한다(embedding 등 다른 컬럼 적재 없음)."""
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id")
+    _seed_chunk(db_session, "c2", "doc1", "schema text", chunk_type="schema")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    ids = repo.list_endpoint_chunk_ids()
+
+    assert ids == {"c1"}
+
+
+def test_list_endpoint_chunk_ids_scopes_by_document_id(db_session) -> None:
+    """document_id 를 지정하면 다른 문서의 청크 ID 는 제외된다."""
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id")
+    _seed_chunk(db_session, "c2", "doc2", "find pet again")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    assert repo.list_endpoint_chunk_ids(document_id="doc2") == {"c2"}
+
+
+def test_list_endpoint_chunk_ids_scopes_by_project(db_session) -> None:
+    """project 를 지정하면 다른 project 의 청크 ID 는 제외된다."""
+    _seed_chunk(db_session, "c1", "doc-a", "find pet by id", project="A")
+    _seed_chunk(db_session, "c2", "doc-b", "find pet again", project="B")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    assert repo.list_endpoint_chunk_ids(project="A") == {"c1"}
+
+
 def test_has_endpoint_chunks_respects_document_id_and_project_scope(db_session) -> None:
     """document_id/project 스코프를 벗어난 청크는 세지 않는다."""
     _seed_chunk(db_session, "c1", "doc-a", "find pet by id", project="A")

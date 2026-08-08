@@ -10,9 +10,10 @@ from app.services.indexer.embedding_provider import EmbeddingProvider
 
 @dataclass
 class VectorSearchHit:
-    """벡터 검색 결과 한 건(청크 ID + 점수)."""
+    """벡터 검색 결과 한 건(청크 ID + 엔드포인트 ref_id + 점수)."""
 
     chunk_id: str
+    ref_id: str
     score: float
 
 
@@ -41,6 +42,6 @@ class VectorSearch:
         hits = self._chunk_repo.search_by_vector(query_vec, top_k=top_k, candidate_ids=candidates)
         # 유사도는 [-1, 1]. 음수도 의미 없는 후보로 간주하지 않지만 UI 상으로는 [0,1] 정규화.
         return [
-            VectorSearchHit(chunk_id=h.chunk_id, score=max(0.0, h.score))
+            VectorSearchHit(chunk_id=h.chunk_id, ref_id=h.ref_id, score=max(0.0, h.score))
             for h in hits
         ]

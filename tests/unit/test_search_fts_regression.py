@@ -292,14 +292,18 @@ _KOREAN_OPENAPI = json.dumps(
 def test_korean_query_matches_keyword_not_vector_fallback(
     app_state, counting_embedding_provider
 ) -> None:
-    """한글 summary 를 가진 endpoint 를 한글 질의로 검색하면 키워드에서 잡히고
-    match_type='keyword' 다(A안 확정 계약 — 벡터 fallback 을 타지 않는다).
+    """fallback 전략: 한글 summary 를 가진 endpoint 를 한글 질의로 검색하면
+    키워드에서 잡히고 match_type='keyword' 다(A안 확정 계약 — 벡터 fallback
+    을 타지 않는다).
 
     FTS 전환 전에는 한글이 토큰화에서 완전히 버려져 항상 벡터 fallback 을
     탔다(design.md 확인된 사실 1번). 이 테스트는 그 전략 변화를 명시적
-    계약으로 고정한다.
+    계약으로 고정한다. RRF 도입(`docs/search-rrf-reevaluation.md` 5.6) 이후
+    이 배타적 계약은 기본(rrf)이 아니라 `search_strategy="fallback"` 에
+    한해서만 유효하므로 전략을 명시적으로 고정한다.
     """
     _register(app_state, _KOREAN_OPENAPI)
+    app_state.search_strategy = "fallback"
     counting_embedding_provider.reset_counts()
 
     candidates = _bundle(app_state).candidate_search.search(

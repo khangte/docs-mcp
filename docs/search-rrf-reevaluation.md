@@ -1,6 +1,6 @@
 # RRF(순위 융합) 적용 재검토 — P1 이후
 
-- 상태: 재검토(분석/제안, 코드 미작성)
+- 상태: **착수 확정**(설계 확정, 구현은 developer 배분 예정 — 코드 미작성). 5절 참조.
 - 일시: 2026-08-08
 - 작성: architect
 - 관련: `docs/search-performance-improvements.md`(상위 제안 RRF), `docs/search-p1-keyword-fts-design.md`, ADR-0002, SPEC Phase 0 결정 6
@@ -79,3 +79,118 @@ P1은 키워드 recall 을 **양방향으로** 넓혔다: (a) 한글 단어 매�
 4. 착수 시 순서: 벡터 `search_by_vector` ref_id 프로젝션(P2 완성) → ranker 폭 확대 + RRF 융합 + provider 게이팅 → `match_type` 계약 확장 → 평가셋·순위 골든 회귀 통과 → SPEC 결정 6 재승인.
 
 **한 줄 요약**: P1이 baseline 을 낮춰 RRF 의 상대 지연·상대 비용 델타는 커졌지만, 동시에 벡터가 봉쇄되는 질의를 늘려 **품질 공백도 커졌다.** 로컬 모델이 활성화된 배포라면 RRF 는 이제 "해볼 만한" 단계 — 다만 **평가셋으로 손실을 실측한 뒤** 켜는 것이 옳고, 측정 없이 지금 바로는 권하지 않는다.
+
+---
+
+## 5. 착수 확정 (architect, 2026-08-08)
+
+lead 지시(`task-rrf-kickoff.md`)에 따라 4절 조건부 권장을 **착수 확정**으로 갱신한다. 갱신 근거는 문서 작성(4절) 이후 바뀐 두 사실이다.
+
+### 5.0 전제 A/B 재체크 — 착수 타당
+
+**전제 A(로컬 모델 `is_semantic=True` 활성) — ✅ 완전 충족.**
+기본 백엔드가 `DOCS_MCP_EMBEDDING_BACKEND=local`(`multilingual-e5-small`)이고, `is_vector_fallback_available()`가 `backend != "hash"`로 판별한다(`app/composition.py`). 4절이 "Gemini 키 게이팅"으로 썼던 조건은 이미 `is_semantic` 기준으로 재정의돼 있으므로, 로컬 모델 배포에서 전제 A는 상시 참이다.
+
+**전제 B(최소 평가셋 실측) — △ 부분 충족(정직하게).**
+엄밀한 라벨셋(10~20개, 정답 라벨)은 아직 없다. developer의 10개 질의 스팟체크가 손실 패턴을 관측했으나, 그 성격을 정직하게 구분한다:
+- 관측 사례("로그인"→로그아웃 근소 1위, "비밀번호를 잊어버렸어요" 정답 2위 밀림)는 **벡터 arm 자체의 혼동**이지, 1절이 주 손실축으로 지목한 "키워드가 벡터를 봉쇄"의 직접 실측은 아니다.
+- 다만 이 사례들은 **RRF의 유효한 이득 방향에 부합**한다. RRF는 대칭 융합이라 어느 arm이 헷갈리든 다른 arm이 정답을 상위에 두면 융합 순위가 교정된다("로그인" 리터럴이 로그인 엔드포인트에 있으면 키워드 arm이 로그아웃 우위를 눌러준다).
+- N=10·비형식 라벨이라 **회귀를 통계적으로 잡아낼 평가셋으로는 부족**하다. 이 한계는 숨기지 않는다.
+
+**그럼에도 착수 타당**으로 판정하는 근거(저울이 4절 대비 크게 기운 지점):
+1. **지연 제동 해소(결정적)**: 4절이 "가장 큰 체감 저하"로 꼽은 "모든 질의에 임베딩 왕복 추가"는 Gemini API(수십~수백ms) 전제였다. 로컬 실측 `embed_query` 단건 **avg 13.7ms / p95 16.8ms(네트워크 0)** — 4절 주의 1번(지연)이 사실상 무력화된다. 저울의 최대 반대추가 사라졌다.
+2. **전제 A 완전 충족**: 해시 폴백 배포는 자동으로 벡터 arm이 비활성(`vector_fallback_enabled=False`)이라 "노이즈 융합" 위험이 구조적으로 차단된다(5.5).
+3. **금전 비용 0**: 로컬 CPU 추론, API 호출 없음(2절).
+4. **타이밍**: 벡터 경로 ref_id화로 P2 잔여를 함께 정리(5.4).
+
+**측정 부재 리스크의 처리(중요)**: 품질 개선의 **정량 입증은 착수의 선결조건에서 후속 산출물로 격하**한다. 대신 회귀 방어를 두 겹으로 건다 — (a) **순위 골든 회귀 테스트**(fallback/rrf 두 경로 각각 결정적 기대 순위), (b) **롤백 스위치**(`fallback` 전략 상시 보존, env 한 줄로 즉시 복귀, 5.5). 즉 "RRF가 개선임을 지금 증명"하지 않고, "회귀 시 즉시 되돌릴 수 있고 새 경로는 결정적임을 보장"하는 방식으로 리스크를 관리한다. 정식 평가셋(전제 B 완전 충족)은 착수와 병행/후속으로 남긴다.
+
+### 5.1 `match_type` 계약 — 기여 ranker 표기 채택
+
+`hybrid` 단일값이 아니라 **기여 arm 표기**로 확정한다.
+
+```python
+MatchType = Literal["keyword", "vector", "both"]
+```
+
+의미 정의(계약):
+- **`both`**: 후보가 키워드 arm·벡터 arm의 후보 폭 N 양쪽에 모두 등장(가장 강한 신호).
+- **`keyword`**: 키워드 arm에만 등장(벡터 폭 밖).
+- **`vector`**: 벡터 arm에만 등장(키워드 폭 밖).
+- **fallback 전략 또는 해시 폴백 degrade**: 기존과 동일하게 `keyword`/`vector` 배타값(단일 arm이므로 `both` 불가).
+
+채택 이유: RRF는 두 arm 융합이라 "어느 arm이 이 후보를 올렸나"가 진단·디버깅·후속 회귀분석에 유의미하다. `hybrid`는 이 정보를 버린다. 기존 `keyword`/`vector` 값을 **그대로 유지**하고 `both`만 추가하므로 하위호환(기존 소비자가 보던 값은 계속 나옴).
+
+**계약 변경 반영 지점(3곳 동시 갱신)**:
+- `app/services/search/endpoint_candidate_search.py` — `MatchType` Literal.
+- `app/mcp/types.py:57` — `EndpointCandidateItem.match_type` Literal.
+- `app/mcp/tools/endpoints.py` — 도구 docstring의 `match_type("keyword" 또는 "vector")` 설명을 `keyword`/`vector`/`both`로 갱신.
+
+### 5.2 RRF 상수 K = 60 — 확정
+
+표준값 `K = 60`(Cormack et al. 2009)을 채택한다. **모듈 상수로 하드코딩**(`RRF_K = 60`), `.env` 노출하지 않는다 — 평가셋 없이 K 튜닝은 무의미하므로 설정 표면을 늘리지 않는다(YAGNI). 후속 평가셋 구축 후 튜닝 필요가 실증되면 그때 노출.
+
+### 5.3 후보 폭 N = max(top_k * 4, 50) — 확정
+
+각 arm에서 융합 전에 가져올 후보 수. `top_k=5`(기본)→`N=50`, `top_k=50`(최대)→`N=200`. 각 arm의 SQL `limit`으로 전달(`search_endpoint_by_text` / `search_by_vector`의 top_k 인자 = N), 융합 후 top_k로 컷.
+
+근거: endpoint 청크는 단일 문서 수백 규모라 N=200도 SQL top-N·메모리 융합(200×2 등수 계산) 모두 무시 가능한 비용. `max(_, 50)` 바닥은 top_k가 작아도 "정답이 한 arm의 #30에 있어도 건지는" 융합 유효폭을 확보하기 위함.
+
+### 5.4 RRF 융합 명세 (developer 구현 계약)
+
+```
+입력: keyword_ref_ids(키워드 arm 순위 리스트), vector_ref_ids(벡터 arm 순위 리스트), K=60, top_k
+1. 각 arm에서 ref_id first-occurrence 등수(1-based) 부여
+   — 같은 ref_id의 여러 chunk는 첫 등장만 채택(현재 _to_candidates seen 로직과 동형).
+2. score(ref) = Σ_arm 1/(K + rank_arm(ref))   # 해당 arm에 없으면 그 항은 0
+3. match_type(ref) = both(양쪽) | keyword(키워드만) | vector(벡터만)
+4. 정렬: score 내림차순, 동점이면 ref_id 오름차순(결정적 tie-break — 골든 안정성 필수)
+5. 상위 top_k 컷 → [(ref_id, match_type)]
+```
+
+**tie-break를 ref_id asc로 못박는 것이 골든 회귀 테스트 안정성의 전제**다. 반드시 결정적으로.
+
+### 5.4.1 벡터 arm ref_id 프로젝션 (P2 완성 — 선행 작업)
+
+융합은 endpoint(ref_id) 단위여야 한다. 현재 벡터 경로는 `ChunkVectorHit(chunk_id, score)`뿐이고, `EndpointCandidateSearch._search_by_vector`가 전 endpoint 청크를 메모리 적재(`_endpoint_chunks`)해 chunk_id→ref_id를 역매핑한다. 이걸 SQL 프로젝션으로 대체한다(P1이 키워드에 한 것과 동형):
+- `ChunkVectorHit`에 `ref_id` 추가, `search_by_vector` select에 `ApiChunk.ref_id` 추가.
+- `VectorSearchHit`에 `ref_id` 전파.
+- `EndpointCandidateSearch._endpoint_chunks` 메모리 적재 경로 제거.
+이로써 **P2 잔여(벡터 경로 메모리 적재 제거)가 함께 완성**된다.
+
+### 5.5 전략 플래그 — `DOCS_MCP_SEARCH_STRATEGY`, 기본값 `rrf`
+
+- **env 키**: `DOCS_MCP_SEARCH_STRATEGY`, 값 `fallback | rrf`. `app/core/config.py` `Settings`에 `search_strategy` 필드 추가, `.env.example`에 주석과 함께 추가.
+- **기본값**: **`rrf`**(바로 켠다).
+- **롤백 스위치**: `fallback` 경로를 **삭제하지 않고 상시 보존**한다. RRF가 회귀를 내면 `DOCS_MCP_SEARCH_STRATEGY=fallback` 한 줄로 즉시 복귀.
+
+기본을 `rrf`로 두는 근거(안전 롤아웃 관점):
+1. 사용자가 명시적으로 착수 지시 → 기본 활성이 의도에 부합(플래그로만 두고 기본 fallback이면 실사용은 여전히 구경로, 신경로는 죽은 코드가 됨).
+2. 지연 델타가 실측(p95 16.8ms)으로 무력화 → 기본 활성의 체감 리스크가 사라짐.
+3. 해시 폴백 배포는 `vector_fallback_enabled=False`로 **자동 degrade**(키워드 단독) → 노이즈 융합 위험 없음. 즉 안전판이 코드에 이미 내장.
+4. "기본 rrf + 롤백용 fallback"이 "기본 fallback + opt-in rrf"보다 안전 롤아웃에 유리 — 두 경로를 모두 살려 즉시 복귀 가능하면서 실사용은 신경로를 탐.
+
+**게이트 조건**: developer는 (a) fallback 경로 보존 → (b) rrf 경로 + 골든 회귀 확립 → (c) 골든 통과 확인 후 기본을 `rrf`로 커밋. 골든 미통과 상태로 기본 rrf 커밋 금지.
+
+**provider 게이팅(불변식)**: `vector_fallback_enabled=False`(해시 폴백)면 전략이 `rrf`여도 벡터 arm을 실행하지 않고 키워드 단독 순위로 degrade(match_type 전부 `keyword`). 기존 `_vector_fallback_enabled` 플래그 재활용.
+
+**`DOCS_MCP_HYBRID_ALPHA`와의 관계**: alpha(가중합)는 RRF 경로에 **미적용**. RRF는 등수 기반 스케일 불변이라 alpha가 개념적으로 붙지 않는다. `.env.example`에 "alpha는 legacy `SearchService` 하이브리드 전용, `search_endpoints`의 rrf 경로엔 무관"을 명기.
+
+### 5.6 거버넌스 — SPEC 결정 6 번복은 재승인으로 간주
+
+SPEC Phase 0 결정 6("키워드 0건일 때만 벡터 트리거, 임계값 없음", `docs/exec_plans/docs_mcp_expansion/SPEC.md:377`)을 RRF가 정면으로 뒤집는다(항상 두 arm 실행).
+
+**판정: 별도 명시 확인 불필요 — 사용자의 "RRF 착수" 지시를 재승인으로 간주.** 근거: 결정 6은 "벡터를 언제 트리거하나"에 대한 결정이고, "RRF 착수"는 정의상 "항상 두 arm 실행 후 융합"을 내포하므로 결정 6 트리거 조건의 폐기가 그 지시에 이미 담겨 있다.
+
+단 **이력을 남긴다**(lead 판단·소유): SPEC 결정 6에 "RRF 전략(`DOCS_MCP_SEARCH_STRATEGY=rrf`) 도입으로 이 결정은 `fallback` 전략에 한해 유효, rrf 경로는 두 arm 상시 융합" 각주 추가를 권고. SPEC은 lead 소유 문서이므로 각주 반영 여부·시점은 lead가 결정한다.
+
+### 5.7 developer 구현 순서 (요약 — 배분용)
+
+1. **벡터 arm ref_id 프로젝션**(5.4.1, P2 완성): `ChunkVectorHit`·`VectorSearchHit`·`search_by_vector` select에 ref_id 추가, `_endpoint_chunks` 메모리 적재 제거.
+2. **RRF 융합 코어**(5.4): 결정적 tie-break 포함. 각 arm 폭 N=max(top_k*4,50)로 조회.
+3. **전략 분기**(5.5): `search_strategy`로 fallback/rrf 분기. rrf 경로에 provider 게이팅(해시면 키워드 단독 degrade).
+4. **match_type 계약 확장**(5.1): 3개 파일 동시 갱신, `both` 추가.
+5. **설정**(5.5): `DOCS_MCP_SEARCH_STRATEGY` 추가, `.env.example` 갱신(alpha 무관 명기).
+6. **회귀 방어**: fallback/rrf 각 경로 순위 골든 회귀 테스트 + developer 10질의 before/after 스팟체크. 골든 통과 후 기본 rrf 커밋.
+
+설계 불명확 시 architect(:0.1)에 즉시 문의.

@@ -55,6 +55,26 @@ def test_vector_search_returns_sorted_by_score(db_session) -> None:
     assert hits[0].score >= hits[1].score
 
 
+def test_vector_search_returns_ref_id(db_session) -> None:
+    """벡터 검색 결과에 ref_id 가 함께 담겨 chunk_id→ref_id 역매핑이 필요 없다."""
+    provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
+    db_session.add(
+        ApiDocument(
+            id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
+        )
+    )
+    db_session.flush()
+    (a,) = provider.embed_documents(["find pet by id"])
+    _add_chunk(db_session, "doc1", "a", a)
+    db_session.commit()
+
+    chunk_repo = ChunkRepository(db_session)
+    vs = VectorSearch(provider, chunk_repo)
+    hits = vs.search("find pet by id", top_k=1)
+
+    assert hits[0].ref_id == "a"
+
+
 def test_vector_search_restricts_to_candidates(db_session) -> None:
     provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
     db_session.add(

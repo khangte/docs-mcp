@@ -13,9 +13,10 @@ from app.models.openapi import ApiChunk, ApiDocument, ApiEndpoint
 
 @dataclass
 class ChunkVectorHit:
-    """벡터 검색 결과 한 건(청크 ID + 코사인 유사도 점수)."""
+    """벡터 검색 결과 한 건(청크 ID + 엔드포인트 ref_id + 코사인 유사도 점수)."""
 
     chunk_id: str
+    ref_id: str
     score: float
 
 
@@ -95,6 +96,23 @@ class ChunkRepository:
                 ApiDocument.project == project
             )
         return self._session.execute(stmt).scalars().all()
+
+    def list_endpoint_chunk_ids(
+        self, document_id: str | None = None, project: str | None = None
+    ) -> set[str]:
+        """endpoint 타입 청크의 ID만 가볍게 조회한다(다른 컬럼은 적재하지 않음).
+
+        벡터 검색의 스코프(`candidate_ids`)를 만들 때 `list_endpoint_chunks()`
+        처럼 전체 `ApiChunk` 로우를 메모리에 올릴 필요가 없어 이 메서드를 쓴다.
+        """
+        stmt = select(ApiChunk.id).where(ApiChunk.chunk_type == "endpoint")
+        if document_id is not None:
+            stmt = stmt.where(ApiChunk.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
+                ApiDocument.project == project
+            )
+        return set(self._session.execute(stmt).scalars().all())
 
     def has_endpoint_chunks(
         self, document_id: str | None = None, project: str | None = None
@@ -230,12 +248,15 @@ class ChunkRepository:
 
         `candidate_ids` 가 주어지면 그 안의 청크만 고려한다.
         코사인 거리는 [0, 2] 범위이므로 유사도 = 1 - 거리 로 변환한다.
+        `ref_id` 를 함께 SQL 로 프로젝션해(`ApiChunk.ref_id`, 조인 불필요),
+        호출측이 chunk_id → ref_id 를 역매핑하려고 전체 청크를 메모리에
+        적재할 필요가 없게 한다(RRF 융합은 endpoint(ref_id) 단위로 동작).
         """
         if top_k <= 0:
             return []
         distance = ApiChunk.embedding.cosine_distance(query_vector)
         stmt = (
-            select(ApiChunk.id, distance.label("distance"))
+            select(ApiChunk.id, ApiChunk.ref_id, distance.label("distance"))
             .where(ApiChunk.embedding.is_not(None))
         )
         if candidate_ids is not None:
@@ -244,4 +265,7 @@ class ChunkRepository:
             stmt = stmt.where(ApiChunk.id.in_(candidate_ids))
         stmt = stmt.order_by(distance.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
-        return [ChunkVectorHit(chunk_id=cid, score=1.0 - float(dist)) for cid, dist in rows]
+        return [
+            ChunkVectorHit(chunk_id=cid, ref_id=ref_id, score=1.0 - float(dist))
+            for cid, ref_id, dist in rows
+        ]

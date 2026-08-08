@@ -58,7 +58,14 @@ def test_returns_candidates_without_detail_fields(app_state, sample_openapi_3: s
 
 
 def test_keyword_match_finds_expected_endpoint(app_state, sample_openapi_3: str) -> None:
-    """키워드로 명확한 질의는 해당 엔드포인트를 최상위로 찾는다."""
+    """키워드로 명확한 질의는 해당 엔드포인트를 최상위로 찾는다.
+
+    기본 전략은 rrf라 벡터 arm도 함께 돌아간다 — 질의·청크 텍스트의 토큰이
+    겹치면 해시 임베딩도 양의 유사도를 낼 수 있어(fixtures/fakes.py 미사용,
+    실제 HashEmbeddingProvider) match_type이 "keyword" 대신 "both"가 될 수
+    있다. 이 테스트의 관심사는 "정답 엔드포인트가 최상위인가"이지 어느
+    arm이 기여했는지가 아니므로 match_type은 둘 중 하나만 확인한다.
+    """
     _register(app_state, sample_openapi_3)
     candidates = _bundle(app_state).candidate_search.search(
         "find pet by id", CandidateSearchOptions(top_k=5)
@@ -66,7 +73,7 @@ def test_keyword_match_finds_expected_endpoint(app_state, sample_openapi_3: str)
 
     assert candidates[0].method == "GET"
     assert candidates[0].path == "/pet/{petId}"
-    assert candidates[0].match_type == "keyword"
+    assert candidates[0].match_type in ("keyword", "both")
 
 
 def test_respects_top_k(app_state, sample_openapi_3: str) -> None:
@@ -110,14 +117,20 @@ def test_section_chunks_are_not_returned_as_endpoints(app_state) -> None:
     assert candidates == []
 
 
-# --- 핵심 검증: 키워드가 맞으면 임베딩 API 를 호출하지 않는다 -----------------
+# --- fallback 전략(롤백 스위치): 키워드가 맞으면 임베딩 API 를 호출하지 않는다 ---
+#
+# 기본 전략은 rrf(키워드+벡터 항상 병렬 실행)라 이 배타적 불변식은 더는
+# 기본값이 아니다. `docs/search-rrf-reevaluation.md` 5.6 에 따라 SPEC Phase 0
+# 결정 6("키워드 0건일 때만 벡터")은 이제 `search_strategy="fallback"` 에
+# 한해서만 유효한 계약이므로, 이 절의 테스트는 전략을 명시적으로 고정한다.
 
 
 def test_keyword_hit_does_not_call_embedding_provider(
     app_state, counting_embedding_provider, sample_openapi_3: str
 ) -> None:
-    """키워드 결과가 1건 이상이면 임베딩 프로바이더 호출 카운트가 0 이다."""
+    """fallback 전략: 키워드 결과가 1건 이상이면 임베딩 호출 카운트가 0 이다."""
     _register(app_state, sample_openapi_3)
+    app_state.search_strategy = "fallback"
     counting_embedding_provider.reset_counts()
 
     candidates = _bundle(app_state).candidate_search.search(
@@ -131,8 +144,9 @@ def test_keyword_hit_does_not_call_embedding_provider(
 def test_exact_path_query_does_not_call_embedding_provider(
     app_state, counting_embedding_provider, sample_openapi_3: str
 ) -> None:
-    """"GET /pet/{petId}" 처럼 구조적으로 명확한 질의도 임베딩 호출이 0 이다."""
+    """fallback 전략: "GET /pet/{petId}" 처럼 명확한 질의도 임베딩 호출이 0 이다."""
     _register(app_state, sample_openapi_3)
+    app_state.search_strategy = "fallback"
     counting_embedding_provider.reset_counts()
 
     candidates = _bundle(app_state).candidate_search.search(
@@ -145,8 +159,9 @@ def test_exact_path_query_does_not_call_embedding_provider(
 
 
 def test_keyword_hit_path_never_touches_embedding(app_state, sample_openapi_3: str) -> None:
-    """임베딩이 호출되면 즉시 실패하는 프로바이더로도 키워드 경로가 성공한다."""
+    """fallback 전략: 임베딩 호출 시 즉시 실패하는 프로바이더로도 키워드 경로는 성공한다."""
     _register(app_state, sample_openapi_3)
+    app_state.search_strategy = "fallback"
     app_state.embedding_provider = ExplodingEmbeddingProvider(dim=384)
 
     candidates = _bundle(app_state).candidate_search.search(
@@ -155,6 +170,24 @@ def test_keyword_hit_path_never_touches_embedding(app_state, sample_openapi_3: s
 
     assert candidates
     assert all(c.match_type == "keyword" for c in candidates)
+
+
+def test_rrf_strategy_calls_embedding_even_on_keyword_hit(
+    app_state, counting_embedding_provider, sample_openapi_3: str
+) -> None:
+    """rrf 전략(기본)은 키워드가 맞아도 벡터 arm 을 위해 임베딩을 호출한다.
+
+    fallback 전략과의 결정적 차이 — "항상 두 arm 실행"이 rrf 도입의 핵심이다.
+    """
+    _register(app_state, sample_openapi_3)
+    counting_embedding_provider.reset_counts()
+
+    candidates = _bundle(app_state).candidate_search.search(
+        "find pet by id", CandidateSearchOptions(top_k=5)
+    )
+
+    assert candidates
+    assert counting_embedding_provider.embed_call_count == 1
 
 
 # --- 벡터 보조: 키워드 0건일 때만 --------------------------------------------
@@ -184,11 +217,11 @@ def _search_with_stub_vector(
     스텁을 주입해야만 분기가 실증된다.
     """
     bundle = _bundle(app_state)
-    endpoint_chunk_ids = [
-        c.id for c in bundle.chunk_repo.list_endpoint_chunks()
+    endpoint_chunks = [
+        (c.id, c.ref_id) for c in bundle.chunk_repo.list_endpoint_chunks()
     ]
-    assert endpoint_chunk_ids, "엔드포인트 청크가 있어야 스텁 검증이 의미 있다"
-    stub = StubVectorSearch(endpoint_chunk_ids[:stub_chunk_limit], score=stub_score)
+    assert endpoint_chunks, "엔드포인트 청크가 있어야 스텁 검증이 의미 있다"
+    stub = StubVectorSearch(endpoint_chunks[:stub_chunk_limit], score=stub_score)
     search = EndpointCandidateSearch(
         chunk_repo=bundle.chunk_repo,
         endpoint_repo=bundle.endpoint_repo,
@@ -251,7 +284,12 @@ def test_vector_fallback_skipped_when_disabled(app_state, sample_openapi_3: str)
 def test_vector_fallback_disabled_still_returns_keyword_results(
     app_state, sample_openapi_3: str
 ) -> None:
-    """벡터 보조가 비활성이어도 키워드 결과는 정상 반환된다."""
+    """provider 게이팅(rrf 전략 기본값): 벡터가 비활성이면 키워드 단독으로 degrade한다.
+
+    `vector_fallback_enabled=False`(해시 임베딩 폴백 등)면 rrf 전략이어도
+    벡터 arm 을 실행하지 않고 전부 match_type="keyword" 로 나온다
+    (`docs/search-rrf-reevaluation.md` 5.5 불변식).
+    """
     _register(app_state, sample_openapi_3)
     app_state.vector_fallback_enabled = False
     app_state.embedding_provider = ExplodingEmbeddingProvider(dim=384)
@@ -259,6 +297,59 @@ def test_vector_fallback_disabled_still_returns_keyword_results(
     candidates = _bundle(app_state).candidate_search.search(
         "find pet by id", CandidateSearchOptions(top_k=5)
     )
+
+    assert candidates
+    assert all(c.match_type == "keyword" for c in candidates)
+
+
+# --- RRF 융합: match_type="both" --------------------------------------------
+
+
+def test_rrf_both_match_type_when_keyword_and_vector_agree(
+    app_state, sample_openapi_3: str
+) -> None:
+    """키워드·벡터 두 arm 모두에서 같은 엔드포인트가 나오면 match_type="both" 다."""
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_endpoint_chunks()]
+    keyword_search = KeywordSearch(bundle.chunk_repo)
+    keyword_hits = keyword_search.search("find pet by id", top_k=50)
+    assert keyword_hits, "키워드 arm 이 최소 1건은 잡아야 시나리오가 의미 있다"
+    top_ref_id = keyword_hits[0].ref_id
+    top_chunk_id = next(cid for cid, ref_id in endpoint_chunks if ref_id == top_ref_id)
+
+    stub = StubVectorSearch([(top_chunk_id, top_ref_id)], score=0.9)
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=keyword_search,
+        vector_search=stub,
+        document_repo=bundle.document_repo,
+    )
+
+    candidates = search.search("find pet by id", CandidateSearchOptions(top_k=5))
+
+    top = next(c for c in candidates if c.endpoint_id == top_ref_id)
+    assert top.match_type == "both"
+
+
+def test_rrf_keyword_only_arm_hit_keeps_keyword_match_type(
+    app_state, sample_openapi_3: str
+) -> None:
+    """벡터 arm 에 전혀 없는 후보는 keyword 로 남는다(양 arm 융합이어도 배타 표기 유지)."""
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    keyword_search = KeywordSearch(bundle.chunk_repo)
+    stub = StubVectorSearch([], score=0.9)
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=keyword_search,
+        vector_search=stub,
+        document_repo=bundle.document_repo,
+    )
+
+    candidates = search.search("find pet by id", CandidateSearchOptions(top_k=5))
 
     assert candidates
     assert all(c.match_type == "keyword" for c in candidates)

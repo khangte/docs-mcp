@@ -35,9 +35,9 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
     ) -> EndpointSearchResponse | ErrorPayload:
         """자연어/키워드로 API 엔드포인트 후보를 가볍게 검색한다.
 
-        키워드·구조적 매칭(operationId/path/tag/summary)을 먼저 수행하고, 결과가
-        0건일 때만 벡터 검색을 보조로 시도한다. 상세 정보는 포함하지 않으므로,
-        후보를 고른 뒤 get_endpoint_details 로 상세를 조회한다.
+        키워드(FTS)와 벡터(임베딩) 검색을 항상 함께 수행해 RRF로 순위를
+        융합한다. 상세 정보는 포함하지 않으므로, 후보를 고른 뒤
+        get_endpoint_details 로 상세를 조회한다.
 
         Args:
             query: 검색할 자연어 또는 키워드 질의.
@@ -49,7 +49,8 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Returns:
             items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,
-            path, summary, match_type("keyword" 또는 "vector") 필드를 갖는다.
+            path, summary, match_type("keyword", "vector" 또는 "both") 필드를
+            갖는다. "both"는 키워드·벡터 양쪽에서 모두 매칭된 후보다.
             매칭이 없으면 items 는 빈 리스트다. document_id가 등록되지 않았거나
             project 와 불일치하면(빈 결과와 구분해) code="document_not_found"
             에러 페이로드를 반환한다.
