@@ -1,6 +1,6 @@
 # 임베딩 프로바이더 교체 설계 — Gemini API 제거 → 로컬 CPU 모델
 
-- 상태: 설계(구현 전, 코드 미작성)
+- 상태: 구현 완료(커밋 `be774dd`) — 아래 착수 순서 1~7단계 전부 반영됨
 - 일시: 2026-08-08
 - 작성: architect
 - 지시: lead(무료·CPU·다국어 경량 임베딩으로 전환, 예시 `intfloat/multilingual-e5-small`)
@@ -105,6 +105,8 @@ class EmbeddingProvider(Protocol):
 ---
 
 ## 착수 순서(구현 단계)
+> ✅ **전 단계 구현 완료(커밋 `be774dd`).** 아래 1~7 단계가 모두 반영·커밋되었다.
+
 1. **의존성**(2절): `google-genai` 제거, `sentence-transformers`+CPU torch 추가, 설치/캐시 방식 확정.
 2. **Protocol + LocalEmbeddingProvider**(1절): 비대칭 `embed_documents`/`embed_query`/`is_semantic` 도입, Gemini provider 삭제, Hash provider 를 새 계약에 맞춰 갱신.
 3. **차원 SSOT + 마이그레이션**(3절): `EMBEDDING_DIM=384`, config/embedding_dim 제거, 컬럼+HNSW 재생성 alembic 리비전 → `alembic upgrade head`.
