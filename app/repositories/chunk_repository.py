@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.models.openapi import ApiChunk, ApiDocument, ApiEndpoint
 
@@ -56,15 +56,19 @@ class ChunkRepository:
         """endpoint 타입 청크만 SQL 로 필터링해 반환한다.
 
         후보 검색은 endpoint 청크만 사용하므로 section/schema 청크를 DB 단계에서
-        걸러낸다. 전체 청크를 적재한 뒤 Python 에서 버리면 쓰이지도 않을
-        임베딩 벡터 컬럼까지 매 검색마다 전송된다.
+        걸러낸다. 반환된 청크의 embedding 컬럼은 호출측(EndpointCandidateSearch)이
+        전혀 쓰지 않으므로 `defer()` 로 로딩을 지연해 전송하지 않는다.
 
         Args:
             document_id: 주어지면 해당 문서로 범위를 제한한다.
             project: 주어지면 `ApiDocument` 와 조인해 해당 project 로
                 범위를 제한한다(SQL 로 필터링, Python 필터링 금지).
         """
-        stmt = select(ApiChunk).where(ApiChunk.chunk_type == "endpoint")
+        stmt = (
+            select(ApiChunk)
+            .where(ApiChunk.chunk_type == "endpoint")
+            .options(defer(ApiChunk.embedding))
+        )
         if document_id is not None:
             stmt = stmt.where(ApiChunk.document_id == document_id)
         if project is not None:
