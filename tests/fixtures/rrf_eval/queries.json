@@ -1,0 +1,22 @@
+[
+  {"query": "로그인", "category": "known-실패사례(로그인/로그아웃 혼동)", "accepted": [["POST", "/auth/login"]]},
+  {"query": "비밀번호를 잊어버렸어요", "category": "known-실패사례(패러프레이즈)", "accepted": [["POST", "/auth/password/reset-request"]]},
+  {"query": "create user account", "category": "known-실패사례(영문 미매칭)", "accepted": [["POST", "/users"]]},
+  {"query": "회원 탈퇴하고 싶어요", "category": "동의어/패러프레이즈-한글", "accepted": [["DELETE", "/users/{userId}"]]},
+  {"query": "sign up for a new account", "category": "동의어/패러프레이즈-영문", "accepted": [["POST", "/users"]]},
+  {"query": "세션 종료", "category": "동의어/패러프레이즈-한글(vs 세션조회 decoy)", "accepted": [["POST", "/auth/logout"]]},
+  {"query": "create a new user", "category": "흔한 토큰 오탐 범람(user)", "accepted": [["POST", "/users"]]},
+  {"query": "구독 해지하고 환불", "category": "다개념 질의(복수 정답)", "accepted": [["POST", "/subscriptions/{subId}/cancel"], ["POST", "/billing/refund"]]},
+  {"query": "주문 상태별로 필터링해서 조회하고 싶어요", "category": "필드 희석(status 파라미터/서버상태 decoy)", "accepted": [["GET", "/orders"]]},
+  {"query": "/orders/{orderId}", "category": "경로 기반 질의", "accepted": [["GET", "/orders/{orderId}"]]},
+  {"query": "주문 아이디로 상세 조회", "category": "경로 기반 질의(자연어)", "accepted": [["GET", "/orders/{orderId}"]]},
+  {"query": "GET /users/{userId}", "category": "경로 기반 질의", "accepted": [["GET", "/users/{userId}"]]},
+  {"query": "invoice list", "category": "동의어(영문 질의 vs 한글 문서)", "accepted": [["GET", "/billing/invoices"]]},
+  {"query": "결제 취소하고 돈 돌려받고 싶어요", "category": "패러프레이즈(환불)", "accepted": [["POST", "/billing/refund"]]},
+  {"query": "주문", "category": "흔한 토큰(bare word)", "accepted": [["GET", "/orders"], ["POST", "/orders"], ["GET", "/orders/{orderId}"]]},
+  {"query": "인증해줘", "category": "패러프레이즈(로그인)", "accepted": [["POST", "/auth/login"]]},
+  {"query": "새 비밀번호로 바꾸기", "category": "패러프레이즈(비밀번호 변경)", "accepted": [["POST", "/auth/password/reset-confirm"]]},
+  {"query": "서버가 살아있는지 확인", "category": "패러프레이즈(헬스체크)", "accepted": [["GET", "/health"]]},
+  {"query": "how do I get item details", "category": "동의어(영문 질의 vs 한글 문서)", "accepted": [["GET", "/products/{productId}"]]},
+  {"query": "delete order", "category": "경로/영문 혼합", "accepted": [["DELETE", "/orders/{orderId}"]]}
+]
