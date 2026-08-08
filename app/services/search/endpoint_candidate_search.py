@@ -102,17 +102,16 @@ class EndpointCandidateSearch:
         """
         normalized_query, document_id, project = self._validate(query, options)
 
-        candidate_chunks = self._endpoint_chunks(document_id, project)
-        if not candidate_chunks:
+        if not self._chunk_repo.has_endpoint_chunks(document_id=document_id, project=project):
             return []
 
         keyword_candidates = self._search_by_keyword(
-            normalized_query, candidate_chunks, options.top_k
+            normalized_query, options.top_k, document_id, project
         )
         if keyword_candidates:
             return keyword_candidates
 
-        return self._search_by_vector(normalized_query, candidate_chunks, options.top_k)
+        return self._search_by_vector(normalized_query, options.top_k, document_id, project)
 
     def _validate(
         self, query: str, options: CandidateSearchOptions
@@ -141,24 +140,28 @@ class EndpointCandidateSearch:
     def _endpoint_chunks(
         self, document_id: str | None, project: str | None
     ) -> list[ApiChunk]:
-        """검색 대상이 되는 endpoint 타입 청크만 SQL 필터로 조회한다."""
+        """검색 대상이 되는 endpoint 타입 청크만 SQL 필터로 조회한다.
+
+        벡터 보조(`_search_by_vector`)가 후보 스코프를 만들 때만 쓴다 —
+        키워드 검색은 `search_endpoint_by_text` 로 완전히 SQL 화되어
+        이 메서드를 거치지 않는다.
+        """
         return list(
             self._chunk_repo.list_endpoint_chunks(document_id=document_id, project=project)
         )
 
     def _search_by_keyword(
-        self, query: str, chunks: list[ApiChunk], top_k: int
+        self, query: str, top_k: int, document_id: str | None, project: str | None
     ) -> list[EndpointCandidate]:
-        """1차 키워드 검색을 수행해 후보를 만든다."""
-        hits = self._keyword_search.search(query, top_k=top_k, chunks=chunks)
-        chunk_by_id = {c.id: c for c in chunks}
-        ordered_ref_ids = [
-            chunk_by_id[h.chunk_id].ref_id for h in hits if h.chunk_id in chunk_by_id
-        ]
+        """Postgres FTS 로 1차 키워드 검색을 수행해 후보를 만든다."""
+        hits = self._keyword_search.search(
+            query, top_k=top_k, document_id=document_id, project=project
+        )
+        ordered_ref_ids = [h.ref_id for h in hits]
         return self._to_candidates(ordered_ref_ids, "keyword", top_k)
 
     def _search_by_vector(
-        self, query: str, chunks: list[ApiChunk], top_k: int
+        self, query: str, top_k: int, document_id: str | None, project: str | None
     ) -> list[EndpointCandidate]:
         """키워드 0건일 때만 호출되는 벡터 보조 검색.
 
@@ -168,6 +171,7 @@ class EndpointCandidateSearch:
             _LOG.debug("벡터 보조 검색 생략: 임베딩 API 키 미설정")
             return []
 
+        chunks = self._endpoint_chunks(document_id, project)
         candidate_ids = {c.id for c in chunks}
         hits = self._vector_search.search(query, top_k=top_k, candidates=candidate_ids)
         chunk_by_id = {c.id: c for c in chunks}

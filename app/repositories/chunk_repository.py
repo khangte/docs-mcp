@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, defer
 
 from app.models.openapi import ApiChunk, ApiDocument, ApiEndpoint
@@ -17,6 +17,25 @@ class ChunkVectorHit:
 
     chunk_id: str
     score: float
+
+
+@dataclass
+class ChunkTextHit:
+    """FTS 키워드 검색 결과 한 건(청크 ID + 엔드포인트 ref_id + ts_rank 점수)."""
+
+    chunk_id: str
+    ref_id: str
+    score: float
+
+
+def _quote_tsquery_lexeme(term: str) -> str:
+    """term 을 tsquery 리터럴 lexeme 으로 안전하게 인용한다.
+
+    tsquery 문자열은 그 자체로 연산자(& | ! ( ) 등)를 갖는 미니 언어라,
+    term 을 작은따옴표로 감싸 "리터럴 lexeme"으로 강제해야 사용자 입력이
+    연산자로 해석되지 않는다. 내부에 작은따옴표가 있으면 두 배로 escape.
+    """
+    return "'" + term.replace("'", "''") + "'"
 
 
 class ChunkRepository:
@@ -76,6 +95,67 @@ class ChunkRepository:
                 ApiDocument.project == project
             )
         return self._session.execute(stmt).scalars().all()
+
+    def has_endpoint_chunks(
+        self, document_id: str | None = None, project: str | None = None
+    ) -> bool:
+        """조건에 맞는 endpoint 청크가 하나라도 있는지 가벼운 EXISTS 조회로 확인한다.
+
+        `EndpointCandidateSearch` 가 "이 스코프에 endpoint 청크가 아예 없다"를
+        빠르게 판별해 키워드/벡터 검색(및 임베딩 API 호출)을 생략하는 데 쓴다.
+        전체 청크를 적재하지 않으므로 `list_endpoint_chunks()` 보다 가볍다.
+        """
+        stmt = select(ApiChunk.id).where(ApiChunk.chunk_type == "endpoint")
+        if document_id is not None:
+            stmt = stmt.where(ApiChunk.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
+                ApiDocument.project == project
+            )
+        stmt = stmt.limit(1)
+        return self._session.execute(stmt).first() is not None
+
+    def search_endpoint_by_text(
+        self,
+        terms: Sequence[str],
+        top_k: int,
+        document_id: str | None = None,
+        project: str | None = None,
+    ) -> list[ChunkTextHit]:
+        """endpoint 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
+
+        `terms` 는 `|`(OR) 로 결합한다 — "질의 term 중 하나라도 겹치면 후보,
+        많이 겹칠수록 상위"인 기존 키워드 검색 의미를 유지하기 위함이다
+        (`plainto_tsquery`/`websearch_to_tsquery` 의 기본 AND 는 recall 을
+        지나치게 좁힌다). 각 term 은 리터럴 lexeme 으로 인용해(`_quote_tsquery_lexeme`)
+        tsquery 연산자로 오인되지 않게 한다.
+
+        정렬은 `ts_rank` 내림차순, 동점이면 `id` 오름차순이라 결과가 결정적이다.
+        `text_tsv` 컬럼 자체는 필터 전용이라 select 하지 않는다.
+        """
+        normalized_terms = [t for t in terms if t]
+        if top_k <= 0 or not normalized_terms:
+            return []
+        tsquery_str = " | ".join(_quote_tsquery_lexeme(t) for t in normalized_terms)
+        tsq = func.to_tsquery("simple", tsquery_str)
+        rank = func.ts_rank(ApiChunk.text_tsv, tsq)
+        stmt = (
+            select(ApiChunk.id, ApiChunk.ref_id, rank.label("score"))
+            .where(ApiChunk.chunk_type == "endpoint")
+            .where(ApiChunk.text_tsv.op("@@", is_comparison=True)(tsq))
+        )
+        if document_id is not None:
+            stmt = stmt.where(ApiChunk.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
+                ApiDocument.project == project
+            )
+        stmt = stmt.order_by(rank.desc(), ApiChunk.id.asc()).limit(top_k)
+        rows = self._session.execute(stmt).all()
+        return [
+            ChunkTextHit(chunk_id=cid, ref_id=ref_id, score=float(score))
+            for cid, ref_id, score in rows
+        ]
 
     def list_by_endpoint_filter(
         self,

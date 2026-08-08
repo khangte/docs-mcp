@@ -1,27 +1,35 @@
-"""키워드 검색 (토큰 매칭 수 기반 간단 점수).
-
-SQLite 에서도 동작하도록 LOWER + LIKE 대신 Python 레벨 토큰 매칭으로 점수를 낸다.
-"""
+"""키워드 검색 (Postgres FTS `to_tsquery` OR 매칭 + `ts_rank`)."""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
-from app.models.openapi import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
-from app.services.search.tokenize import tokenize
+
+_TERM_RE = re.compile(r"[0-9A-Za-z_]+|[가-힣]+")
+
+
+def tokenize_terms(query: str) -> list[str]:
+    """질의를 영숫자/언더스코어 또는 한글 덩어리 단위 소문자 term 으로 자른다.
+
+    `api_chunk.text_tsv` 생성 컬럼이 `to_tsvector('simple', text)` 로 한글
+    단어 토큰까지 인덱싱하므로, 질의 쪽 term 화도 한글을 포함해 맞춘다.
+    """
+    return [t.lower() for t in _TERM_RE.findall(query or "")]
 
 
 @dataclass
 class KeywordHit:
-    """키워드 검색 결과 한 건(청크 ID + 점수)."""
+    """키워드 검색 결과 한 건(청크 ID + 엔드포인트 ref_id + ts_rank 점수)."""
 
     chunk_id: str
+    ref_id: str
     score: float
 
 
 class KeywordSearch:
-    """청크 텍스트와 쿼리의 토큰 겹침 비율로 키워드 검색을 수행한다."""
+    """`api_chunk.text_tsv` GIN 인덱스로 endpoint 청크를 키워드 검색한다."""
 
     def __init__(self, chunk_repo: ChunkRepository) -> None:
         """청크 저장소 의존성을 보관한다."""
@@ -31,33 +39,19 @@ class KeywordSearch:
         self,
         query: str,
         top_k: int,
-        candidates: set[str] | None = None,
-        chunks: list[ApiChunk] | None = None,
+        *,
+        document_id: str | None = None,
+        project: str | None = None,
     ) -> list[KeywordHit]:
-        """쿼리 토큰 매칭 비율로 점수를 매겨 상위 top_k 결과를 반환한다.
+        """질의 term 을 OR 로 결합해 top_k 결과를 `ts_rank` 내림차순으로 반환한다.
 
-        chunks 가 주어지면 해당 목록을 사용하고, 없으면 저장소에서 전체 조회한다.
+        스코프(document_id/project)는 SQL 로 필터링한다 — 후보 청크를
+        Python 메모리에 미리 적재하지 않는다.
         """
-        q_tokens = set(tokenize(query))
-        if not q_tokens:
+        terms = tokenize_terms(query)
+        if not terms:
             return []
-        source = chunks if chunks is not None else list(self._chunk_repo.list_all())
-        scored: list[KeywordHit] = []
-        for chunk in source:
-            if candidates is not None and chunk.id not in candidates:
-                continue
-            score = _score_chunk(chunk, q_tokens)
-            if score > 0:
-                scored.append(KeywordHit(chunk_id=chunk.id, score=score))
-        scored.sort(key=lambda h: h.score, reverse=True)
-        return scored[:top_k]
-
-
-def _score_chunk(chunk: ApiChunk, q_tokens: set[str]) -> float:
-    """청크 토큰과 쿼리 토큰의 교집합 비율로 점수를 계산한다."""
-    c_tokens = set(tokenize(chunk.text))
-    overlap = q_tokens & c_tokens
-    if not overlap:
-        return 0.0
-    # 정규화: 쿼리 토큰 기준 매칭 비율
-    return len(overlap) / max(1, len(q_tokens))
+        hits = self._chunk_repo.search_endpoint_by_text(
+            terms, top_k=top_k, document_id=document_id, project=project
+        )
+        return [KeywordHit(chunk_id=h.chunk_id, ref_id=h.ref_id, score=h.score) for h in hits]
