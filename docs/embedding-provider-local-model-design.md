@@ -45,7 +45,7 @@ class EmbeddingProvider(Protocol):
 - **추가**: `sentence-transformers>=3.0`(transitively `torch`, `transformers`, `huggingface-hub`).
 - ⚠️ **설치 무게/오프라인 주의(실질 리스크)**:
   - `torch` CPU 휠은 크다(수백 MB). CUDA 휠이 딸려오지 않게 **CPU 전용 torch** 를 명시해야 한다(uv/pip extra-index `https://download.pytorch.org/whl/cpu` 또는 `torch` CPU 변형 핀). developer 가 설치 방식 확정 필요.
-  - **모델 최초 다운로드**: `SentenceTransformer("intfloat/multilingual-e5-small")` 는 최초 실행 시 HuggingFace 에서 ~120MB 를 받는다. 오프라인/CI 영향:
+  - **모델 최초 다운로드**: `SentenceTransformer("intfloat/multilingual-e5-small")` 는 최초 실행 시 HuggingFace 에서 **~471MB**(developer 실측 — safetensors 가중치 + tokenizer 등 포함)를 받는다. 오프라인/CI 영향:
     - 캐시 경로 `HF_HOME`/`SENTENCE_TRANSFORMERS_HOME` 를 지정해 컨테이너 빌드시 프리페치하거나 볼륨 마운트.
     - CI·테스트는 모델을 받지 않도록 **기본 폴백을 Hash 로**(5절) 두고, 벡터 스모크 테스트만 opt-in.
     - Docker 이미지 빌드 단계에서 모델을 미리 받아 레이어에 굽는 것을 권장(런타임 콜드스타트·네트워크 의존 제거).
