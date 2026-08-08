@@ -30,7 +30,10 @@ from sqlalchemy.orm import (
     relationship,
 )
 
-EMBEDDING_DIM = 256
+#: `intfloat/multilingual-e5-small` 고정 차원. 로컬 모델은 dim 이 모델 자체에
+#: 고정돼 독립 튜닝 대상이 아니므로, 이 상수 하나가 pgvector 컬럼 dim 의
+#: 유일한 진실원이다(부트스트랩에서 provider.dim 과 일치를 assert 한다).
+EMBEDDING_DIM = 384
 
 #: `api_chunk.text_tsv` 생성 컬럼식(모델·alembic 마이그레이션이 공유 — 두 곳이
 #: 어긋나면 alembic autogenerate 가 스푸리어스 diff 를 낼 수 있다).

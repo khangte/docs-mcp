@@ -87,7 +87,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
 1. **Fetch**: 외부 문서(OpenAPI/Markdown/CSV) 수집 (해시 검사로 변경분 확인)
 2. **Detect & Parse**: `doc_type` 자동 판별(`document_router.py`) 후 엔드포인트/스키마(OpenAPI) 또는
    섹션(Markdown/CSV)으로 정규화
-3. **Index**: 검색 단위로 청크화하고 임베딩 생성(Gemini API 또는 결정적 해시 폴백)
+3. **Index**: 검색 단위로 청크화하고 임베딩 생성(로컬 CPU 모델 또는 결정적 해시 폴백)
 4. **Store**: PostgreSQL 및 pgvector에 최종 저장
 
 ### 5-2. 검색 (Hybrid Search)
@@ -131,8 +131,9 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
 
 - **Language/Framework**: Python 3.11+, `fastmcp`
 - **Database**: PostgreSQL + pgvector (HNSW index), Alembic 마이그레이션
-- **LLM/임베딩**: Gemini API(`GeminiLLMProvider`, `GeminiEmbeddingProvider`) 우선 사용,
-  API 키 미설정 시 `TemplateLLMProvider`/`HashEmbeddingProvider`로 자동 폴백
+- **임베딩**: 로컬 CPU 모델(`sentence-transformers`, `LocalEmbeddingProvider`, 기본
+  `intfloat/multilingual-e5-small`) 우선 사용, 모델 로드 실패 또는 테스트 환경에서는
+  `HashEmbeddingProvider`(결정적 해시)로 자동 폴백
 - **Auth**: 현재 관리 API/MCP 모두 별도 인증 없음(로컬/신뢰 환경 전제, API Key 인증은 TODO)
 - **`project` 필터는 검색 범위 축소 도구일 뿐 보안 경계가 아니다**: 인증·접근 제어를 수행하지 않으며, 서버에 접근 가능한 누구나 `project` 필터 없이 모든 프로젝트의 데이터를 조회할 수 있다.
 - **Observability**: JSON 구조화 로깅 기반 (trace_id 추적)
@@ -144,3 +145,4 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
 - ADR-0001: 저장형 검색 구조 채택
 - ADR-0002: pgvector 기반 하이브리드 검색 도입
 - ADR-0003: MCP 도구의 읽기 전용 경계 유지
+- ADR-0004: 임베딩 프로바이더를 관리형 API 에서 로컬 CPU 모델로 전환

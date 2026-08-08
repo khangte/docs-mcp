@@ -37,7 +37,7 @@ class VectorSearch:
         """쿼리를 임베딩해 top_k 결과를 검색하고 음수 점수는 0 으로 잘라 반환한다."""
         if not query or not query.strip():
             return []
-        query_vec = self._embedding_provider.embed([query])[0]
+        query_vec = self._embedding_provider.embed_query(query)
         hits = self._chunk_repo.search_by_vector(query_vec, top_k=top_k, candidate_ids=candidates)
         # 유사도는 [-1, 1]. 음수도 의미 없는 후보로 간주하지 않지만 UI 상으로는 [0,1] 정규화.
         return [

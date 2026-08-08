@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import create_session_factory
+from app.models.openapi import EMBEDDING_DIM
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository
@@ -37,8 +38,8 @@ from app.services.endpoints.endpoint_details_service import EndpointDetailsServi
 from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import (
     EmbeddingProvider,
-    GeminiEmbeddingProvider,
     HashEmbeddingProvider,
+    LocalEmbeddingProvider,
 )
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
@@ -75,15 +76,19 @@ class AppState:
         cls,
         engine: Engine,
         fetcher: OpenAPIFetcher,
-        embedding_dim: int = 256,
         hybrid_alpha: float = 0.4,
         vector_fallback_enabled: bool | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
-        `vector_fallback_enabled` 를 생략하면 설정의 Gemini API 키 유무로 결정한다.
+        `vector_fallback_enabled` 를 생략하면 임베딩 백엔드 설정
+        (`DOCS_MCP_EMBEDDING_BACKEND`)으로 결정한다. `embedding_provider` 를
+        생략하면 백엔드 설정에 따라 기본 프로바이더를 만든다 — 테스트에서
+        무거운 로컬 모델 로딩을 피하려면 `HashEmbeddingProvider` 를 명시적으로
+        주입한다(env 오염 없는 dependency override).
 
         Drive/Notion 어댑터는 여기서 고정 dict 로 만들어 보관하지 않는다.
         `project_drive_source`/`project_notion_source` 매핑은 요청/갱신마다
@@ -94,10 +99,17 @@ class AppState:
         테스트에서 실제 자격증명 없이 페이크 어댑터를 주입하는 지점이다.
         """
         settings = get_settings()
+        provider = (
+            embedding_provider if embedding_provider is not None else _build_embedding_provider()
+        )
+        assert provider.dim == EMBEDDING_DIM, (
+            f"임베딩 프로바이더 차원({provider.dim})이 DB 컬럼 차원(EMBEDDING_DIM="
+            f"{EMBEDDING_DIM})과 다릅니다 — 모델 교체 시 컬럼도 함께 마이그레이션하세요."
+        )
         return cls(
             engine=engine,
             session_factory=create_session_factory(engine),
-            embedding_provider=_build_embedding_provider(embedding_dim),
+            embedding_provider=provider,
             fetcher=fetcher,
             hybrid_alpha=hybrid_alpha,
             vector_fallback_enabled=(
@@ -111,27 +123,26 @@ class AppState:
         )
 
 
+_HASH_BACKEND = "hash"
+
+
 def is_vector_fallback_available() -> bool:
     """search_endpoints 의 벡터 보조 단계를 쓸 수 있는지 설정으로 판별한다.
 
-    Gemini API 키가 없으면 임베딩 프로바이더가 HashEmbeddingProvider 로
-    폴백되는데, 해시 임베딩은 의미 유사도가 없어 벡터 보조로서 의미가 없다.
-    프로바이더 클래스 종류가 아니라 설정값(키 유무)을 판별 기준으로 삼아
-    폴백 구현이 바뀌어도 이 판단이 흔들리지 않게 한다.
+    임베딩 백엔드가 해시 폴백이면 의미 유사도가 없어 벡터 보조로서 의미가
+    없다. 로컬 모델은 "키 유무" 개념이 없으므로, 판별 기준은 프로바이더가
+    실제로 만들어내는 `is_semantic` 값과 동치인 백엔드 설정(local|hash)이다
+    — 판별을 위해 무거운 모델을 로드하지 않도록 설정값만으로 판단한다.
     """
-    return bool(get_settings().gemini_api_key)
+    return get_settings().embedding_backend != _HASH_BACKEND
 
 
-def _build_embedding_provider(embedding_dim: int) -> EmbeddingProvider:
-    """Gemini API 키가 있으면 GeminiEmbeddingProvider, 없으면 HashEmbeddingProvider 로 폴백."""
+def _build_embedding_provider() -> EmbeddingProvider:
+    """임베딩 백엔드 설정에 따라 LocalEmbeddingProvider 또는 HashEmbeddingProvider 를 만든다."""
     settings = get_settings()
-    if not settings.gemini_api_key:
-        return HashEmbeddingProvider(dim=embedding_dim)
-    return GeminiEmbeddingProvider(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_embedding_model,
-        dim=embedding_dim,
-    )
+    if settings.embedding_backend == _HASH_BACKEND:
+        return HashEmbeddingProvider(dim=EMBEDDING_DIM)
+    return LocalEmbeddingProvider(model_name=settings.embedding_model)
 
 
 @dataclass

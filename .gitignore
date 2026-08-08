@@ -230,3 +230,4 @@ team/
 secrets/
 
 .team/
+.claude-logs/

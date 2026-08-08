@@ -28,7 +28,6 @@ def bootstrap_app_state(cfg: Settings | None = None) -> AppState:
     return AppState.from_engine(
         engine=engine,
         fetcher=HttpOpenAPIFetcher(),
-        embedding_dim=cfg.embedding_dim,
         hybrid_alpha=cfg.hybrid_alpha,
     )
 

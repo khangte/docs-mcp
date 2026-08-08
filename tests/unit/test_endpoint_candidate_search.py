@@ -147,7 +147,7 @@ def test_exact_path_query_does_not_call_embedding_provider(
 def test_keyword_hit_path_never_touches_embedding(app_state, sample_openapi_3: str) -> None:
     """임베딩이 호출되면 즉시 실패하는 프로바이더로도 키워드 경로가 성공한다."""
     _register(app_state, sample_openapi_3)
-    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=256)
+    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=384)
 
     candidates = _bundle(app_state).candidate_search.search(
         "find pet by id", CandidateSearchOptions(top_k=5)
@@ -236,10 +236,10 @@ def test_zero_score_vector_hits_are_discarded(app_state, sample_openapi_3: str) 
 
 
 def test_vector_fallback_skipped_when_disabled(app_state, sample_openapi_3: str) -> None:
-    """벡터 보조가 비활성이면 임베딩 호출 없이 빈 결과를 반환한다(Gemini 키 없는 환경)."""
+    """벡터 보조가 비활성이면 임베딩 호출 없이 빈 결과를 반환한다(해시 폴백 환경)."""
     _register(app_state, sample_openapi_3)
     app_state.vector_fallback_enabled = False
-    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=256)
+    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=384)
 
     candidates = _bundle(app_state).candidate_search.search(
         NO_MATCH_QUERY, CandidateSearchOptions(top_k=5)
@@ -254,7 +254,7 @@ def test_vector_fallback_disabled_still_returns_keyword_results(
     """벡터 보조가 비활성이어도 키워드 결과는 정상 반환된다."""
     _register(app_state, sample_openapi_3)
     app_state.vector_fallback_enabled = False
-    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=256)
+    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=384)
 
     candidates = _bundle(app_state).candidate_search.search(
         "find pet by id", CandidateSearchOptions(top_k=5)
@@ -269,7 +269,7 @@ def test_vector_fallback_disabled_still_returns_keyword_results(
 
 def test_empty_index_returns_empty_without_embedding(app_state) -> None:
     """문서가 하나도 없으면 임베딩 호출 없이 빈 리스트를 반환한다."""
-    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=256)
+    app_state.embedding_provider = ExplodingEmbeddingProvider(dim=384)
 
     candidates = _bundle(app_state).candidate_search.search(
         "anything", CandidateSearchOptions(top_k=5)

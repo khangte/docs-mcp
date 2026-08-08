@@ -32,22 +32,22 @@ class Settings:
             "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp",
         )
     )
-    embedding_dim: int = field(
-        default_factory=lambda: int(os.environ.get("DOCS_MCP_EMBEDDING_DIM", "256"))
-    )
     hybrid_alpha: float = field(
         default_factory=lambda: float(os.environ.get("DOCS_MCP_HYBRID_ALPHA", "0.4"))
     )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )
-    gemini_api_key: str | None = field(
-        default_factory=lambda: os.environ.get("DOCS_MCP_GEMINI_API_KEY") or None
-    )
-    gemini_embedding_model: str = field(
+    embedding_model: str = field(
         default_factory=lambda: os.environ.get(
-            "DOCS_MCP_GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"
+            "DOCS_MCP_EMBEDDING_MODEL", "intfloat/multilingual-e5-small"
         )
+    )
+    #: "local"(기본, 실제 의미 유사도) | "hash"(결정적 해시, 테스트/모델 로드
+    #: 실패 폴백용). 모델 다운로드 없이 백엔드를 강제하고 싶을 때(테스트,
+    #: 오프라인 환경) "hash" 로 지정한다.
+    embedding_backend: str = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_EMBEDDING_BACKEND", "local")
     )
     # --- Google Drive (문서 검색 소스) ---
     drive_folder_id: str | None = field(

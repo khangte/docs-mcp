@@ -17,7 +17,7 @@ OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 �
 - **Database**: PostgreSQL(+`pgvector` 확장) — SQLAlchemy 2.0, Alembic 마이그레이션
 - **Search**:
   - pgvector 코사인 거리(`<=>`, HNSW 인덱스) 기반 벡터 검색
-  - 임베딩: Gemini API(`google-genai`, `GeminiEmbeddingProvider`) 또는 결정적 해시 기반 폴백(`HashEmbeddingProvider`)
+  - 임베딩: 로컬 CPU 모델(`sentence-transformers`, `LocalEmbeddingProvider`, 기본 `intfloat/multilingual-e5-small`) 또는 결정적 해시 기반 폴백(`HashEmbeddingProvider`)
   - 하이브리드 검색 엔진 (Keyword + Vector)
 - **문서 파서**: OpenAPI/Swagger, Markdown, CSV (`app/services/parser/document_router.py`가 자동 판별)
 - **MCP**: `fastmcp` 서드파티 패키지
@@ -56,11 +56,10 @@ uv run alembic upgrade head
 | 변수                                       | 필수 | 설명                                                                                   | 기본값                                                           |
 | ------------------------------------------ | ---- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | `DOCS_MCP_DATABASE_URL`                    | No   | PostgreSQL(+pgvector) 연결 URL                                                         | `postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp` |
-| `DOCS_MCP_EMBEDDING_DIM`                   | No   | 임베딩 벡터 차원 (pgvector 컬럼 생성 시 고정됨)                                        | `256`                                                            |
 | `DOCS_MCP_HYBRID_ALPHA`                    | No   | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만)                               | `0.4`                                                            |
 | `DOCS_MCP_LOG_LEVEL`                       | No   | 로그 레벨                                                                              | `INFO`                                                           |
-| `DOCS_MCP_GEMINI_API_KEY`                  | No   | Gemini API 키. 비워두면 임베딩이 결정적 해시 기반(`HashEmbeddingProvider`)으로 폴백    | (없음)                                                           |
-| `DOCS_MCP_GEMINI_EMBEDDING_MODEL`          | No   | Gemini 임베딩 모델                                                                     | `gemini-embedding-001`                                           |
+| `DOCS_MCP_EMBEDDING_MODEL`                 | No   | 로컬 CPU 임베딩 모델(sentence-transformers). 384차원 고정                             | `intfloat/multilingual-e5-small`                                 |
+| `DOCS_MCP_EMBEDDING_BACKEND`               | No   | `local`(실제 의미 유사도) \| `hash`(결정적 해시, 모델 다운로드 없음)                   | `local`                                                          |
 | `DOCS_MCP_DRIVE_FOLDER_ID`                 | No   | 검색 범위로 고정할 Google Drive 폴더 ID(하위 폴더 재귀 포함). 비우면 Drive 소스 비활성 | (없음)                                                           |
 | `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`      | No   | 서비스 계정 키 파일 경로                                                               | (없음)                                                           |
 | `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON`      | No   | 서비스 계정 키 JSON 문자열(파일 경로보다 우선)                                         | (없음)                                                           |

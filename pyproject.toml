@@ -12,7 +12,6 @@ dependencies = [
     "pyyaml>=6.0",
     "fastmcp>=3.3.1",
     "anyio>=4.0",
-    "google-genai>=1.47.0",
     # Drive 서비스 계정 JWT 서명/토큰 발급 전용. Drive REST 호출 자체는 httpx 로 직접 수행하므로
     # google-api-python-client 는 도입하지 않는다.
     "google-auth>=2.30",
@@ -24,6 +23,11 @@ dependencies = [
     "python-dotenv>=1.0",
     "openpyxl>=3.1.5",
     "python-pptx>=1.0.2",
+    # 로컬 CPU 임베딩(intfloat/multilingual-e5-small). torch 는 CPU 전용 휠로
+    # 고정한다([tool.uv.sources]/[[tool.uv.index]] 참조) — CUDA 휠은 수 GB 라
+    # 서버 배포에서 불필요하게 무겁다.
+    "sentence-transformers>=3.0",
+    "torch>=2.2",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +35,14 @@ test = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
 ]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.scripts]
 docs-mcp = "app.mcp.server:main"
@@ -46,6 +58,9 @@ include = ["app*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "slow: 실제 모델 다운로드/추론이 필요한 opt-in 테스트 (기본 실행에서 제외: -m 'not slow')",
+]
 
 [tool.ruff]
 line-length = 100

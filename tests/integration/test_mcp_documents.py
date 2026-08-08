@@ -259,7 +259,7 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
     from app.core.errors import IntegrationError
 
     class _FailOnceEmbeddingProvider:
-        """첫 embed 호출만 실패하고 이후 호출은 정상 위임하는 페이크."""
+        """첫 embed_documents 호출만 실패하고 이후 호출은 정상 위임하는 페이크."""
 
         def __init__(self, delegate) -> None:
             self._delegate = delegate
@@ -269,11 +269,18 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
         def dim(self) -> int:
             return self._delegate.dim
 
-        def embed(self, texts: list[str]) -> list[list[float]]:
+        @property
+        def is_semantic(self) -> bool:
+            return self._delegate.is_semantic
+
+        def embed_documents(self, texts: list[str]) -> list[list[float]]:
             self._calls += 1
             if self._calls == 1:
                 raise IntegrationError("embedding provider unavailable")
-            return self._delegate.embed(texts)
+            return self._delegate.embed_documents(texts)
+
+        def embed_query(self, text: str) -> list[float]:
+            return self._delegate.embed_query(text)
 
     in_memory_fetcher.put("https://example.com/doc-a.json", sample_openapi_3)
     in_memory_fetcher.put("https://example.com/doc-b.json", sample_openapi_3)

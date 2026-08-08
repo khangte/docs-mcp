@@ -16,9 +16,10 @@ from app.services.search.vector_search import VectorSearchHit
 class CountingEmbeddingProvider:
     """임베딩 호출 횟수를 세는 페이크 프로바이더.
 
-    실제 벡터 생성은 위임 대상 프로바이더에 맡기고, `embed()` 가 몇 번
-    불렸는지만 추가로 기록한다. "키워드로 찾아지면 임베딩 API 를 호출하지
-    않는다"는 SPEC 검증 기준을 카운트로 확인하기 위한 도구다.
+    실제 벡터 생성은 위임 대상 프로바이더에 맡기고, `embed_documents`/
+    `embed_query` 가 합쳐서 몇 번 불렸는지만 추가로 기록한다. "키워드로
+    찾아지면 임베딩 API 를 호출하지 않는다"는 SPEC 검증 기준을 카운트로
+    확인하기 위한 도구다.
     """
 
     def __init__(self, delegate: EmbeddingProvider) -> None:
@@ -32,11 +33,22 @@ class CountingEmbeddingProvider:
         """위임 프로바이더의 임베딩 차원 수를 그대로 반환한다."""
         return self._delegate.dim
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """호출 횟수와 입력 텍스트를 기록한 뒤 위임 프로바이더로 임베딩한다."""
+    @property
+    def is_semantic(self) -> bool:
+        """위임 프로바이더의 is_semantic 값을 그대로 반환한다."""
+        return self._delegate.is_semantic
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """호출 횟수와 입력 텍스트를 기록한 뒤 위임 프로바이더로 문서를 임베딩한다."""
         self.embed_call_count += 1
         self.embedded_texts.append(list(texts))
-        return self._delegate.embed(texts)
+        return self._delegate.embed_documents(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        """호출 횟수와 입력 텍스트를 기록한 뒤 위임 프로바이더로 질의를 임베딩한다."""
+        self.embed_call_count += 1
+        self.embedded_texts.append([text])
+        return self._delegate.embed_query(text)
 
     def reset_counts(self) -> None:
         """호출 카운터와 기록을 초기화한다(색인 단계 호출을 제외하고 셀 때 사용)."""
@@ -60,11 +72,20 @@ class ExplodingEmbeddingProvider:
         """임베딩 차원 수를 반환한다."""
         return self._dim
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    @property
+    def is_semantic(self) -> bool:
+        """호출되지 않아야 하는 경로용 페이크라 값 자체는 의미 없다."""
+        return False
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """호출되면 AssertionError 를 발생시킨다."""
         raise AssertionError(
             f"임베딩 프로바이더가 호출되면 안 되는 경로에서 호출됨 (texts={len(texts)}건)"
         )
+
+    def embed_query(self, text: str) -> list[float]:
+        """호출되면 AssertionError 를 발생시킨다."""
+        raise AssertionError("임베딩 프로바이더가 호출되면 안 되는 경로에서 호출됨(질의)")
 
 
 class CountingExampleService:

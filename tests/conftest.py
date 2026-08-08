@@ -19,6 +19,7 @@ from app.repositories.project_source_repository import (
     ProjectDriveSourceRepository,
     ProjectNotionSourceRepository,
 )
+from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from tests.fixtures.samples import openapi_3_json, swagger_2_json
 
@@ -115,10 +116,12 @@ def fake_notion_source():
 def app_state(pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_source):
     """테스트용 AppState.
 
-    `vector_fallback_enabled` 를 True 로 고정해 벡터 보조 경로가 실행 환경의
-    Gemini 키 유무에 좌우되지 않게 한다(키가 없으면 HashEmbeddingProvider 로
-    폴백되므로 외부 호출은 발생하지 않는다). 보조 비활성 동작을 검증하는
-    테스트는 이 값을 명시적으로 False 로 바꾼다.
+    `embedding_provider` 를 `HashEmbeddingProvider` 로 명시 주입해 무거운
+    로컬 모델(SentenceTransformer) 다운로드/로딩 없이 결정적으로 동작하게
+    한다(env 오염 없는 dependency override, `is_semantic=False`).
+    `vector_fallback_enabled` 는 True 로 고정해 벡터 보조 경로가 이 값에
+    좌우되지 않게 한다. 보조 비활성 동작을 검증하는 테스트는 이 값을
+    명시적으로 False 로 바꾼다.
 
     Drive/Notion 어댑터는 이제 project → folder_id/database_id 매핑에서
     요청 시점에 만들어진다(SPEC 기능 5). `drive_source_builder`/
@@ -129,7 +132,7 @@ def app_state(pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_sourc
     state = AppState.from_engine(
         engine=pg_engine,
         fetcher=in_memory_fetcher,
-        embedding_dim=EMBEDDING_DIM,
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
         hybrid_alpha=0.4,
         vector_fallback_enabled=True,
         drive_source_builder=lambda folder_id: fake_drive_source,
@@ -273,7 +276,7 @@ def two_project_app_state(
     return AppState.from_engine(
         engine=pg_engine,
         fetcher=in_memory_fetcher,
-        embedding_dim=EMBEDDING_DIM,
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
         hybrid_alpha=0.4,
         vector_fallback_enabled=True,
         drive_source_builder=fake_drive_source_builder,

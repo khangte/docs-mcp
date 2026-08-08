@@ -101,7 +101,7 @@ class IndexerService:
 
         built_chunks = build_chunks(parsed, endpoint_ids, section_ids)
         texts = [c.text for c in built_chunks]
-        embeddings = self._embedding_provider.embed(texts) if texts else []
+        embeddings = self._embedding_provider.embed_documents(texts) if texts else []
         for idx, (built, vector) in enumerate(zip(built_chunks, embeddings, strict=True)):
             chunk = ApiChunk(
                 id=f"{document.id}:chunk:{idx}",
