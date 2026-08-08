@@ -6,7 +6,8 @@
    후보를 추린다. 후보가 0건이면 **본문 fetch 없이 즉시 빈 리스트를 반환**한다.
 2. **2단계(실시간 fetch, 비쌈)**: 1단계 상위 후보 **최대 `top_k` 건만** 본문을
    실시간으로 가져와 스니펫을 만들고 점수를 재계산한다. 이 상한이 Drive/Notion
-   API rate limit 과 응답 지연을 막는 핵심 장치다.
+   API rate limit 과 응답 지연을 막는 핵심 장치다. fetch 는 응답 지연을
+   줄이기 위해 `MAX_CONCURRENT_BODY_FETCHES` 를 상한으로 병렬 실행된다.
 
 본문은 절대 캐시하지 않는다. `get_document` 도 항상 fetch 시점의 최신 원문을
 돌려준다.
@@ -24,6 +25,7 @@ project 마다 다른 폴더/DB 를 가리키므로, 후보 행의 `project` 로
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 
 from app.core.errors import IntegrationError, ValidationError
@@ -46,6 +48,8 @@ MAX_TOP_K = 50
 #: 최종 점수에서 제목 매칭이 차지하는 비중(나머지는 본문 매칭).
 TITLE_SCORE_WEIGHT = 0.4
 BODY_SCORE_WEIGHT = 1.0 - TITLE_SCORE_WEIGHT
+#: 2단계 본문 fetch 동시 실행 상한(Drive/Notion rate limit 보호).
+MAX_CONCURRENT_BODY_FETCHES = 5
 
 __all__ = [
     "DocumentSearchOptions",
@@ -256,47 +260,78 @@ class DocumentSearchService:
         query_tokens: set[str],
         query: str,
     ) -> list[DocumentSearchItem]:
-        """후보 본문을 실시간으로 받아 스니펫을 만들고 최종 점수로 재정렬한다.
+        """후보 본문을 병렬로 받아 스니펫을 만들고 최종 점수로 재정렬한다.
 
         개별 문서 fetch 실패는 그 문서만 건너뛴다(한 건의 권한 오류가 검색
         전체를 죽이지 않게 한다). 어댑터는 후보 행의 project 로 고른다.
+        Drive/Notion 은 외부 API 호출이라 순차 fetch 시 지연이 합산되므로,
+        `MAX_CONCURRENT_BODY_FETCHES` 를 상한으로 `ThreadPoolExecutor` 로
+        병렬 fetch 한다. `executor.map` 은 완료 순서와 무관하게 입력 순서로
+        결과를 모아주므로 공유 리스트에 동시 append 할 필요가 없다(스레드
+        안전). 최종 정렬은 fetch 순서와 무관하게 score/title 로 다시 한다.
+
+        `self._resolver.resolve_for_project()` 는 요청-스코프 SQLAlchemy
+        Session 을 읽으므로(스레드 세이프하지 않음) 워커 스레드에 맡기지
+        않는다 — executor 를 만들기 전에 후보에 등장하는 project 별로
+        메인 스레드에서 미리 resolve 해 두고, 워커에는 순수 I/O 인
+        `document_source.fetch()` 만 맡긴다.
         """
-        items: list[DocumentSearchItem] = []
-        for row, title_score in candidates:
-            sources = self._resolver.resolve_for_project(row.project)
-            document_source = sources.get(row.source)
-            if document_source is None:
-                _LOG.warning(
-                    "메타 캐시에 있으나 소스가 미구성됨: %s/%s", row.project, row.source
-                )
-                continue
-            try:
-                body = document_source.fetch(row.external_id)
-            except IntegrationError as exc:
-                _LOG.warning(
-                    "문서 본문 조회 실패(건너뜀): %s/%s/%s (%s)",
-                    row.project,
-                    row.source,
-                    row.external_id,
-                    exc,
-                )
-                continue
-            body_score = _body_score(body, query_tokens, query)
-            items.append(
-                DocumentSearchItem(
-                    title=row.title,
-                    source=row.source,
-                    project=row.project,
-                    url=row.url,
-                    snippet=_build_snippet(body, query_tokens)
-                    or _fallback_snippet(row, query),
-                    score=round(
-                        TITLE_SCORE_WEIGHT * title_score + BODY_SCORE_WEIGHT * body_score, 4
-                    ),
-                )
+        projects = {row.project for row, _ in candidates}
+        sources_by_project = {
+            project: self._resolver.resolve_for_project(project) for project in projects
+        }
+        max_workers = min(len(candidates), MAX_CONCURRENT_BODY_FETCHES)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(
+                lambda pair: self._fetch_and_score(
+                    pair[0], pair[1], query_tokens, query, sources_by_project[pair[0].project]
+                ),
+                candidates,
             )
+            items = [item for item in results if item is not None]
         items.sort(key=lambda item: (-item.score, item.title))
         return items
+
+    def _fetch_and_score(
+        self,
+        row: DocumentMeta,
+        title_score: float,
+        query_tokens: set[str],
+        query: str,
+        sources: dict[str, DocumentSource],
+    ) -> DocumentSearchItem | None:
+        """후보 한 건의 본문을 fetch 해 점수를 매긴다. 실패/미구성이면 None.
+
+        `sources` 는 호출측(`_rank_with_body`)이 메인 스레드에서 미리
+        resolve 해 둔 값이다 — 이 메서드는 워커 스레드에서 실행되므로
+        Session 을 쓰는 resolve 호출을 여기서 하면 안 된다.
+        """
+        document_source = sources.get(row.source)
+        if document_source is None:
+            _LOG.warning(
+                "메타 캐시에 있으나 소스가 미구성됨: %s/%s", row.project, row.source
+            )
+            return None
+        try:
+            body = document_source.fetch(row.external_id)
+        except IntegrationError as exc:
+            _LOG.warning(
+                "문서 본문 조회 실패(건너뜀): %s/%s/%s (%s)",
+                row.project,
+                row.source,
+                row.external_id,
+                exc,
+            )
+            return None
+        body_score = _body_score(body, query_tokens, query)
+        return DocumentSearchItem(
+            title=row.title,
+            source=row.source,
+            project=row.project,
+            url=row.url,
+            snippet=_build_snippet(body, query_tokens) or _fallback_snippet(row, query),
+            score=round(TITLE_SCORE_WEIGHT * title_score + BODY_SCORE_WEIGHT * body_score, 4),
+        )
 
     # --- 검증 헬퍼 --------------------------------------------------------
 

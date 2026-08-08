@@ -11,6 +11,8 @@ project 필터가 검색·fetch 범위를 올바르게 좁히는지다. 페이�
 
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime
 
 import pytest
@@ -20,6 +22,7 @@ from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
 from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_search_service import (
+    MAX_CONCURRENT_BODY_FETCHES,
     DocumentSearchOptions,
     DocumentSearchService,
     documents_tokenize,
@@ -28,6 +31,44 @@ from tests.fixtures.document_sources import ExplodingDocumentSource
 
 _PROJECT_A = "A"
 _PROJECT_B = "B"
+
+
+class _SlowTrackingDocumentSource:
+    """fetch 마다 `delay` 만큼 지연하며 동시 실행 수를 기록하는 페이크 소스.
+
+    병렬 fetch(P3) 검증 전용: 벽시계 시간이 순차 합산이 아닌지, 동시 실행 수가
+    상한을 넘지 않는지를 확인하는 데 쓴다.
+    """
+
+    def __init__(self, source_name: str, bodies: dict[str, str], delay: float = 0.15) -> None:
+        self._source_name = source_name
+        self.bodies = bodies
+        self.delay = delay
+        self._lock = threading.Lock()
+        self._active = 0
+        self.max_active = 0
+        self.fetch_call_count = 0
+
+    @property
+    def source_name(self) -> str:
+        return self._source_name
+
+    def list_files(self):  # pragma: no cover - list_files 는 검색 경로에서 안 쓰임
+        return []
+
+    def fetch(self, external_id: str) -> str:
+        with self._lock:
+            self._active += 1
+            self.max_active = max(self.max_active, self._active)
+            self.fetch_call_count += 1
+        try:
+            time.sleep(self.delay)
+            if external_id not in self.bodies:
+                raise IntegrationError(f"fake slow source: not found {external_id}")
+            return self.bodies[external_id]
+        finally:
+            with self._lock:
+                self._active -= 1
 
 
 def _seed_meta(
@@ -165,6 +206,105 @@ def test_fetch_count_never_exceeds_top_k(
 
     assert fake_drive_source.fetch_call_count == 3
     assert len(items) == 3
+
+
+# --- P3: 2단계 본문 fetch 병렬화 ------------------------------------------------
+
+
+def test_body_fetches_run_in_parallel_not_sequential(
+    db_session, make_project_resolver
+) -> None:
+    """5건 fetch 가 순차 합산이 아니라 병렬로 실행돼 벽시계 시간이 짧게 끝난다."""
+    delay = 0.15
+    candidate_count = 5
+    slow_source = _SlowTrackingDocumentSource(SOURCE_DRIVE, bodies={}, delay=delay)
+    for index in range(candidate_count):
+        external_id = f"d{index}"
+        _seed_meta(db_session, SOURCE_DRIVE, external_id, f"로그인 문서 {index}")
+        slow_source.bodies[external_id] = "로그인 본문"
+    resolver = make_project_resolver(drive_mapping={DEFAULT_PROJECT: ("folder", slow_source)})
+    service = DocumentSearchService(meta_repo=DocumentMetaRepository(db_session), resolver=resolver)
+
+    started = time.monotonic()
+    items = service.search("로그인", DocumentSearchOptions(top_k=candidate_count))
+    elapsed = time.monotonic() - started
+
+    assert len(items) == candidate_count
+    # 순차 실행이면 candidate_count * delay(약 0.75초) 이상 걸린다.
+    # 병렬 실행이면 한 라운드(약 delay)에 가깝게 끝난다.
+    assert elapsed < delay * candidate_count * 0.7
+
+
+def test_concurrent_fetches_never_exceed_cap(db_session, make_project_resolver) -> None:
+    """동시 실행 중인 fetch 수가 MAX_CONCURRENT_BODY_FETCHES 를 넘지 않는다."""
+    delay = 0.1
+    candidate_count = MAX_CONCURRENT_BODY_FETCHES + 3
+    slow_source = _SlowTrackingDocumentSource(SOURCE_DRIVE, bodies={}, delay=delay)
+    for index in range(candidate_count):
+        external_id = f"d{index}"
+        _seed_meta(db_session, SOURCE_DRIVE, external_id, f"로그인 문서 {index}")
+        slow_source.bodies[external_id] = "로그인 본문"
+    resolver = make_project_resolver(drive_mapping={DEFAULT_PROJECT: ("folder", slow_source)})
+    service = DocumentSearchService(meta_repo=DocumentMetaRepository(db_session), resolver=resolver)
+
+    items = service.search("로그인", DocumentSearchOptions(top_k=candidate_count))
+
+    assert len(items) == candidate_count
+    assert slow_source.max_active <= MAX_CONCURRENT_BODY_FETCHES
+    # 병렬 실행이 실제로 일어났는지도 함께 확인(구현이 순차로 퇴행하지 않았는지).
+    assert slow_source.max_active > 1
+
+
+def test_one_failure_among_parallel_fetches_does_not_affect_others(
+    db_session, make_project_resolver
+) -> None:
+    """병렬 fetch 중 한 건이 IntegrationError 를 던져도 나머지는 정상 반환된다."""
+    slow_source = _SlowTrackingDocumentSource(SOURCE_DRIVE, bodies={}, delay=0.05)
+    for index in range(5):
+        external_id = f"d{index}"
+        _seed_meta(db_session, SOURCE_DRIVE, external_id, f"로그인 문서 {index}")
+        slow_source.bodies[external_id] = "로그인 본문"
+    # d2 는 본문을 등록하지 않아 fetch 시 IntegrationError 가 발생한다.
+    del slow_source.bodies["d2"]
+    resolver = make_project_resolver(drive_mapping={DEFAULT_PROJECT: ("folder", slow_source)})
+    service = DocumentSearchService(meta_repo=DocumentMetaRepository(db_session), resolver=resolver)
+
+    items = service.search("로그인", DocumentSearchOptions(top_k=5))
+
+    assert {i.title for i in items} == {
+        "로그인 문서 0",
+        "로그인 문서 1",
+        "로그인 문서 3",
+        "로그인 문서 4",
+    }
+
+
+def test_project_source_resolution_never_runs_on_worker_thread(
+    db_session, make_project_resolver
+) -> None:
+    """resolve_for_project() 는 요청-스코프 Session 을 읽으므로 워커 스레드가 아니라
+    메인 스레드에서만 호출돼야 한다(Session 은 스레드 세이프하지 않다).
+    """
+    slow_source = _SlowTrackingDocumentSource(SOURCE_DRIVE, bodies={}, delay=0.05)
+    for index in range(5):
+        external_id = f"d{index}"
+        _seed_meta(db_session, SOURCE_DRIVE, external_id, f"로그인 문서 {index}")
+        slow_source.bodies[external_id] = "로그인 본문"
+    resolver = make_project_resolver(drive_mapping={DEFAULT_PROJECT: ("folder", slow_source)})
+    call_threads: list[str] = []
+    original_resolve = resolver.resolve_for_project
+
+    def _tracking_resolve(project: str):
+        call_threads.append(threading.current_thread().name)
+        return original_resolve(project)
+
+    resolver.resolve_for_project = _tracking_resolve  # type: ignore[method-assign]
+    service = DocumentSearchService(meta_repo=DocumentMetaRepository(db_session), resolver=resolver)
+
+    service.search("로그인", DocumentSearchOptions(top_k=5))
+
+    assert call_threads
+    assert all(name == threading.main_thread().name for name in call_threads)
 
 
 # --- 기능 7: source 필터 -------------------------------------------------------
