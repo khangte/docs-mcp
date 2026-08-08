@@ -51,6 +51,11 @@ docs-mcp = "app.mcp.server:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = [
+    "mypy>=2.3.0",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
