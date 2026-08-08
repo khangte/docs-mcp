@@ -9,8 +9,12 @@ from alembic import context
 from app.core.config import get_settings
 from app.models.openapi import SCHEMA, Base
 
-# Base.metadata 에 document_meta 테이블을 등록해 autogenerate 대상에 포함시킨다.
+# Base.metadata 에 별도 모듈로 분리된 모델을 등록해 autogenerate 대상에 포함시킨다.
+# 빠지면 실제 DB 에는 있는 테이블이 "메타데이터엔 없다"고 오판되어
+# autogenerate 가 잘못된 DROP TABLE 마이그레이션을 만든다.
 import app.models.document_meta  # noqa: F401,E402
+import app.models.project_drive_source  # noqa: F401,E402
+import app.models.project_notion_source  # noqa: F401,E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
