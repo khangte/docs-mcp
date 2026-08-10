@@ -1,6 +1,6 @@
 # P1 설계 확정 — 키워드 검색 Postgres FTS 이관
 
-- 상태: **확정**(한글 방침 A안 lead 승인 — 2026-08-08). 구현 대기.
+- 상태: **구현완료**(2026-08-10 갱신 — 키워드 FTS 이관 커밋 `aa4de84`, embedding 컬럼 로딩 제거 커밋 `054fbfd`). 한글 방침 A안 lead 승인(2026-08-08).
 - 일시: 2026-08-08
 - 작성: architect
 - 관련: `docs/search-performance-improvements.md` P1/P2, ADR-0002

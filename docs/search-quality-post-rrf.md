@@ -1,6 +1,6 @@
 # 검색 품질 추가 개선 검토 — RRF 도입 이후 (분석)
 
-- 상태: 제안(구현 전, lead 판단 대기)
+- 상태: **P1 구현완료**(2026-08-10, 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md`) — **P2~P5는 제안 상태 유지**(lead 판단 대기).
 - 일시: 2026-08-10
 - 작성: architect
 - 관련: `docs/search-rrf-reevaluation.md`(RRF 도입·실측), `docs/search-performance-improvements.md`(P1~P6), `docs/vector-store-qdrant-vs-pgvector.md`
@@ -19,7 +19,7 @@
 
 ## 개선 방안 (우선순위)
 
-### P1 — 평가셋 확장 + 지표 보강 (★기반, 저비용, 나머지의 전제)
+### P1 — 평가셋 확장 + 지표 보강 (★기반, 저비용, 나머지의 전제) — ✅ 구현완료(커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실측은 아래 'P1 실측 결과' 절)
 - **현 문제**: 평가셋 20질의는 **회귀 방어엔 되지만 튜닝·리랭킹 검증엔 통계적으로 얇다**(과적합 위험).
   `compare_strategies.py` 는 **top-1·top-3 recall만** 계산 — 순위 2~3위 내 미세 이동(RRF가 실제로 한 일)을 못 잡는다.
 - **개선**: (a) 라벨 질의 20→50~100개로 확장(실패 taxonomy: 동의어·패러프레이즈·한글·경로·흔한토큰·필드희석 균형 배분).
