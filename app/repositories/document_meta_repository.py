@@ -92,7 +92,7 @@ class DocumentMetaRepository:
         tokens: Sequence[str],
         source: str | None = None,
         project: str | None = None,
-        query: str = "",
+        queries: Sequence[str] = (),
     ) -> Sequence[DocumentMeta]:
         """제목 또는 URL 에 토큰 중 하나라도 포함된 행만 SQL 로 걸러 반환한다.
 
@@ -112,8 +112,10 @@ class DocumentMetaRepository:
             tokens: 소문자로 정규화된 질의 토큰. 비어 있으면 빈 결과를 돌려준다.
             source: 특정 출처로 범위를 제한할 때 지정.
             project: 특정 project 로 범위를 제한할 때 지정.
-            query: 원본 질의 문자열. 공백을 제거한(`collapse`) 패턴을 추가
-                매칭 조건으로 쓴다. 비어 있으면 이 추가 조건은 생략된다.
+            queries: 원본 질의 및 variant 문자열 목록. 각 문자열을 공백
+                제거한(`collapse`) 패턴으로 만들어 추가 매칭 조건으로 쓴다.
+                비어 있거나 collapse 결과가 중복/빈 문자열이면 해당 조건은
+                생략된다.
 
         Returns:
             (source, external_id) 순으로 결정적으로 정렬된 후보 행.
@@ -132,14 +134,18 @@ class DocumentMetaRepository:
             *[DocumentMeta.title.ilike(p, escape="\\") for p in patterns],
             *[DocumentMeta.url.ilike(p, escape="\\") for p in patterns],
         ]
-        collapsed_query = collapse(query)
-        if collapsed_query:
-            # title/url 도 공백을 제거한 뒤 비교해야 '트러블슈팅' 질의가
-            # '트러블 슈팅'(공백 있음) title 과 매칭된다. 원본 title 에 그냥
-            # collapse 된 패턴을 대면 공백 자체가 어긋나 항상 실패한다.
+        # title/url 도 공백을 제거한 뒤 비교해야 '트러블슈팅' 질의가
+        # '트러블 슈팅'(공백 있음) title 과 매칭된다. 원본 title 에 그냥
+        # collapse 된 패턴을 대면 공백 자체가 어긋나 항상 실패한다.
+        collapsed_title = func.replace(func.lower(DocumentMeta.title), " ", "")
+        collapsed_url = func.replace(func.lower(DocumentMeta.url), " ", "")
+        seen_collapsed: set[str] = set()
+        for q in queries:
+            collapsed_query = collapse(q)
+            if not collapsed_query or collapsed_query in seen_collapsed:
+                continue
+            seen_collapsed.add(collapsed_query)
             collapsed_pattern = f"%{_escape_like(collapsed_query)}%"
-            collapsed_title = func.replace(func.lower(DocumentMeta.title), " ", "")
-            collapsed_url = func.replace(func.lower(DocumentMeta.url), " ", "")
             conditions.append(collapsed_title.ilike(collapsed_pattern, escape="\\"))
             conditions.append(collapsed_url.ilike(collapsed_pattern, escape="\\"))
         stmt = stmt.where(or_(*conditions))

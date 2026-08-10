@@ -246,7 +246,10 @@ class DocumentSearchService:
         원본 토큰만)가 맡는다.
         """
         rows = self._meta_repo.search_by_tokens(
-            sorted(filter_tokens), source=options.source, project=options.project, query=query
+            sorted(filter_tokens),
+            source=options.source,
+            project=options.project,
+            queries=[query, *(options.query_variants or [])],
         )
         scored = [(row, _title_score(row, score_tokens, query)) for row in rows]
         scored.sort(key=lambda pair: (pair[1] <= 0.0, -pair[1], pair[0].external_id))

@@ -298,7 +298,7 @@ def test_search_by_tokens_query_collapses_whitespace_variant(
     repo.add(_row(SOURCE_DRIVE, "d1", "트러블 슈팅 가이드"))
     db_session.commit()
 
-    found = repo.search_by_tokens(["트러블슈팅"], query="트러블슈팅")
+    found = repo.search_by_tokens(["트러블슈팅"], queries=["트러블슈팅"])
 
     assert [m.external_id for m in found] == ["d1"]
 
@@ -311,19 +311,40 @@ def test_search_by_tokens_query_collapses_whitespace_variant_reverse(
     db_session.commit()
 
     tokens = sorted({"트러블", "슈팅"})
-    found = repo.search_by_tokens(tokens, query="트러블 슈팅")
+    found = repo.search_by_tokens(tokens, queries=["트러블 슈팅"])
 
     assert [m.external_id for m in found] == ["d1"]
 
 
-def test_search_by_tokens_without_query_skips_collapse_match(
+def test_search_by_tokens_without_queries_skips_collapse_match(
     db_session, repo: DocumentMetaRepository
 ) -> None:
-    """query 인자를 생략하면 기존(토큰 전용) 매칭 동작이 그대로 유지된다."""
+    """queries 인자를 생략하면 기존(토큰 전용) 매칭 동작이 그대로 유지된다."""
     repo.add(_row(SOURCE_DRIVE, "d1", "트러블 슈팅 가이드"))
     db_session.commit()
 
     assert list(repo.search_by_tokens(["트러블슈팅"])) == []
+
+
+def test_search_by_tokens_query_variant_contributes_collapse_match(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """queries 리스트의 variant 항목도 collapse 매칭에 기여한다.
+
+    원본 질의 토큰은 제목과 전혀 겹치지 않아도, queries 에 함께 넘긴 variant
+    가 제목과 공백 유무만 다르면 그 variant 의 collapse 매칭으로 1단계
+    후보에 잡혀야 한다. variant 를 빼면(원본 질의만 있으면) 매칭되지 않아야
+    한다는 것도 함께 확인한다.
+    """
+    repo.add(_row(SOURCE_DRIVE, "d1", "트러블슈팅 가이드"))
+    db_session.commit()
+    tokens = ["이슈", "해결"]
+
+    with_variant = repo.search_by_tokens(tokens, queries=["이슈 해결", "트러블 슈팅"])
+    without_variant = repo.search_by_tokens(tokens, queries=["이슈 해결"])
+
+    assert [m.external_id for m in with_variant] == ["d1"]
+    assert list(without_variant) == []
 
 
 def test_search_by_tokens_is_deterministically_ordered(

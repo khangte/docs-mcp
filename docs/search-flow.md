@@ -10,7 +10,7 @@
 >
 > 코드와 이 문서가 어긋나면 신규 참여자가 잘못된 그림을 갖게 된다. **코드가 진실, 문서는 그 요약**임을 전제로, 흐름·파일·함수 위치가 바뀌면 반드시 반영한다.
 
-- 최종 갱신: 2026-08-10
+- 최종 갱신: 2026-08-11
 - 작성: architect
 - 관련 설계 근거: `docs/search-rrf-reevaluation.md`(RRF), `docs/search-p1-keyword-fts-design.md`(키워드 FTS), `docs/search-performance-improvements.md`(P1~P6)
 
@@ -103,8 +103,8 @@ flowchart TD
 
 1. **검증·소스 구성 확인** — `_validate`/`_validate_source`/`_require_configured` (`:338`~). "결과 0건"과 "소스 미설정"을 구분하기 위해, 소스가 하나도 구성 안 됐으면 `IntegrationError`.
 2. **질의 토큰화** — `documents_tokenize`(`search_scorer.py`)로 질의 토큰 집합 생성.
-3. **필터 토큰 확장** — 호출자(Claude)가 넘긴 `query_variants`(동의어)를 `_variant_tokens`(`:207`)로 토큰화해 **1단계 SQL 후보 필터에만** 합친다. 서버는 자체 LLM 질의 확장을 하지 않는다(그 판단은 호출측 모델의 몫). **점수 계산은 항상 원본 질의 토큰만** 사용.
-4. **SQL 후보 조회** — `meta_repo.search_by_tokens` (`document_meta_repository.py:~90`): `document_meta`의 title/url에 대해 토큰별 `ILIKE '%token%'` 를 OR로 결합(+ 공백 제거 `collapse` 패턴도 OR). title/url에는 **pg_trgm GIN 인덱스**(`ix_document_meta_title_trgm`/`ix_document_meta_url_trgm`, `gin_trgm_ops`)가 걸려 있어 선행 와일드카드 ILIKE도 인덱스로 처리된다(캐시 규모가 커질 때 seq scan 회피). 스코프(source/project)는 SQL WHERE. `(source, external_id)` 순 결정적 정렬. **점수·순위는 SQL이 아니라 Python이** 정한다(SQL은 "가능성 있는 행"만 좁힘).
+3. **필터 토큰 확장** — 호출자(Claude)가 넘긴 `query_variants`(동의어)를 `_variant_tokens`(`:207`)로 토큰화해 **1단계 SQL 후보 필터에만** 합친다. 서버는 자체 LLM 질의 확장을 하지 않는다(그 판단은 호출측 모델의 몫). **점수 계산은 항상 원본 질의 토큰만** 사용. 토큰화와 별개로, `query_variants` 원문도 `_select_candidates`가 `queries=[query, *query_variants]`로 그대로 아래 4번의 collapse 매칭에 실어 보낸다(공백 유무 차이는 토큰화를 거치면 사라지므로 원문이 필요).
+4. **SQL 후보 조회** — `meta_repo.search_by_tokens` (`document_meta_repository.py:~90`): `document_meta`의 title/url에 대해 토큰별 `ILIKE '%token%'` 를 OR로 결합(+ `queries`의 각 문자열—원본 질의와 variant 원문—을 공백 제거한 `collapse` 패턴도 OR, 중복 collapse 값은 dedup). title/url에는 **pg_trgm GIN 인덱스**(`ix_document_meta_title_trgm`/`ix_document_meta_url_trgm`, `gin_trgm_ops`)가 걸려 있어 선행 와일드카드 ILIKE도 인덱스로 처리된다(캐시 규모가 커질 때 seq scan 회피). 스코프(source/project)는 SQL WHERE. `(source, external_id)` 순 결정적 정렬. **점수·순위는 SQL이 아니라 Python이** 정한다(SQL은 "가능성 있는 행"만 좁힘).
 5. **후보 점수·정렬·컷** — `_select_candidates` (`:217`): `_title_score`(원본 토큰만)로 채점 후 (원본 매치 여부 내림차순, title_score 내림차순, external_id) 정렬 → **상위 top_k만** 남긴다. top_k는 2단계 fetch 예산 상한이므로, 원본 신호 있는 행이 먼저 자리를 채우고 variant-only 매치는 남는 자리만 채운다.
 6. **후보 0건이면 즉시 종료** — 외부 API를 **한 번도 호출하지 않고** 빈 리스트 반환(`:144`).
 
@@ -125,8 +125,8 @@ flowchart TD
     B --> V{"_validate +<br/>_require_configured"}
     V -->|"질의 무효"| ERR1["ValidationError"]
     V -->|"소스 미구성"| ERR2["IntegrationError"]
-    V -->|"OK"| T["질의 토큰화 +<br/>query_variants 토큰 합류<br/>(필터 전용)"]
-    T --> S1["1단계: meta_repo.search_by_tokens<br/>title/url ILIKE '%token%' (OR)<br/>+ collapse 패턴"]
+    V -->|"OK"| T["질의 토큰화 +<br/>query_variants 토큰 합류(필터 전용)<br/>+ query_variants 원문 collapse 유입"]
+    T --> S1["1단계: meta_repo.search_by_tokens<br/>title/url ILIKE '%token%' (OR)<br/>+ query·variants 원문 collapse 패턴"]
     S1 --> SC["_select_candidates<br/>_title_score(원본 토큰만)<br/>정렬 후 상위 top_k 컷"]
     SC --> Z{"후보 0건?"}
     Z -->|"예"| EMPTY["빈 리스트<br/>(외부 fetch 없음)"]

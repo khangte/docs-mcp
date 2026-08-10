@@ -815,6 +815,29 @@ def test_top_k_two_includes_both_but_original_match_ranks_first(
     assert items[0].title == "로그인 설계서"
 
 
+def test_query_variant_whitespace_difference_reaches_collapse_match(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """원본 질의와 variant 가 공백 유무만 다를 때, variant 의 collapse 매칭으로 후보에 든다.
+
+    제목 "트러 블슈팅 가이드"는 중간에 공백이 끼어 있어, variant "트러블슈팅"
+    (공백 없음)이 토큰 단위 ILIKE 로는 절대 부분일치하지 않는다(문자열 중간에
+    공백이 끼어 있어 substring 이 끊긴다) — 오직 collapse(공백 제거) 매칭만
+    이 문서를 찾을 수 있다. 원본 질의 "이슈 해결"도 제목과 전혀 무관해
+    토큰 경로가 우연히 성공할 여지를 차단한다. _select_candidates 가
+    query_variants 원문을 collapse 매칭용 queries 에 그대로 실어 보내야
+    (P0 수정 대상) 이 문서가 1단계 후보에 잡힌다.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "트러 블슈팅 가이드")
+    fake_drive_source.bodies["d1"] = "장애 대응 절차를 정리한다."
+
+    items = search_service.search(
+        "이슈 해결", DocumentSearchOptions(query_variants=["트러블슈팅"])
+    )
+
+    assert [i.title for i in items] == ["트러 블슈팅 가이드"]
+
+
 def test_query_variants_ignores_blank_and_empty_entries(
     db_session, search_service, fake_drive_source
 ) -> None:
