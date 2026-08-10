@@ -5,7 +5,7 @@ OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 �
 ## 주요 기능
 
 - **다양한 문서 소스 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x/Swagger 2.0, Markdown, CSV 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
-- **하이브리드 검색**: 키워드(토큰 매칭)와 벡터 유사도 검색을 결합하여 원하는 API 엔드포인트 또는 문서 섹션을 정확하게 찾아냅니다.
+- **하이브리드 검색(RRF 융합)**: 키워드(Postgres FTS)와 벡터 유사도 검색을 **RRF(Reciprocal Rank Fusion)**로 항상 융합해 원하는 API 엔드포인트 또는 문서 섹션을 정확하게 찾아냅니다.
 - **코드 예시 생성**: `get_endpoint_details`에서 `include_example=true`로 조회하면 엔드포인트 상세 정보로부터 `curl` 호출 예시 코드를 즉시 생성합니다.
 - **자동 재색인**: 문서의 내용 변경을 감지(해시 비교)하여 변경된 경우에만 지능적으로 인덱스를 업데이트합니다.
 
@@ -23,6 +23,24 @@ OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 �
 - **MCP**: `fastmcp` 서드파티 패키지
 - **Schema/DTO**: Pydantic v2
 <!-- /AUTO-GENERATED -->
+
+## 검색 아키텍처 (요약)
+
+엔드포인트 검색은 **키워드 arm**(Postgres FTS — `tsvector`+GIN, `to_tsquery`)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다(기본 전략 `rrf`, 롤백용 `fallback` 병존). 최종 답변은 서버가 고르지 않고 호출 LLM이 반환된 후보(top_k) 중에서 선택합니다 — 즉 서버는 **후보 피더**이며 품질 지표는 recall@k입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
+
+적용된 개선(상세는 아래 문서):
+
+- **RRF 하이브리드 융합** 도입 — 키워드 0건일 때만 벡터를 쓰던 배타 분기를 두 arm 상시 융합으로 전환
+- **키워드 검색을 Postgres FTS로 이관**(P1), 키워드 경로의 벡터 컬럼 로딩 제거(P2)
+- **협업문서 검색 2단계 본문 fetch 병렬화**(P3, 동시성 상한)
+- **`document_meta` pg_trgm GIN 인덱스**(P4), **쿼리 임베딩 LRU 캐시**(P5), **HNSW `ef_search` 튜닝**(P6)
+- **평가셋 확장(84질의)+지표 보강**(Recall@k·MRR·nDCG), **RRF `K` 스윕** 결과 표준값 `K=60` 유지 확인
+
+관련 문서:
+
+- [`docs/search-flow.md`](docs/search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
+- [`docs/search-performance-improvements.md`](docs/search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
+- [`docs/search-quality-post-rrf.md`](docs/search-quality-post-rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
 
 ## 시작하기
 
