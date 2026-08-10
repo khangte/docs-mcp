@@ -32,6 +32,7 @@ from app.services.documents.document_search_service import (
     _body_fetch_budget,
     documents_tokenize,
 )
+from app.services.documents.sources.document_source import FetchedDocument
 from tests.fixtures.document_sources import ExplodingDocumentSource
 
 _PROJECT_A = "A"
@@ -61,7 +62,7 @@ class _SlowTrackingDocumentSource:
     def list_files(self):  # pragma: no cover - list_files 는 검색 경로에서 안 쓰임
         return []
 
-    def fetch(self, external_id: str) -> str:
+    def fetch(self, external_id: str) -> FetchedDocument:
         with self._lock:
             self._active += 1
             self.max_active = max(self.max_active, self._active)
@@ -70,7 +71,7 @@ class _SlowTrackingDocumentSource:
             time.sleep(self.delay)
             if external_id not in self.bodies:
                 raise IntegrationError(f"fake slow source: not found {external_id}")
-            return self.bodies[external_id]
+            return FetchedDocument(text=self.bodies[external_id], truncated=False)
         finally:
             with self._lock:
                 self._active -= 1
@@ -780,9 +781,12 @@ def test_get_document_unconfigured_source_raises_integration_error(
 def test_get_document_without_cached_meta_still_returns_content(
     search_service, fake_drive_source
 ) -> None:
-    """메타 캐시에 없는 문서도 본문 조회는 가능하다(제목/URL 만 비어 있음).
+    """메타 캐시에 없는 문서도 본문 조회는 가능하다(계약: title/url 은 "" 로 확정).
 
-    메타가 없으면 DEFAULT_PROJECT 의 해당 source 어댑터로 폴백한다.
+    메타가 없으면 DEFAULT_PROJECT 의 해당 source 어댑터로 폴백한다. content 는
+    fetch 시점의 값 그대로이고, title/url 은 "메타데이터가 캐시되지 않음"을
+    뜻하는 빈 문자열이다 — 식별자 기반 기본값이 아니다(항목4 계약 고정).
+    예외 없이 정상 반환된다.
     """
     fake_drive_source.bodies["orphan"] = "캐시에 없는 문서 본문"
 
@@ -790,6 +794,53 @@ def test_get_document_without_cached_meta_still_returns_content(
 
     assert content.content == "캐시에 없는 문서 본문"
     assert content.title == ""
+    assert content.url == ""
+
+
+def test_get_document_propagates_truncated_flag_from_source(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """어댑터가 truncated=True 로 fetch 했으면 get_document 결과에도 그대로 실린다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "대용량 문서")
+    fake_drive_source.bodies["d1"] = "잘린 본문"
+    fake_drive_source.truncated_ids.add("d1")
+
+    content = search_service.get_document(SOURCE_DRIVE, "d1")
+
+    assert content.truncated is True
+
+
+def test_get_document_not_truncated_by_default(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """어댑터가 truncated=False 로 fetch 하면 get_document 결과도 False 다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "일반 문서")
+    fake_drive_source.bodies["d1"] = "짧은 본문"
+
+    content = search_service.get_document(SOURCE_DRIVE, "d1")
+
+    assert content.truncated is False
+
+
+def test_search_ranking_and_snippet_are_unaffected_by_truncated_body(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """검색 경로(스니펫/점수)는 어댑터의 truncated 플래그에 영향받지 않는다(회귀).
+
+    _fetch_and_score 는 `document_source.fetch(...).text` 만 쓰고
+    `.truncated` 는 버린다 — 원문 조회 경로(get_document)에만 의미가 있다.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "truncated_doc", "로그인 설계서 A")
+    _seed_meta(db_session, SOURCE_DRIVE, "plain_doc", "로그인 설계서 B")
+    fake_drive_source.bodies["truncated_doc"] = "로그인 흐름 상세 설명"
+    fake_drive_source.bodies["plain_doc"] = "로그인 흐름 상세 설명"
+    fake_drive_source.truncated_ids.add("truncated_doc")
+
+    items = search_service.search("로그인", DocumentSearchOptions(top_k=2))
+
+    by_title = {i.title: i for i in items}
+    assert by_title["로그인 설계서 A"].score == by_title["로그인 설계서 B"].score
+    assert by_title["로그인 설계서 A"].snippet == by_title["로그인 설계서 B"].snippet
 
 
 def test_get_document_includes_version_parsed_from_title(

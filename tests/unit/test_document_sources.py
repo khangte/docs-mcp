@@ -15,7 +15,11 @@ import pytest
 
 from app.core.errors import IntegrationError
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.services.documents.sources.document_source import DocumentSource, FileMeta
+from app.services.documents.sources.document_source import (
+    DocumentSource,
+    FetchedDocument,
+    FileMeta,
+)
 from app.services.documents.sources.google_drive_source import (
     FOLDER_MIME_TYPE,
     GOOGLE_DOC_MIME_TYPE,
@@ -216,7 +220,7 @@ def test_drive_fetch_uses_export_for_google_docs(monkeypatch: pytest.MonkeyPatch
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("f1") == "문서 평문 본문"
+    assert source.fetch("f1").text == "문서 평문 본문"
     assert seen[-1].endswith("/export")
 
 
@@ -238,7 +242,7 @@ def test_drive_fetch_uses_csv_export_for_google_sheets(monkeypatch: pytest.Monke
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("f1") == "ord,기능,설명\n1,회원가입,이메일로 가입"
+    assert source.fetch("f1").text == "ord,기능,설명\n1,회원가입,이메일로 가입"
 
 
 def test_drive_fetch_uses_plain_export_for_google_slides(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -253,7 +257,7 @@ def test_drive_fetch_uses_plain_export_for_google_slides(monkeypatch: pytest.Mon
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("f1") == "슬라이드 텍스트"
+    assert source.fetch("f1").text == "슬라이드 텍스트"
 
 
 def test_drive_fetch_unsupported_native_type_raises_integration_error(
@@ -292,7 +296,7 @@ def test_drive_fetch_extracts_text_from_pdf(monkeypatch: pytest.MonkeyPatch) -> 
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert "Drive PDF Content" in source.fetch("f1")
+    assert "Drive PDF Content" in source.fetch("f1").text
 
 
 def test_drive_fetch_extracts_text_from_docx(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -317,7 +321,7 @@ def test_drive_fetch_extracts_text_from_docx(monkeypatch: pytest.MonkeyPatch) ->
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert "Drive DOCX 문단" in source.fetch("f1")
+    assert "Drive DOCX 문단" in source.fetch("f1").text
 
 
 def test_drive_fetch_extracts_text_from_xlsx(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -341,7 +345,7 @@ def test_drive_fetch_extracts_text_from_xlsx(monkeypatch: pytest.MonkeyPatch) ->
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert "강민혁" in source.fetch("f1")
+    assert "강민혁" in source.fetch("f1").text
 
 
 def test_drive_fetch_extracts_text_from_pptx(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -366,7 +370,7 @@ def test_drive_fetch_extracts_text_from_pptx(monkeypatch: pytest.MonkeyPatch) ->
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert "Drive 슬라이드 제목" in source.fetch("f1")
+    assert "Drive 슬라이드 제목" in source.fetch("f1").text
 
 
 def test_drive_fetch_unsupported_binary_type_raises_integration_error(
@@ -435,11 +439,11 @@ def test_drive_fetch_uses_alt_media_for_plain_files(monkeypatch: pytest.MonkeyPa
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("f1") == "plain text body"
+    assert source.fetch("f1").text == "plain text body"
 
 
 def test_drive_fetch_truncates_to_max_chars(monkeypatch: pytest.MonkeyPatch) -> None:
-    """과대 응답은 설정된 최대 문자 수로 잘린다."""
+    """과대 응답은 설정된 최대 문자 수로 잘리고 truncated=True 로 표시된다."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.params.get("alt") == "media":
@@ -451,7 +455,31 @@ def test_drive_fetch_truncates_to_max_chars(monkeypatch: pytest.MonkeyPatch) -> 
     )
     _patch_client(monkeypatch, source, handler)
 
-    assert len(source.fetch("f1")) == 100
+    result = source.fetch("f1")
+
+    assert len(result.text) == 100
+    assert result.truncated is True
+
+
+def test_drive_fetch_exactly_max_chars_is_not_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """길이가 정확히 max_chars 인 응답은 잘린 게 아니므로 truncated=False 다(경계값)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("alt") == "media":
+            return httpx.Response(200, text="a" * 100)
+        return _json({"id": "f1", "mimeType": "text/plain"})
+
+    source = GoogleDriveSource(
+        folder_id="root", token_provider=StubTokenProvider(), max_chars=100
+    )
+    _patch_client(monkeypatch, source, handler)
+
+    result = source.fetch("f1")
+
+    assert len(result.text) == 100
+    assert result.truncated is False
 
 
 def test_drive_fetch_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,6 +494,7 @@ def test_drive_fetch_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_client(monkeypatch, source, handler)
 
     assert source.fetch("f1") == source.fetch("f1")
+    assert source.fetch("f1") == FetchedDocument(text="변하지 않는 본문", truncated=False)
 
 
 def test_drive_fetch_empty_id_raises_integration_error() -> None:
@@ -691,7 +720,7 @@ def test_notion_fetch_flattens_block_tree(monkeypatch: pytest.MonkeyPatch) -> No
     source = NotionSource(token="t1")
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("p1") == "제목\n부모 문단\n자식 항목"
+    assert source.fetch("p1").text == "제목\n부모 문단\n자식 항목"
 
 
 def test_notion_fetch_skips_blocks_without_text(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -708,7 +737,7 @@ def test_notion_fetch_skips_blocks_without_text(monkeypatch: pytest.MonkeyPatch)
     source = NotionSource(token="t1")
     _patch_client(monkeypatch, source, lambda request: _json({"results": blocks}))
 
-    assert source.fetch("p1") == "본문"
+    assert source.fetch("p1").text == "본문"
 
 
 def test_notion_fetch_empty_page_returns_empty_string(
@@ -718,7 +747,47 @@ def test_notion_fetch_empty_page_returns_empty_string(
     source = NotionSource(token="t1")
     _patch_client(monkeypatch, source, lambda request: _json({"results": []}))
 
-    assert source.fetch("p1") == ""
+    assert source.fetch("p1").text == ""
+
+
+def test_notion_fetch_truncates_to_max_chars(monkeypatch: pytest.MonkeyPatch) -> None:
+    """과대 응답은 설정된 최대 문자 수로 잘리고 truncated=True 로 표시된다."""
+    blocks = [
+        {
+            "id": "b1",
+            "type": "paragraph",
+            "has_children": False,
+            "paragraph": {"rich_text": [{"plain_text": "a" * 5000}]},
+        }
+    ]
+    source = NotionSource(token="t1", max_chars=100)
+    _patch_client(monkeypatch, source, lambda request: _json({"results": blocks}))
+
+    result = source.fetch("p1")
+
+    assert len(result.text) == 100
+    assert result.truncated is True
+
+
+def test_notion_fetch_exactly_max_chars_is_not_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """길이가 정확히 max_chars 인 응답은 잘린 게 아니므로 truncated=False 다(경계값)."""
+    blocks = [
+        {
+            "id": "b1",
+            "type": "paragraph",
+            "has_children": False,
+            "paragraph": {"rich_text": [{"plain_text": "a" * 100}]},
+        }
+    ]
+    source = NotionSource(token="t1", max_chars=100)
+    _patch_client(monkeypatch, source, lambda request: _json({"results": blocks}))
+
+    result = source.fetch("p1")
+
+    assert len(result.text) == 100
+    assert result.truncated is False
 
 
 def test_notion_fetch_empty_id_raises_integration_error() -> None:

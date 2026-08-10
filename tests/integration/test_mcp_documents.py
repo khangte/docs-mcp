@@ -651,11 +651,12 @@ async def test_get_document_returns_full_content(seeded_mcp: FastMCP) -> None:
         )
     )
 
-    assert set(payload) == {"title", "source", "url", "content", "version"}
+    assert set(payload) == {"title", "source", "url", "content", "version", "truncated"}
     assert payload["content"] == "OAuth 로그인 흐름 상세"
     assert payload["title"] == "로그인 인증 설계서"
     assert payload["source"] == SOURCE_DRIVE
     assert payload["version"] is None
+    assert payload["truncated"] is False
 
 
 @pytest.mark.asyncio()
@@ -677,6 +678,22 @@ async def test_get_document_and_search_documents_expose_parsed_version(
 
     assert [i["version"] for i in search_items] == ["v1.0"]
     assert get_payload["version"] == "v1.0"
+
+
+@pytest.mark.asyncio()
+async def test_get_document_propagates_truncated_flag(
+    seeded_mcp: FastMCP, fake_drive_source
+) -> None:
+    """어댑터가 truncated=True 로 fetch 했으면 payload 에도 그대로 실린다."""
+    fake_drive_source.truncated_ids.add("d1")
+
+    payload = _result(
+        await seeded_mcp.call_tool(
+            "get_document", {"source": SOURCE_DRIVE, "external_id": "d1"}
+        )
+    )
+
+    assert payload["truncated"] is True
 
 
 @pytest.mark.asyncio()

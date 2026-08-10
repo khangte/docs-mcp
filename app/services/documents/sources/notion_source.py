@@ -17,7 +17,7 @@ import httpx
 from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_NOTION
-from app.services.documents.sources.document_source import FileMeta
+from app.services.documents.sources.document_source import FetchedDocument, FileMeta
 from app.services.documents.sources.time_parsing import parse_rfc3339
 
 _LOG = get_logger("docs_mcp.documents.notion")
@@ -109,14 +109,15 @@ class NotionSource:
         """`DocumentSource` Protocol 호환 별칭. `list_pages()` 와 동일하다."""
         return self.list_pages()
 
-    def fetch(self, external_id: str) -> str:
+    def fetch(self, external_id: str) -> FetchedDocument:
         """페이지 본문(블록 트리)을 평문 텍스트로 반환한다.
 
         Args:
             external_id: Notion page ID.
 
         Returns:
-            블록 순서대로 줄바꿈으로 이어 붙인 평문(최대 문자 수로 잘림).
+            블록 순서대로 줄바꿈으로 이어 붙인 평문(최대 문자 수로 잘림)과
+            절단 여부.
 
         Raises:
             IntegrationError: 페이지가 없거나 외부 연동에 실패한 경우.
@@ -127,7 +128,9 @@ class NotionSource:
         lines: list[str] = []
         with self._client() as client:
             self._collect_block_text(client, external_id, lines, depth=0)
-        return "\n".join(lines)[: self._max_chars]
+        text = "\n".join(lines)
+        truncated = len(text) > self._max_chars
+        return FetchedDocument(text[: self._max_chars], truncated)
 
     # --- 내부 헬퍼 --------------------------------------------------------
 

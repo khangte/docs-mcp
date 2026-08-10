@@ -20,7 +20,7 @@ import httpx
 from app.core.errors import IntegrationError, ParserError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_DRIVE
-from app.services.documents.sources.document_source import FileMeta
+from app.services.documents.sources.document_source import FetchedDocument, FileMeta
 from app.services.documents.sources.time_parsing import parse_rfc3339
 from app.services.parser import docx_parser, pdf_parser, pptx_parser, xlsx_parser
 
@@ -222,7 +222,7 @@ class GoogleDriveSource:
             )
         return collected
 
-    def fetch(self, external_id: str) -> str:
+    def fetch(self, external_id: str) -> FetchedDocument:
         """Drive 파일 본문을 평문으로 반환한다.
 
         Google 네이티브 문서(Docs/Sheets/Slides)는 export API 로 평문
@@ -241,7 +241,7 @@ class GoogleDriveSource:
             external_id: Drive file ID.
 
         Returns:
-            평문 텍스트(설정된 최대 문자 수로 잘림).
+            평문 텍스트(설정된 최대 문자 수로 잘림)와 절단 여부.
 
         Raises:
             IntegrationError: 파일이 없거나 외부 연동에 실패한 경우, 텍스트
@@ -264,7 +264,8 @@ class GoogleDriveSource:
                 )
             else:
                 text = self._fetch_binary_text(client, external_id, mime_type)
-        return text[: self._max_chars]
+        truncated = len(text) > self._max_chars
+        return FetchedDocument(text[: self._max_chars], truncated)
 
     def _fetch_native_export(
         self, client: httpx.Client, external_id: str, mime_type: str

@@ -162,14 +162,94 @@
 
 ### 4. get_document가 title/url을 빈 문자열로 반환 (P2)
 
-- 위치: `app/services/documents/document_search_service.py` `get_document`
-- 원인: 메타 캐시에 행이 없으면 조용히 빈 문자열 반환, docstring에도 미기재.
+- 위치: `app/services/documents/document_search_service.py` `get_document`,
+  `DocumentContent` docstring, `app/mcp/types.py` `DocumentContentPayload`
+  docstring.
+- 원인: `(source, external_id)`로 메타 캐시에 행이 없으면 title/url을 조용히
+  `""`로 채워 반환한다. **본문(content)은 정상**이다 — `DEFAULT_PROJECT`
+  폴백으로 fetch는 성공하기 때문. 문제는 (1)`""`의 의미가 계약에 명시되지
+  않았고, (2)docstring이 "없으면 빈 문자열/**식별자 기반 기본값**"이라 적어
+  실제(둘 다 `""`)와 어긋난다 — url에 식별자 기반 기본값을 주는 코드는 없다.
+- 설계 확정 (architect):
+  1. **명시적 실패로 바꾸지 않는다(계약 유지)**: 메타 없음은 정상 경로다 —
+     `get_document`의 존재 이유가 "캐시에 없어도 최신 원문을 가져온다"이고,
+     그 폴백은 `DEFAULT_PROJECT`로 이미 설계돼 있다. content fetch가 성공한
+     응답을 메타데이터가 없다는 이유로 `IntegrationError`로 던지면, "본문
+     조회 실패"(fetch가 이미 던지는 진짜 오류)와 "메타 미캐시"(무해)를
+     뒤섞고 계약을 깬다. **raise 하지 않는다.**
+  2. **빈 문자열을 유지하되 계약을 정직하게 기재**: title/url은 메타 캐시에
+     있으면 그 값, **없으면 빈 문자열 `""`** 로 확정(코드 동작 그대로).
+     docstring의 잘못된 "식별자 기반 기본값" 문구를 제거하고 "메타 캐시에
+     없으면 `""`"로 정정한다. content는 항상 fetch 시점의 최신 원문.
+  3. **url 폴백은 하지 않는다(범위 밖)**: 식별자로 canonical url을 만들 수는
+     있으나(어댑터가 이미 하는 일), 서비스 계층이 url 패턴을 알면 `DocumentSource`
+     추상화가 깨지고, 깨끗이 하려면 Protocol에 `canonical_url()`을 추가해 두
+     어댑터를 고쳐야 한다 — P2·YAGNI 범위 초과. 게다가 호출자는 보통
+     `search_documents` 결과에서 온 external_id를 쓰므로 url을 이미 갖고 있어
+     실익이 작다. 후속 과제로만 남긴다.
+  4. **호출자 해석 계약(질문 c)**: `title`/`url`이 `""`이면 "서버에 이 문서의
+     **메타데이터가 캐시돼 있지 않다**"는 뜻이며, `content`는 여전히 방금
+     fetch한 authoritative 최신 원문이다. 호출자는 `""`를 "제목/링크 미상 —
+     필요하면 `refresh_index` 후 재조회"로 해석한다. content 유무와 메타 유무는
+     독립임을 payload docstring에 명시한다. (별도 `metadata_cached: bool` 플래그도
+     검토했으나 `""`가 이미 그 신호이고 필드 추가는 speculative라 기각 — YAGNI.)
+- **영향 범위**:
+  - **동작 변경 없음.** 코드는 `get_document`의 반환문 그대로. 변경은
+    **docstring/계약 3곳**(`get_document`, `DocumentContent`,
+    `DocumentContentPayload`)의 정정뿐. 항목 5에서 `DocumentContent`에
+    `truncated`가 추가되므로 편집이 겹치는 점만 developer가 함께 처리.
+  - 테스트: 메타 행 없음 → `content`는 fetch 값, `title`/`url`은 `""`,
+    예외 없이 반환됨을 명시하는 회귀 테스트(계약 고정).
 - 수정: 완료 대기
 
 ### 5. 본문 절단 시 truncated 플래그 없음 (P2)
 
-- 위치: `app/services/documents/sources/{notion_source,google_drive_source}.py`
-- 원인: `[:max_chars]`로 조용히 자르고 절단 여부를 반환하지 않음.
+- 위치: `app/services/documents/sources/document_source.py`(Protocol·신설
+  `FetchedDocument`), `notion_source.py`·`google_drive_source.py`(`fetch` 반환),
+  `document_search_service.py`(`get_document`·`_fetch_and_score` 호출부,
+  `DocumentContent`), `app/mcp/types.py`·`app/mcp/payloads.py`(payload).
+- 원인: 두 어댑터가 `text[: self._max_chars]`로 조용히 자르고 절단 여부를
+  버린다. `DocumentSource.fetch()`가 `str`만 반환해 절단 정보를 실을 자리가
+  없다 — 최대 문자 수(`max_chars`)를 아는 곳은 어댑터뿐인데 그 신호가 위로
+  전파되지 않는다.
+- 설계 확정 (architect):
+  1. **절단 판정은 어댑터에서, 반환 타입으로 전파(질문 a)**: `max_chars`를 알고
+     실제로 자르는 주체가 어댑터이므로, 서비스 계층에서 `len==max_chars` 같은
+     휴리스틱으로 역추정하지 않는다(정확히 max_chars 길이인 문서를 오탐).
+     `document_source.py`에 `FileMeta`와 같은 스타일의 frozen dataclass
+     `FetchedDocument(text: str, truncated: bool)`를 신설하고, Protocol을
+     `fetch(self, external_id: str) -> FetchedDocument`로 바꾼다.
+     각 어댑터: `truncated = len(text) > self._max_chars` 계산 후
+     `FetchedDocument(text[: self._max_chars], truncated)` 반환(둘 다 단일
+     반환 지점 — notion은 `"\n".join(lines)`, drive는 `text[:max_chars]` 한 곳).
+  2. **search 경로에는 truncated를 노출하지 않는다(질문 b)**: 스니펫은 본래
+     본문의 작은 발췌라 "절단" 개념이 무의미하고, `DocumentSearchItem`은 전문을
+     싣지 않는다. `_fetch_and_score`는 `document_source.fetch(...).text`로 텍스트만
+     쓰고 `.truncated`는 버린다(점수·스니펫 계산 불변). truncated는 **원문 조회
+     경로(`get_document`)에만** 의미가 있으므로 거기에만 노출한다.
+  3. **get_document·payload에 전파**: `get_document`는
+     `fetched = document_source.fetch(normalized_id)` 후
+     `DocumentContent(..., content=fetched.text, truncated=fetched.truncated)`.
+     `DocumentContent` 데이터클래스와 `DocumentContentPayload`(TypedDict)에
+     `truncated: bool`(항상 emit) 추가, `_to_document_content_payload` 매핑 추가.
+  4. **하위호환**: payload에 `truncated: bool`이 추가되나 가산적 변경.
+     기존 계약(반환 형태·시그니처는 서비스 공개 API 기준 불변, `fetch`는 내부
+     Protocol이라 외부 MCP 계약과 무관).
+- **영향 범위(질문 c — 정확히)**:
+  - `document_source.py`: `FetchedDocument` 신설 + Protocol `fetch` 반환 타입 변경.
+  - **두 어댑터 구현체 모두 변경**(`notion_source.fetch`, `google_drive_source.fetch`)
+    — 반환을 `FetchedDocument`로. 각 단일 반환 지점만 수정.
+  - `document_search_service.py` **fetch 호출부 2곳**: `get_document`(라인 210 부근,
+    `.text`+`.truncated` 사용), `_fetch_and_score`(라인 359 부근, `.text`만 사용).
+    `DocumentContent`에 `truncated` 필드 추가.
+  - `mcp/types.py`·`mcp/payloads.py`: `DocumentContentPayload`에 `truncated` +
+    매핑.
+  - **테스트 페이크 변경 필수**: `tests/fixtures/document_sources.py`와
+    `tests/unit/test_document_search_service.py`의 `def fetch` 페이크가 이제
+    `FetchedDocument`를 반환해야 한다.
+  - 테스트: 어댑터가 `max_chars` 초과 시 `truncated=True`·경계(정확히 max_chars면
+    False), `get_document` payload에 `truncated` 전파, search 결과는 truncated에
+    영향받지 않음(회귀).
 - 수정: 완료 대기
 
 ### 6. score 0 결과가 필터 없이 반환됨 (P3)

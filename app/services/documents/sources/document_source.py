@@ -36,6 +36,20 @@ class FileMeta:
     modified_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class FetchedDocument:
+    """`fetch()` 가 반환하는 본문 한 건.
+
+    Attributes:
+        text: 최대 문자 수(`max_chars`)로 잘린 평문 본문.
+        truncated: 원본이 `max_chars` 를 초과해 잘렸으면 True. 정확히
+            `max_chars` 길이인 원본은 잘린 게 아니므로 False.
+    """
+
+    text: str
+    truncated: bool
+
+
 @runtime_checkable
 class DocumentSource(Protocol):
     """협업 문서 소스(Google Drive / Notion) 어댑터 인터페이스."""
@@ -55,7 +69,7 @@ class DocumentSource(Protocol):
         """
         ...
 
-    def fetch(self, external_id: str) -> str:
+    def fetch(self, external_id: str) -> FetchedDocument:
         """문서 한 건의 본문을 평문 텍스트로 반환한다.
 
         Raises:

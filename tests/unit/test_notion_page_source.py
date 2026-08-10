@@ -292,7 +292,7 @@ def test_fetch_is_unchanged_for_child_page_id(monkeypatch: pytest.MonkeyPatch) -
     source = NotionSource(token="t1", page_id="hub-page")
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("child-1") == "하위 문서 본문"
+    assert source.fetch("child-1").text == "하위 문서 본문"
 
 
 def test_list_pages_without_page_id_still_uses_database_or_search(

@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.core.errors import IntegrationError
-from app.services.documents.sources.document_source import FileMeta
+from app.services.documents.sources.document_source import FetchedDocument, FileMeta
 
 
 class _FailingFileList(list):
@@ -68,6 +68,9 @@ class FakeDocumentSource:
         #: 소비하는 순간 IntegrationError 를 던진다. "목록 조회는 됐는데 저장
         #: 도중 끊긴" 상황을 재현해 배치 커밋 경계를 검증하는 데 쓴다.
         self.fail_listing_at_index: int | None = None
+        #: 이 집합에 든 external_id 는 fetch 시 truncated=True 로 반환한다
+        #: (search 경로가 truncated 를 무시하는지 검증하는 용도).
+        self.truncated_ids: set[str] = set()
 
     @property
     def source_name(self) -> str:
@@ -91,7 +94,7 @@ class FakeDocumentSource:
             )
         return list(self.files)
 
-    def fetch(self, external_id: str) -> str:
+    def fetch(self, external_id: str) -> FetchedDocument:
         """본문을 반환하고 호출 횟수/대상 ID 를 기록한다."""
         self.fetch_call_count += 1
         self.fetched_ids.append(external_id)
@@ -101,7 +104,9 @@ class FakeDocumentSource:
             raise IntegrationError(
                 f"fake {self._source_name} document not found: {external_id}"
             )
-        return self.bodies[external_id]
+        return FetchedDocument(
+            text=self.bodies[external_id], truncated=external_id in self.truncated_ids
+        )
 
     def reset_counts(self) -> None:
         """호출 카운터와 기록을 초기화한다."""
@@ -157,7 +162,7 @@ class ExplodingDocumentSource:
             f"list_files() 가 호출되면 안 되는 경로에서 호출됨: {self._source_name}"
         )
 
-    def fetch(self, external_id: str) -> str:
+    def fetch(self, external_id: str) -> FetchedDocument:
         """호출되면 AssertionError 를 발생시킨다."""
         raise AssertionError(
             f"fetch() 가 호출되면 안 되는 경로에서 호출됨: {self._source_name}/{external_id}"

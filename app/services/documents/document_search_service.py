@@ -113,7 +113,13 @@ class DocumentSearchItem:
 
 @dataclass(frozen=True)
 class DocumentContent:
-    """`get_document` 가 반환하는 원문 한 건."""
+    """`get_document` 가 반환하는 원문 한 건.
+
+    title/url 은 메타 캐시에 있으면 그 값, **메타 캐시에 없으면 둘 다 `""`**
+    로 확정된다(식별자 기반 기본값이 아니다). `""`은 "이 문서의 메타데이터가
+    캐시돼 있지 않다"는 뜻일 뿐, content 는 이 경우에도 fetch 시점의 최신
+    원문이다 — content 유무와 메타 유무는 독립이다.
+    """
 
     title: str
     source: str
@@ -121,6 +127,9 @@ class DocumentContent:
     content: str
     #: title 에서 파싱한 버전 표기(예: "v1.0"). 없으면 None — 순위엔 영향 없다.
     version: str | None
+    #: 어댑터가 max_chars 로 잘랐으면 True. search 경로(스니펫)에는 노출되지
+    #: 않는다 — 이 필드는 원문 조회(get_document)에만 의미가 있다.
+    truncated: bool
 
 
 class DocumentSearchService:
@@ -190,9 +199,13 @@ class DocumentSearchService:
             external_id: 출처 시스템의 문서 식별자.
 
         Returns:
-            제목·출처·URL·본문·버전을 담은 DTO. 제목/URL 은 메타 캐시에 있으면
-            그 값을, 없으면 빈 문자열/식별자 기반 기본값을 쓴다. version 은
+            제목·출처·URL·본문·버전·절단 여부를 담은 DTO. title/url 은 메타
+            캐시에 있으면 그 값을, **메타 캐시에 없으면 title/url 둘 다 `""`**
+            로 확정된다(식별자 기반 기본값이 아니다) — `""`은 "이 문서의
+            메타데이터가 캐시돼 있지 않다"는 뜻이며, `content`는 이 경우에도
+            여전히 방금 fetch한 authoritative 최신 원문이다. version 은
             title 에서 파싱한 값(`parse_version`)이며 표기 없으면 None.
+            truncated 는 어댑터가 `max_chars` 로 잘랐으면 True.
 
         Raises:
             ValidationError: source 가 허용값이 아니거나 external_id 가 빈 경우.
@@ -207,14 +220,15 @@ class DocumentSearchService:
         row = self._find_meta_row(source_str, normalized_id)
         project = row.project if row is not None else DEFAULT_PROJECT
         document_source = self._require_source(project, source_str)
-        content = document_source.fetch(normalized_id)
+        fetched = document_source.fetch(normalized_id)
         title = row.title if row else ""
         return DocumentContent(
             title=title,
             source=source_str,
             url=row.url if row else "",
-            content=content,
+            content=fetched.text,
             version=parse_version(title),
+            truncated=fetched.truncated,
         )
 
     def _find_meta_row(self, source: str, external_id: str) -> DocumentMeta | None:
@@ -356,7 +370,10 @@ class DocumentSearchService:
             )
             return None
         try:
-            body = document_source.fetch(row.external_id)
+            # .truncated 는 버린다 — 스니펫은 본래 발췌라 절단 개념이
+            # 무의미하고, truncated 는 원문 조회 경로(get_document)에만 의미가
+            # 있다.
+            body = document_source.fetch(row.external_id).text
         except IntegrationError as exc:
             _LOG.warning(
                 "문서 본문 조회 실패(건너뜀): %s/%s/%s (%s)",

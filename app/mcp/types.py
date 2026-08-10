@@ -168,13 +168,20 @@ class DocumentSearchResponse(TypedDict):
 
 
 class DocumentContentPayload(TypedDict):
-    """get_document 의 반환 타입(fetch 시점의 최신 원문)."""
+    """get_document 의 반환 타입(fetch 시점의 최신 원문).
+
+    title/url 은 메타 캐시에 있으면 그 값, **메타 캐시에 없으면 둘 다 `""`**
+    다(식별자 기반 기본값이 아니다). `""`은 "이 문서의 메타데이터가 서버에
+    캐시돼 있지 않다"는 뜻일 뿐이며, content 는 이 경우에도 항상 fetch
+    시점의 authoritative 최신 원문이다 — content 유무와 메타 유무는 독립이다.
+    """
 
     title: str
     source: Literal["drive", "notion"]
     url: str
     content: str
     version: str | None
+    truncated: bool
 
 
 class RegisteredResyncResult(TypedDict):

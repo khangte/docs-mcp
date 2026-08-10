@@ -135,6 +135,7 @@ def _to_document_content_payload(content: DocumentContent) -> DocumentContentPay
         "url": content.url,
         "content": content.content,
         "version": content.version,
+        "truncated": content.truncated,
     }
 
 
