@@ -87,6 +87,7 @@ def _make_temp_db() -> tuple[str, str]:
     setup = create_db_engine(test_url)
     with setup.begin() as c:
         c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     return admin_url, test_url
 
 

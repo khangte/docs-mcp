@@ -47,6 +47,20 @@ class DocumentMeta(Base):
         ),
         Index("ix_document_meta_source", "source"),
         Index("ix_document_meta_project", "project"),
+        #: title/url 의 선행 와일드카드 ILIKE('%token%')를 GIN trgm 인덱스로 처리하기 위함
+        #: (1단계 후보 필터, `DocumentMetaRepository.search_by_tokens`).
+        Index(
+            "ix_document_meta_title_trgm",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": "gin_trgm_ops"},
+        ),
+        Index(
+            "ix_document_meta_url_trgm",
+            "url",
+            postgresql_using="gin",
+            postgresql_ops={"url": "gin_trgm_ops"},
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

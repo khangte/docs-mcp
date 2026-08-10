@@ -63,6 +63,7 @@ def pg_engine():
     setup_engine = create_db_engine(test_url)
     with setup_engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     setup_engine.dispose()
 
     engine = create_db_engine(test_url)
