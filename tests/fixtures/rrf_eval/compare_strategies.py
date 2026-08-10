@@ -16,10 +16,13 @@ before/after 측정"의 재실행 가능한 도구다. pytest 로 수집되지 �
 from __future__ import annotations
 
 import json
+import statistics
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
+from metrics import dcg_at, recall_at, reciprocal_rank  # type: ignore[import-not-found]
 from sqlalchemy import text
 
 from app.composition import AppState, build_services
@@ -30,6 +33,7 @@ from app.services.search.endpoint_candidate_search import CandidateSearchOptions
 
 _DIR = Path(__file__).parent
 TOP_K = 10  # 순위 해상도를 넉넉히 보기 위해 10까지 조회(운영 기본 top_k=5보다 넓게)
+RECALL_KS = (1, 3, 5, 10)
 
 
 @dataclass
@@ -49,6 +53,27 @@ def _load_queries() -> list[EvalQuery]:
         )
         for item in raw
     ]
+
+
+def _load_valid_endpoints(openapi_doc: str) -> set[tuple[str, str]]:
+    paths = json.loads(openapi_doc)["paths"]
+    return {(method.upper(), path) for path, methods in paths.items() for method in methods}
+
+
+def _validate_labels(queries: list[EvalQuery], valid_endpoints: set[tuple[str, str]]) -> None:
+    """queries.json의 모든 accepted가 openapi.json에 실재하는지 확인한다.
+
+    오타 라벨이 조용히 미검출(rank=None)로 집계되는 것을 막기 위해, 스크립트
+    실행 초입에 명확한 에러로 죽인다.
+    """
+    bad = [
+        (eq.query, method, path)
+        for eq in queries
+        for method, path in eq.accepted
+        if (method, path) not in valid_endpoints
+    ]
+    if bad:
+        raise ValueError(f"미존재 라벨(openapi.json에 없는 accepted 엔드포인트): {bad}")
 
 
 def _make_temp_db() -> tuple[str, str]:
@@ -79,9 +104,30 @@ def _rank_of_answer(candidates, accepted: list[tuple[str, str]]) -> int | None:
     return None
 
 
+class EvalSummary(NamedTuple):
+    recall: dict[int, float]
+    mrr: float
+    ndcg10: float
+
+
+def _summarize(ranks: list[int | None]) -> EvalSummary:
+    """질의별 정답 순위 리스트에서 Recall@k/MRR/nDCG@10을 계산한다."""
+    n = len(ranks)
+    recall = {k: sum(recall_at(r, k) for r in ranks) / n for k in RECALL_KS}
+    mrr = statistics.mean(reciprocal_rank(r) for r in ranks)
+    ndcg10 = statistics.mean(dcg_at(r, 10) for r in ranks)
+    return EvalSummary(recall=recall, mrr=mrr, ndcg10=ndcg10)
+
+
+def _format_summary_line(label: str, summary: EvalSummary) -> str:
+    recall_str = " ".join(f"Recall@{k} {summary.recall[k]:.0%}" for k in RECALL_KS)
+    return f"- {label}: {recall_str} | MRR {summary.mrr:.3f} | nDCG@10 {summary.ndcg10:.3f}"
+
+
 def main() -> None:
     queries = _load_queries()
     openapi_doc = (_DIR / "openapi.json").read_text()
+    _validate_labels(queries, _load_valid_endpoints(openapi_doc))
 
     admin_url, test_url = _make_temp_db()
     dbname = test_url.rsplit("/", 1)[1]
@@ -103,16 +149,15 @@ def main() -> None:
 
         print("\n| # | 질의 | 카테고리 | 정답 | fallback 순위 | rrf 순위 | 판정 |")
         print("|---|---|---|---|---|---|---|")
-        fb_top1 = fb_top3 = rrf_top1 = rrf_top3 = 0
+        fb_ranks: list[int | None] = []
+        rrf_ranks: list[int | None] = []
         regressions: list[tuple[str, int | None, int | None]] = []
         for i, eq in enumerate(queries, start=1):
             fb = results[eq.query]["fallback"]
             rr = results[eq.query]["rrf"]
+            fb_ranks.append(fb)
+            rrf_ranks.append(rr)
             accepted_str = " or ".join(f"{m} {p}" for m, p in eq.accepted)
-            fb_top1 += 1 if fb is not None and fb <= 1 else 0
-            fb_top3 += 1 if fb is not None and fb <= 3 else 0
-            rrf_top1 += 1 if rr is not None and rr <= 1 else 0
-            rrf_top3 += 1 if rr is not None and rr <= 3 else 0
 
             if fb == rr:
                 verdict = "무변"
@@ -127,14 +172,31 @@ def main() -> None:
             print(f"| {i} | {eq.query} | {eq.category} | {accepted_str} | {fb_disp} | {rr_disp} | {verdict} |")
 
         n = len(queries)
+        fb_summary = _summarize(fb_ranks)
+        rrf_summary = _summarize(rrf_ranks)
         print("\n### 지표 요약")
-        print(f"- fallback: top-1 정확도 {fb_top1}/{n} ({fb_top1 / n:.0%}), top-3 recall {fb_top3}/{n} ({fb_top3 / n:.0%})")
-        print(f"- rrf     : top-1 정확도 {rrf_top1}/{n} ({rrf_top1 / n:.0%}), top-3 recall {rrf_top3}/{n} ({rrf_top3 / n:.0%})")
+        print(f"(n={n})")
+        print(_format_summary_line("fallback", fb_summary))
+        print(_format_summary_line("rrf     ", rrf_summary))
 
-        print("\n### 회귀(rrf가 fallback보다 나빠진 케이스)")
+        print("\n### 카테고리별 분해(Recall@3 / MRR)")
+        categories = sorted({eq.category for eq in queries})
+        print("| 카테고리 | n | fallback Recall@3 | fallback MRR | rrf Recall@3 | rrf MRR |")
+        print("|---|---|---|---|---|---|")
+        for cat in categories:
+            idxs = [i for i, eq in enumerate(queries) if eq.category == cat]
+            cat_fb = _summarize([fb_ranks[i] for i in idxs])
+            cat_rrf = _summarize([rrf_ranks[i] for i in idxs])
+            print(
+                f"| {cat} | {len(idxs)} | {cat_fb.recall[3]:.0%} | {cat_fb.mrr:.3f} "
+                f"| {cat_rrf.recall[3]:.0%} | {cat_rrf.mrr:.3f} |"
+            )
+
+        print("\n### 회귀(rrf가 fallback보다 나빠진 케이스, MRR 기준 병행 표기)")
         if regressions:
             for q, fb, rr in regressions:
-                print(f"- {q!r}: fallback={fb} -> rrf={rr}")
+                mrr_delta = reciprocal_rank(rr) - reciprocal_rank(fb)
+                print(f"- {q!r}: fallback={fb} -> rrf={rr} (MRR delta {mrr_delta:+.3f})")
         else:
             print("- 없음")
     finally:
