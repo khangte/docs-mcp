@@ -1,6 +1,6 @@
 # 검색 품질 추가 개선 검토 — RRF 도입 이후 (분석)
 
-- 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md` / P5: HNSW ef_search, 커밋 `aae5728`, 실행계획 `docs/exec_plans/search-p4-p5-p6-plan.md`). **P4 착수**(K 스윕 실험, 실행계획 `docs/exec_plans/search-p4-rrf-k-sweep-plan.md`). **P2 보류**(조건부 재검토, 아래 절 참조), **P3 조건부 보류**.
+- 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md` / P5: HNSW ef_search, 커밋 `aae5728`, 실행계획 `docs/exec_plans/search-p4-p5-p6-plan.md`). **P4 완료**(K 스윕 실험, 커밋 `434c35a`, 결론 `K=60` 유지 — 강한 null result, 아래 절 참조). **P2 보류**(조건부 재검토, 아래 절 참조), **P3 조건부 보류**.
 - 일시: 2026-08-10
 - 작성: architect
 - 관련: `docs/search-rrf-reevaluation.md`(RRF 도입·실측), `docs/search-performance-improvements.md`(P1~P6), `docs/vector-store-qdrant-vs-pgvector.md`
@@ -85,7 +85,7 @@ P2(필드 가중 tsvector)는 "필드 희석" 카테고리가 이미 88~100%로 
 
 ### P4 — RRF `K`/후보폭 `N` 스윕 (저비용 실험, 상방 제한) — ✅ 완료(측정) — 결론 **`K=60` 유지**(강한 null result)
 
-#### P4 스윕 결과 (2026-08-10, developer)
+#### P4 스윕 결과 (2026-08-10, developer, 커밋 `434c35a`)
 
 `tests/fixtures/rrf_eval/sweep_rrf_k.py`(프로덕션 무변경 in-memory 스윕)로 84질의·`K_GRID=(10,20,30,40,60,80,120)`,
 후보폭 50에서 측정. **K=10부터 K=120까지 전 구간 지표가 소수점까지 완전히 동일**하고
