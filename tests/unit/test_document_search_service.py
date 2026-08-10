@@ -5,7 +5,9 @@ project 필터가 검색·fetch 범위를 올바르게 좁히는지다. 페이�
 `fetch_call_count` 로 다음을 단언한다.
 
 - 1단계 후보가 0건이면 fetch 가 0회다.
-- 한 번의 검색에서 fetch 수가 `top_k` 를 넘지 않는다.
+- 한 번의 검색에서 fetch 수는 `top_k` 가 아니라 fetch 예산(`_body_fetch_budget`,
+  top_k 를 오버스캔한 뒤 상한을 씌운 값)을 넘지 않는다. 최종 결과 개수는
+  여전히 `top_k` 로 컷된다.
 - project="A" 로 좁히면 B 의 어댑터 fetch 가 한 번도 호출되지 않는다.
 """
 
@@ -22,9 +24,12 @@ from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
 from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_search_service import (
+    BODY_FETCH_OVERSCAN,
+    MAX_BODY_FETCH_CANDIDATES,
     MAX_CONCURRENT_BODY_FETCHES,
     DocumentSearchOptions,
     DocumentSearchService,
+    _body_fetch_budget,
     documents_tokenize,
 )
 from tests.fixtures.document_sources import ExplodingDocumentSource
@@ -192,20 +197,85 @@ def test_whitespace_variant_query_matches_title_with_space(
     assert [i.title for i in items] == ["트러블슈팅 가이드"]
 
 
-def test_fetch_count_never_exceeds_top_k(
+# --- P1: 본문 fetch 예산(top_k 컷을 2단계 이전으로 당기지 않기 위한 오버스캔) -----
+
+
+@pytest.mark.parametrize(
+    ("top_k", "candidate_count", "expected"),
+    [
+        (1, 100, 3),
+        (5, 100, 15),
+        (10, 100, 20),
+        (50, 100, 50),
+        (5, 2, 2),
+        (1, 1, 1),
+    ],
+)
+def test_body_fetch_budget_scales_with_overscan_and_caps(
+    top_k: int, candidate_count: int, expected: int
+) -> None:
+    """fetch 예산은 top_k*BODY_FETCH_OVERSCAN 만큼 넓히되 MAX_BODY_FETCH_CANDIDATES 로
+    캡을 씌우고, top_k 자체보다는 절대 작아지지 않으며, 후보 수를 넘지 않는다."""
+    assert _body_fetch_budget(top_k, candidate_count) == expected
+
+
+def test_body_fetch_budget_overscan_and_cap_constants() -> None:
+    """예산 계산에 쓰이는 상수 값 자체가 의도대로 설정돼 있는지 확인한다."""
+    assert BODY_FETCH_OVERSCAN == 3
+    assert MAX_BODY_FETCH_CANDIDATES == 20
+
+
+def test_fetch_count_bounded_by_budget_not_top_k(
     db_session, search_service, fake_drive_source
 ) -> None:
-    """후보가 top_k 보다 많아도 실시간 fetch 는 top_k 건으로 제한된다."""
-    for index in range(10):
+    """후보가 top_k 보다 많으면 fetch 는 top_k 가 아니라 fetch 예산만큼 이뤄지고,
+    최종 결과는 여전히 top_k 건으로 컷된다."""
+    candidate_count = 10
+    top_k = 3
+    for index in range(candidate_count):
         external_id = f"d{index}"
         _seed_meta(db_session, SOURCE_DRIVE, external_id, f"로그인 문서 {index}")
         fake_drive_source.bodies[external_id] = "로그인 관련 본문"
     fake_drive_source.reset_counts()
 
-    items = search_service.search("로그인", DocumentSearchOptions(top_k=3))
+    items = search_service.search("로그인", DocumentSearchOptions(top_k=top_k))
 
+    assert fake_drive_source.fetch_call_count == _body_fetch_budget(top_k, candidate_count)
+    assert len(items) == top_k
+
+
+def test_low_title_rank_candidate_with_strong_body_reaches_top_k_via_fetch_budget(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """title_score 만으로 top_k 컷하면 영영 fetch 되지 못했을 문서가, 예산 확장 덕에
+    2단계까지 진출해 강한 body_score 로 최종 top_k 를 뒤집는다(P1 회귀 테스트).
+
+    질의 토큰 4개(결제/오류/상세/원인) 중 제목에 몇 개가 겹치느냐로 1단계
+    순위가 갈린다: rank1(3/4)이 1위, rank2·rank3(2/4 동률)이 공동 2위,
+    rank4·rank5(1/4)가 공동 4위. top_k=1 을 그대로 예산으로 썼다면 rank1만
+    fetch 됐을 것이다. 예산이 top_k*BODY_FETCH_OVERSCAN=3 으로 넓어지면
+    rank3 도 fetch 대상에 들고, rank3 의 본문이 질의 토큰을 모두 담고 있어
+    결합점수(title*0.4+body*0.6)로 rank1 을 역전한다.
+    """
+    query = "결제 오류 상세 원인"
+    _seed_meta(db_session, SOURCE_DRIVE, "rank1", "결제 오류 상세 안내")
+    _seed_meta(db_session, SOURCE_DRIVE, "rank2", "결제 오류 매뉴얼")
+    _seed_meta(db_session, SOURCE_DRIVE, "rank3", "오류 원인 조사서")
+    _seed_meta(db_session, SOURCE_DRIVE, "rank4", "결제 확인 가이드")
+    _seed_meta(db_session, SOURCE_DRIVE, "rank5", "상세 페이지 개편")
+    fake_drive_source.bodies["rank1"] = "이 페이지는 안내서 사용법을 설명한다."
+    fake_drive_source.bodies["rank2"] = "이 매뉴얼은 사용 팁을 정리한다."
+    fake_drive_source.bodies["rank3"] = "결제 오류 상세 원인 관련 문서 전체 분석."
+    fake_drive_source.bodies["rank4"] = "본문은 fetch 되지 않아야 한다."
+    fake_drive_source.bodies["rank5"] = "본문은 fetch 되지 않아야 한다."
+    fake_drive_source.reset_counts()
+
+    items = search_service.search(query, DocumentSearchOptions(top_k=1))
+
+    assert [i.title for i in items] == ["오류 원인 조사서"]
     assert fake_drive_source.fetch_call_count == 3
-    assert len(items) == 3
+    assert "rank4" not in fake_drive_source.fetched_ids
+    assert "rank5" not in fake_drive_source.fetched_ids
 
 
 # --- P3: 2단계 본문 fetch 병렬화 ------------------------------------------------
@@ -772,25 +842,31 @@ def test_no_query_variants_behaves_like_before(
 def test_top_k_one_original_match_wins_fetch_slot_over_variant_only(
     db_session, search_service, fake_drive_source
 ) -> None:
-    """top_k=1 이고 원본매치 1건 + 확장전용매치 1건이 동시 후보일 때, 원본매치만 반환된다.
+    """원본매치는 fetch 예산이 후보 수보다 부족해도 항상 fetch 슬롯을 먼저 받는다.
 
-    top_k 는 2단계 본문 fetch 상한(rate limit 보호)의 핵심 장치다. 확장
-    토큰으로만 걸린 후보가 이 한정된 fetch 슬롯을 원본 매치 문서로부터
-    빼앗으면 rate limit 보호 의도가 깨진다. 정렬키 (title_score<=0 오름차순
-    1순위)가 원본매치를 항상 앞세워야 하는 회귀 방지 테스트.
+    fetch 예산은 이제 top_k 가 아니라 top_k*BODY_FETCH_OVERSCAN(상한
+    MAX_BODY_FETCH_CANDIDATES)으로 정해지지만(top_k=1 → 예산 3), 그 예산도
+    후보 4건(원본매치 1 + 확장전용매치 3)보다 작다. 정렬키(원본매치 여부
+    우선)가 예산이 부족한 상황에서도 원본매치를 항상 먼저 슬롯에 채워야
+    하는 회귀 방지 테스트 — 남는 슬롯 2개만 확장전용매치가 external_id
+    오름차순으로 채운다.
     """
     _seed_meta(db_session, SOURCE_DRIVE, "original", "로그인 설계서")
-    _seed_meta(db_session, SOURCE_DRIVE, "expanded_only", "계정 관리 문서")
+    _seed_meta(db_session, SOURCE_DRIVE, "expanded_1", "계정 관리 문서 A")
+    _seed_meta(db_session, SOURCE_DRIVE, "expanded_2", "계정 관리 문서 B")
+    _seed_meta(db_session, SOURCE_DRIVE, "expanded_3", "계정 관리 문서 C")
     fake_drive_source.bodies["original"] = "로그인 흐름 설명"
-    fake_drive_source.bodies["expanded_only"] = "계정 정보 변경 절차"
+    fake_drive_source.bodies["expanded_1"] = "계정 정보 변경 절차 A"
+    fake_drive_source.bodies["expanded_2"] = "계정 정보 변경 절차 B"
+    fake_drive_source.bodies["expanded_3"] = "계정 정보 변경 절차 C"
 
     items = search_service.search(
         "로그인", DocumentSearchOptions(top_k=1, query_variants=["계정"])
     )
 
     assert [i.title for i in items] == ["로그인 설계서"]
-    assert fake_drive_source.fetch_call_count == 1
-    assert "expanded_only" not in fake_drive_source.fetched_ids
+    assert fake_drive_source.fetch_call_count == 3
+    assert "expanded_3" not in fake_drive_source.fetched_ids
 
 
 def test_top_k_two_includes_both_but_original_match_ranks_first(

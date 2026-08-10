@@ -97,7 +97,7 @@ flowchart TD
 
 ## 3. 협업문서 검색 — 메타 1단계 → 병렬 fetch 2단계
 
-`DocumentSearchService.search` (`app/services/documents/document_search_service.py:115`)가 진입점이다. 본문은 신선도 때문에 **절대 캐시하지 않으며**, 외부 fetch 비용이 크므로 **후보를 top_k로 압축한 뒤에만** 본문을 가져온다.
+`DocumentSearchService.search` (`app/services/documents/document_search_service.py:115`)가 진입점이다. 본문은 신선도 때문에 **절대 캐시하지 않으며**, 외부 fetch 비용이 크므로 **후보를 fetch 예산으로 압축한 뒤에만** 본문을 가져온다. fetch 예산은 top_k 자체가 아니라 top_k를 오버스캔한 값이다(3.1 5번) — title_score만으로 top_k 컷을 2단계 이전에 확정하면 본문에만 강하게 걸리는 문서가 fetch 기회조차 못 받기 때문.
 
 ### 3.1 1단계 — 메타 캐시 후보 압축 (무료·빠름)
 
@@ -105,7 +105,7 @@ flowchart TD
 2. **질의 토큰화** — `documents_tokenize`(`search_scorer.py`)로 질의 토큰 집합 생성.
 3. **필터 토큰 확장** — 호출자(Claude)가 넘긴 `query_variants`(동의어)를 `_variant_tokens`(`:207`)로 토큰화해 **1단계 SQL 후보 필터에만** 합친다. 서버는 자체 LLM 질의 확장을 하지 않는다(그 판단은 호출측 모델의 몫). **점수 계산은 항상 원본 질의 토큰만** 사용. 토큰화와 별개로, `query_variants` 원문도 `_select_candidates`가 `queries=[query, *query_variants]`로 그대로 아래 4번의 collapse 매칭에 실어 보낸다(공백 유무 차이는 토큰화를 거치면 사라지므로 원문이 필요).
 4. **SQL 후보 조회** — `meta_repo.search_by_tokens` (`document_meta_repository.py:~90`): `document_meta`의 title/url에 대해 토큰별 `ILIKE '%token%'` 를 OR로 결합(+ `queries`의 각 문자열—원본 질의와 variant 원문—을 공백 제거한 `collapse` 패턴도 OR, 중복 collapse 값은 dedup). title/url에는 **pg_trgm GIN 인덱스**(`ix_document_meta_title_trgm`/`ix_document_meta_url_trgm`, `gin_trgm_ops`)가 걸려 있어 선행 와일드카드 ILIKE도 인덱스로 처리된다(캐시 규모가 커질 때 seq scan 회피). 스코프(source/project)는 SQL WHERE. `(source, external_id)` 순 결정적 정렬. **점수·순위는 SQL이 아니라 Python이** 정한다(SQL은 "가능성 있는 행"만 좁힘).
-5. **후보 점수·정렬·컷** — `_select_candidates` (`:217`): `_title_score`(원본 토큰만)로 채점 후 (원본 매치 여부 내림차순, title_score 내림차순, external_id) 정렬 → **상위 top_k만** 남긴다. top_k는 2단계 fetch 예산 상한이므로, 원본 신호 있는 행이 먼저 자리를 채우고 variant-only 매치는 남는 자리만 채운다.
+5. **후보 점수·정렬·컷** — `_select_candidates` (`:217`): `_title_score`(원본 토큰만)로 채점 후 (원본 매치 여부 내림차순, title_score 내림차순, external_id) 정렬 → **상위 fetch 예산 건만** 남긴다. 예산은 `_body_fetch_budget(top_k, candidate_count)`(`:~54`)가 정한다: `overscan = min(top_k*BODY_FETCH_OVERSCAN, MAX_BODY_FETCH_CANDIDATES)`(각각 3, 20), `budget = min(max(top_k, overscan), candidate_count)` — top_k보다 넓게 오버스캔하되 상한을 씌우고, top_k 자체보다는 작아지지 않으며, 후보 수를 넘지 않는다. 예산이 부족하면 원본 신호 있는 행이 먼저 자리를 채우고 variant-only 매치는 남는 자리만 채운다. **최종 top_k 컷은 여기가 아니라 2단계(`_rank_with_body`)가 본문 점수까지 반영해서** 한다 — title_score만으로 top_k 컷을 확정하지 않기 위한 것이 이 예산 확장의 목적.
 6. **후보 0건이면 즉시 종료** — 외부 API를 **한 번도 호출하지 않고** 빈 리스트 반환(`:144`).
 
 ### 3.2 2단계 — 후보 본문 실시간 병렬 fetch (비쌈)
@@ -115,7 +115,7 @@ flowchart TD
 1. **어댑터 사전 resolve(메인 스레드)** — 후보에 등장하는 project별로 `resolver.resolve_for_project`를 **미리** 호출해 둔다. 이 호출은 요청-스코프 SQLAlchemy Session을 읽어 스레드 세이프하지 않으므로 워커에 맡기지 않는다.
 2. **병렬 fetch** — `ThreadPoolExecutor(max_workers=min(len(candidates), MAX_CONCURRENT_BODY_FETCHES))`. **동시성 상한 `MAX_CONCURRENT_BODY_FETCHES=5`**(`:52`)가 Drive/Notion rate limit·지연 합산을 막는 핵심 장치다. `executor.map`은 입력 순서로 결과를 모아 스레드 안전.
 3. **건별 fetch+채점** — `_fetch_and_score` (`:295`): 워커 스레드에서 순수 I/O인 `document_source.fetch()`만 수행. **개별 fetch 실패는 그 문서만 건너뛴다**(한 건의 권한 오류가 검색 전체를 죽이지 않음, `None` 반환). 성공 시 `_body_score`(원본 토큰) + 스니펫(`_build_snippet`/`_fallback_snippet`) 생성.
-4. **최종 점수·정렬** — `score = round(0.4*title_score + 0.6*body_score, 4)`(`TITLE_SCORE_WEIGHT=0.4`). fetch 순서와 무관하게 (score 내림차순, title) 재정렬해 반환.
+4. **최종 점수·정렬·top_k 컷** — `score = round(0.4*title_score + 0.6*body_score, 4)`(`TITLE_SCORE_WEIGHT=0.4`). fetch 순서와 무관하게 (score 내림차순, title) 재정렬한 뒤 **여기서 비로소 상위 top_k만** 남겨 반환한다(`items[:top_k]`) — 1단계에서 fetch 예산만큼 살아남은 후보가 본문 점수까지 반영해 재평가된 결과다.
 
 ### 3.3 mermaid — 협업문서 검색
 
@@ -127,13 +127,13 @@ flowchart TD
     V -->|"소스 미구성"| ERR2["IntegrationError"]
     V -->|"OK"| T["질의 토큰화 +<br/>query_variants 토큰 합류(필터 전용)<br/>+ query_variants 원문 collapse 유입"]
     T --> S1["1단계: meta_repo.search_by_tokens<br/>title/url ILIKE '%token%' (OR)<br/>+ query·variants 원문 collapse 패턴"]
-    S1 --> SC["_select_candidates<br/>_title_score(원본 토큰만)<br/>정렬 후 상위 top_k 컷"]
+    S1 --> SC["_select_candidates<br/>_title_score(원본 토큰만)<br/>정렬 후 상위 fetch 예산 컷<br/>(top_k 오버스캔, cap 20)"]
     SC --> Z{"후보 0건?"}
     Z -->|"예"| EMPTY["빈 리스트<br/>(외부 fetch 없음)"]
     Z -->|"아니오"| PR["project별 어댑터<br/>메인 스레드에서 사전 resolve"]
     PR --> POOL["2단계: ThreadPoolExecutor<br/>동시성 상한 5<br/>병렬 본문 fetch"]
     POOL --> FS["_fetch_and_score (워커)<br/>fetch 실패 → 해당 건만 skip<br/>_body_score + 스니펫"]
-    FS --> RANK["score = 0.4*title + 0.6*body<br/>score 내림차순 재정렬"]
+    FS --> RANK["score = 0.4*title + 0.6*body<br/>score 내림차순 재정렬 →<br/>여기서 top_k 컷"]
     RANK --> OUT["DocumentSearchItem 리스트"]
 ```
 

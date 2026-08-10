@@ -50,7 +50,58 @@
 ### 2. top_k 컷이 제목 점수만으로 2단계 이전에 발생 (P1)
 
 - 위치: `app/services/documents/document_search_service.py` `_select_candidates`
-- 원인: `scored[: options.top_k]`가 본문을 열어보기 전에 제목 점수만으로 컷.
+  (현 254~256행), `_rank_with_body`, `search`.
+- 원인: `_select_candidates`가 `scored[: options.top_k]`로 **1단계 title_score
+  만으로** 후보를 top_k 건까지 자르고, 2단계 본문 fetch는 그 잘린 집합에만
+  일어난다. 제목에 원본 질의어가 없어(title_score 낮거나 0) 정렬 하위로 밀린
+  문서는 본문이 아무리 강하게 매칭돼도 애초에 fetch 대상에 못 들어가
+  body_score를 계산할 기회조차 없다. 근본 원인은 top_k가 **"2단계 fetch
+  상한(rate limit 보호)"과 "최종 결과 개수"를 동시에** 맡는 이중 역할.
+  (uhok-sonata: 정답 v_1.0 페이지 제목에 질의어가 없어 top_k=10 밖으로 밀려
+  본문 미조회.)
+- 설계 확정 (architect):
+  - **두 역할 분리**: top_k는 이제 **최종 결과 개수**만 의미한다. "2단계 본문
+    fetch 상한"은 top_k에서 파생하되 top_k보다 넉넉한 **별도 fetch 예산**으로
+    분리한다.
+  - **fetch 예산 공식** — 신설 헬퍼 `_body_fetch_budget(top_k, candidate_count)`:
+    ```
+    overscan = min(top_k * BODY_FETCH_OVERSCAN, MAX_BODY_FETCH_CANDIDATES)
+    budget   = min(max(top_k, overscan), candidate_count)
+    ```
+    - `BODY_FETCH_OVERSCAN = 3`: top_k의 몇 배까지 본문을 열어볼지.
+    - `MAX_BODY_FETCH_CANDIDATES = 20`: 2단계 총 fetch 하드캡(rate limit 보호).
+      단 `max(top_k, ...)`로 감싸 사용자가 top_k>20을 명시하면 그 값이 우선한다
+      (기존 계약 유지 — top_k=50이면 오늘도 50건 fetch). 기존
+      `MAX_CONCURRENT_BODY_FETCHES=5`(동시성)와는 별개 상수다.
+    - 예: top_k=1→3, top_k=5→15, top_k=10→20, top_k=50→50.
+  - **`_select_candidates`**: `scored[: options.top_k]` → `scored[: budget]`.
+    정렬 키(원본매치 내림차순, title_score 내림차순, external_id)는 **그대로
+    유지** — 한정된 fetch 예산을 원본 신호가 강한 행부터 배분하는 원칙은 옳다.
+    달라지는 건 slice 깊이뿐이다.
+  - **최종 컷은 body_score 반영 후**: `_rank_with_body`에 `top_k` 인자를
+    추가하고, 결합 점수(`TITLE_SCORE_WEIGHT*title + BODY_SCORE_WEIGHT*body`)로
+    정렬한 **뒤** `items[:top_k]`로 자른다. `search`는
+    `_rank_with_body(..., options.top_k)`로 호출. 이로써 title_score=0·body_score
+    강한 문서가 결합 점수(=0.6×body_score)로 title-only 문서(0.4×title_score)를
+    제치고 최종 top_k에 진입할 수 있다 — 항목 2가 노리는 바로 그 경로.
+  - **동시성 불변**: `MAX_CONCURRENT_BODY_FETCHES=5`는 그대로. 예산 20이면
+    최대 4웨이브(지연 ~4×)로, 검색 응답 지연 상한 내 허용 비용으로 판단.
+  - **한계(honest)**: 후보 수가 fetch 예산을 초과하고 그 초과분이 전부
+    title_score=0인 극단에서는 여전히 정답이 예산 밖일 수 있다. overscan은
+    위험을 줄이는 실용적 완화이며, "제목 신호 자체가 없는" 근본 문제의 정답은
+    항목 1(variant collapse 매칭으로 후보 진입 보장)·항목 3(version 인식)과
+    층으로 함께 동작한다.
+- **영향 범위**:
+  - `document_search_service.py`: 상수 2개 추가(`BODY_FETCH_OVERSCAN`,
+    `MAX_BODY_FETCH_CANDIDATES`), `_body_fetch_budget` 헬퍼 신설,
+    `_select_candidates` slice 변경, `_rank_with_body` 시그니처(+top_k)·말미
+    slice 추가, `search` 호출부 1곳, 모듈/`_select_candidates`/`_rank_with_body`
+    docstring 개정("top_k 건만 fetch" → "fetch 예산만큼 fetch 후 top_k 컷").
+  - 외부 인터페이스(`search` 시그니처, `DocumentSearchOptions`, MCP payload)
+    **불변** — 반환은 여전히 최대 top_k 건.
+  - 테스트: fetch 예산 경계(top_k=5→15, top_k=10→20 cap, top_k>cap→top_k),
+    "title_score=0·body 강함" 문서가 최종 top_k에 진입하는 회귀 케이스,
+    후보<top_k일 때 budget=candidate_count 확인.
 - 수정: 완료 대기
 
 ### 3. version 필드/개념 부재 (P1)

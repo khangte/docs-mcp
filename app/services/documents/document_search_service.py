@@ -4,10 +4,14 @@
 
 1. **1단계(캐시, 무료·빠름)**: `document_meta` 의 제목/URL 에 대해 토큰 매칭으로
    후보를 추린다. 후보가 0건이면 **본문 fetch 없이 즉시 빈 리스트를 반환**한다.
-2. **2단계(실시간 fetch, 비쌈)**: 1단계 상위 후보 **최대 `top_k` 건만** 본문을
-   실시간으로 가져와 스니펫을 만들고 점수를 재계산한다. 이 상한이 Drive/Notion
-   API rate limit 과 응답 지연을 막는 핵심 장치다. fetch 는 응답 지연을
-   줄이기 위해 `MAX_CONCURRENT_BODY_FETCHES` 를 상한으로 병렬 실행된다.
+2. **2단계(실시간 fetch, 비쌈)**: 1단계 상위 후보 중 **fetch 예산
+   (`_body_fetch_budget`) 건만** 본문을 실시간으로 가져와 스니펫을 만들고
+   점수를 재계산한다. 예산은 `top_k` 를 오버스캔한 값(상한
+   `MAX_BODY_FETCH_CANDIDATES`)이라, title_score 만으로 top_k 컷을 2단계
+   이전에 확정하지 않는다 — 최종 top_k 컷은 본문까지 반영한 결합 점수로
+   2단계가 정한다. 이 예산 상한이 Drive/Notion API rate limit 과 응답
+   지연을 막는 핵심 장치다. fetch 는 응답 지연을 줄이기 위해
+   `MAX_CONCURRENT_BODY_FETCHES` 를 상한으로 병렬 실행된다.
 
 본문은 절대 캐시하지 않는다. `get_document` 도 항상 fetch 시점의 최신 원문을
 돌려준다.
@@ -43,6 +47,20 @@ from app.services.documents.snippet_generator import _build_snippet, _fallback_s
 
 _LOG = get_logger("docs_mcp.documents.search")
 
+
+def _body_fetch_budget(top_k: int, candidate_count: int) -> int:
+    """2단계 본문 fetch 예산을 계산한다.
+
+    title_score 만으로 top_k 컷을 2단계 이전에 확정하면, 제목엔 안 걸리고
+    본문에만 강하게 걸리는 문서가 애초에 fetch 기회조차 못 받는다. 그래서
+    예산은 top_k 보다 `BODY_FETCH_OVERSCAN` 배 넓히되(제목 매칭 약한 후보도
+    본문을 열어볼 기회를 준다), `MAX_BODY_FETCH_CANDIDATES` 로 상한을 씌우고
+    (rate limit 보호), top_k 자체보다는 작아지지 않으며(최종 결과 수만큼은
+    항상 fetch), 후보 수를 넘지 않는다.
+    """
+    overscan = min(top_k * BODY_FETCH_OVERSCAN, MAX_BODY_FETCH_CANDIDATES)
+    return min(max(top_k, overscan), candidate_count)
+
 MIN_TOP_K = 1
 MAX_TOP_K = 50
 #: 최종 점수에서 제목 매칭이 차지하는 비중(나머지는 본문 매칭).
@@ -50,6 +68,11 @@ TITLE_SCORE_WEIGHT = 0.4
 BODY_SCORE_WEIGHT = 1.0 - TITLE_SCORE_WEIGHT
 #: 2단계 본문 fetch 동시 실행 상한(Drive/Notion rate limit 보호).
 MAX_CONCURRENT_BODY_FETCHES = 5
+#: 본문 fetch 예산을 top_k 의 몇 배까지 오버스캔할지(title_score만으로 top_k
+#: 컷을 2단계 이전에 확정하지 않기 위함).
+BODY_FETCH_OVERSCAN = 3
+#: 본문 fetch 예산의 절대 상한(오버스캔이 과도하게 커지지 않도록).
+MAX_BODY_FETCH_CANDIDATES = 20
 
 __all__ = [
     "DocumentSearchOptions",
@@ -146,7 +169,7 @@ class DocumentSearchService:
             _LOG.debug("1단계 후보 0건 — 본문 fetch 생략: query=%s", normalized_query)
             return []
 
-        return self._rank_with_body(candidates, query_tokens, normalized_query)
+        return self._rank_with_body(candidates, query_tokens, normalized_query, options.top_k)
 
     def get_document(self, source: str, external_id: str) -> DocumentContent:
         """문서 한 건의 최신 원문을 조회한다(캐시된 본문이 아니다).
@@ -221,7 +244,7 @@ class DocumentSearchService:
         query: str,
         options: DocumentSearchOptions,
     ) -> list[tuple[DocumentMeta, float]]:
-        """제목/URL 토큰 매칭으로 상위 top_k 후보만 추린다.
+        """제목/URL 토큰 매칭으로 상위 fetch 예산 건까지만 후보를 추린다.
 
         1차 필터(어떤 토큰이라도 포함하는 행)는 SQL 로 내리고, 점수 계산과
         순위 결정만 Python 이 한다. 전체 행을 적재하지 않으므로 캐시 규모가
@@ -238,12 +261,14 @@ class DocumentSearchService:
         후보만 넓혀 해결하는 것이므로, 여기서 다시 title_score 로 걸러내면
         확장 효과가 무력화된다.
 
-        다만 top_k 는 2단계 본문 fetch 상한(rate limit 보호)이므로 한정된
-        fetch 예산을 원본 신호가 있는 행에 먼저 배분한다: 정렬은
-        (원본 매치 여부 내림차순, title_score 내림차순, external_id) 순이며,
-        원본 매치 행이 top_k 를 채우고 남는 자리만 variant-only 매치 행이
-        채운다. 최종 관련성 판단은 2단계 본문 fetch 후 body_score(역시
-        원본 토큰만)가 맡는다.
+        fetch 예산(`_body_fetch_budget`)은 rate limit 보호를 위해 여전히
+        유한하므로, 그 한정된 예산을 원본 신호가 있는 행에 먼저 배분한다:
+        정렬은 (원본 매치 여부 내림차순, title_score 내림차순, external_id)
+        순이며, 원본 매치 행이 예산을 채우고 남는 자리만 variant-only 매치
+        행이 채운다. 예산은 top_k 를 오버스캔해(`BODY_FETCH_OVERSCAN`)
+        title_score 만으로 top_k 컷을 2단계 이전에 확정하지 않는다 — 최종
+        top_k 컷은 2단계 본문 fetch 후 body_score(역시 원본 토큰만)까지
+        반영한 결합 점수로 `_rank_with_body` 가 정한다.
         """
         rows = self._meta_repo.search_by_tokens(
             sorted(filter_tokens),
@@ -253,7 +278,8 @@ class DocumentSearchService:
         )
         scored = [(row, _title_score(row, score_tokens, query)) for row in rows]
         scored.sort(key=lambda pair: (pair[1] <= 0.0, -pair[1], pair[0].external_id))
-        return scored[: options.top_k]
+        budget = _body_fetch_budget(options.top_k, len(scored))
+        return scored[:budget]
 
     # --- 2단계: 후보 본문 실시간 fetch ------------------------------------
 
@@ -262,8 +288,9 @@ class DocumentSearchService:
         candidates: list[tuple[DocumentMeta, float]],
         query_tokens: set[str],
         query: str,
+        top_k: int,
     ) -> list[DocumentSearchItem]:
-        """후보 본문을 병렬로 받아 스니펫을 만들고 최종 점수로 재정렬한다.
+        """후보 본문을 병렬로 받아 스니펫을 만들고 최종 점수로 재정렬한 뒤 top_k 로 컷한다.
 
         개별 문서 fetch 실패는 그 문서만 건너뛴다(한 건의 권한 오류가 검색
         전체를 죽이지 않게 한다). 어댑터는 후보 행의 project 로 고른다.
@@ -272,6 +299,11 @@ class DocumentSearchService:
         병렬 fetch 한다. `executor.map` 은 완료 순서와 무관하게 입력 순서로
         결과를 모아주므로 공유 리스트에 동시 append 할 필요가 없다(스레드
         안전). 최종 정렬은 fetch 순서와 무관하게 score/title 로 다시 한다.
+
+        `candidates` 는 fetch 예산(`_body_fetch_budget`)만큼 있을 수 있어
+        top_k 보다 많다 — title_score 만으로는 걸러지지 않았던 문서도 여기서
+        body_score 까지 반영한 결합 점수로 재평가된 뒤에야 최종 top_k 컷이
+        일어난다.
 
         `self._resolver.resolve_for_project()` 는 요청-스코프 SQLAlchemy
         Session 을 읽으므로(스레드 세이프하지 않음) 워커 스레드에 맡기지
@@ -293,7 +325,7 @@ class DocumentSearchService:
             )
             items = [item for item in results if item is not None]
         items.sort(key=lambda item: (-item.score, item.title))
-        return items
+        return items[:top_k]
 
     def _fetch_and_score(
         self,
