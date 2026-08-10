@@ -106,8 +106,58 @@
 
 ### 3. version 필드/개념 부재 (P1)
 
-- 위치: `app/models/document_meta.py`
-- 원인: 제목의 버전 접미사를 파싱하는 로직이 아예 없음.
+- 위치: `app/services/documents/document_search_service.py`
+  (`_fetch_and_score`·`get_document`), `app/mcp/types.py`·`app/mcp/payloads.py`
+  (payload), 신설 `app/services/documents/version_parser.py`. `document_meta.py`
+  모델은 **변경 없음**(아래 설계 확정 2번 참조).
+- 원인: 제목의 버전 접미사(`v_1.0` 등)를 파싱·노출하는 개념이 아예 없어,
+  검색 결과에서 정답 버전과 구버전 통합 문서를 구분할 단서가 호출자에게
+  전달되지 않는다. (uhok-sonata: 정답 `v_1.0` 페이지와 버전 표기 없는 구버전
+  통합 문서가 섞여 후자를 최종본으로 오인.)
+- 설계 확정 (architect):
+  1. **파싱 규칙** — 순수 함수 `parse_version(title: str) -> str | None`:
+     - 정규식 `(?i)(?<![0-9A-Za-z])v[\s_]?(\d+(?:[._]\d+)*)` 로 `v`-접두 **숫자
+       버전**을 잡는다. 여러 개면 **마지막 매치**를 쓴다(버전은 제목 접미사
+       관례). 캡처값의 `_`를 `.`로 정규화해 `"v" + 정규화값` 반환
+       (예: `v_1.0`→`v1.0`, `V 2`→`v2`, `...로직_v_1.0`→`v1.0`).
+     - 부정 룩비하인드 `(?<![0-9A-Za-z])`로 `rev2`·`level2` 같은 단어 내부 v를
+       배제(직전 문자가 영숫자면 불매치, `_`·공백·`(`·시작은 허용).
+     - **버전 표기 없으면 `None`**(에러 아님). 파싱 실패가 정상 경로.
+     - **상태 마커(`(최종)`/`final`/`draft` 등)는 `version`에 넣지 않는다** —
+       버전 번호와 성격이 다르고(비교 불가) 한 필드에 섞으면 의미가 흐려진다
+       (KISS). 이런 마커는 이미 노출되는 `title` 문자열에 그대로 남아 호출자
+       판단에 쓰인다.
+  2. **DB 컬럼 불필요 — 응답 시점 동적 파싱**: `version`은 `title`의 순수
+     파생값이라 컬럼 저장은 파생 데이터 중복·규칙 변경 시 재동기화 부담만
+     생긴다. 4번(순위 무영향)에 따라 SQL 필터/정렬도 불필요하므로 **alembic
+     마이그레이션 없이** 결과 조립 시점(최종 ≤top_k 건에 대해서만)에 파싱한다.
+     항목 2와 같은 최소변경·YAGNI 기조.
+  3. **노출 위치**: `DocumentSearchItem`·`DocumentContent` 데이터클래스에
+     `version: str | None` 추가, `DocumentSearchItemPayload`·
+     `DocumentContentPayload`(TypedDict)에 `version: str | None`(항상 emit,
+     버전 없으면 `null`) 추가, `_to_document_search_payload`·
+     `_to_document_content_payload` 매핑 추가. `_fetch_and_score`와
+     `get_document`가 `parse_version(title)`을 호출해 채운다.
+  4. **순위 무영향 — 단순 메타데이터**: 점수 계산(`search_scorer`)은 **손대지
+     않는다**. "최신판=정답"은 사용자 의도에 달린 의미 판단이고(구버전을
+     원할 수도 있음), 버전 비교 의미론도 지역·표기별로 모호하다. 항목 1의
+     "질의확장 판단은 호출자 모델 몫" 원칙과 일관되게, 서버는 `version`을
+     **노출만** 하고 최신판 선택은 호출자(Claude)에 맡긴다. 점수의 의미는
+     "질의 정합성"으로 유지된다.
+  5. **하위호환**: 컬럼이 없어 기존 행은 그대로. 버전 표기 없는 문서는
+     `version=null`. payload에 키가 추가되나 **가산적 변경**(기존 필드·순위·
+     계약 불변)이라 기존 클라이언트에 무해하다. uhok 해결은 층으로 동작 —
+     항목 1(후보 진입)+항목 2(본문 fetch)가 정답 버전을 결과에 올리고, 항목
+     3이 `version` 문자열로 호출자가 구별하게 한다.
+- **영향 범위**:
+  - 신설 `version_parser.py`(순수 함수 1개), `document_search_service.py`
+    2곳(`_fetch_and_score`·`get_document`)에서 호출, `DocumentSearchItem`·
+    `DocumentContent` 필드 추가, `mcp/types.py`·`mcp/payloads.py` payload 2곳.
+  - **모델·마이그레이션·SQL·점수 계산 불변.** `search`/`get_document` 시그니처
+    불변.
+  - 테스트: `parse_version` 단위(정상 `v_1.0`/`v2`/`V 3.1`, 단어 내부 v 배제,
+    다중 매치 시 마지막, 표기 없음→None), 검색/조회 payload에 `version` 키가
+    실리고 버전 없는 문서는 null인지, 순위가 version에 영향받지 않는지 회귀.
 - 수정: 완료 대기
 
 ### 4. get_document가 title/url을 빈 문자열로 반환 (P2)

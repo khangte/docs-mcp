@@ -16,6 +16,7 @@ from fastmcp import FastMCP
 from app.mcp.server import create_mcp_server
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import DEFAULT_PROJECT
+from app.services.documents.document_search_service import _body_fetch_budget
 
 DOCUMENT_TOOL_NAMES = {"search_documents", "get_document", "refresh_index"}
 _T1 = datetime(2026, 7, 1, 9, 0, 0)
@@ -324,12 +325,30 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
 
 @pytest.mark.asyncio()
 async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> None:
-    """결과 항목은 title/source/project/url/snippet/score 6개 필드를 갖는다."""
+    """결과 항목은 title/source/project/url/snippet/score/version 7개 필드를 갖는다."""
     items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
 
     assert items
     for item in items:
-        assert set(item) == {"title", "source", "project", "url", "snippet", "score"}
+        assert set(item) == {
+            "title",
+            "source",
+            "project",
+            "url",
+            "snippet",
+            "score",
+            "version",
+        }
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_version_is_null_without_version_marker(
+    seeded_mcp: FastMCP,
+) -> None:
+    """제목에 버전 표기가 없는 문서는 version 이 null 로 실린다."""
+    items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
+
+    assert all(i["version"] is None for i in items if i["title"] == "로그인 인증 설계서")
 
 
 @pytest.mark.asyncio()
@@ -358,15 +377,21 @@ async def test_search_documents_no_candidate_skips_fetch(
 async def test_search_documents_fetch_count_respects_top_k(
     mcp_server: FastMCP, seed_default_project_sources, fake_drive_source
 ) -> None:
-    """한 번의 검색이 fetch 하는 문서 수는 top_k 를 넘지 않는다."""
-    for index in range(8):
+    """한 번의 검색이 fetch 하는 문서 수는 top_k 가 아니라 fetch 예산을 넘지 않고,
+    최종 결과 개수는 top_k 로 컷된다."""
+    candidate_count = 8
+    top_k = 2
+    for index in range(candidate_count):
         fake_drive_source.put(f"d{index}", f"로그인 문서 {index}", "로그인 본문", modified_at=_T1)
     await mcp_server.call_tool("refresh_index", arguments={})
     fake_drive_source.reset_counts()
 
-    await mcp_server.call_tool("search_documents", {"query": "로그인", "top_k": 2})
+    result = await mcp_server.call_tool(
+        "search_documents", {"query": "로그인", "top_k": top_k}
+    )
 
-    assert fake_drive_source.fetch_call_count == 2
+    assert fake_drive_source.fetch_call_count == _body_fetch_budget(top_k, candidate_count)
+    assert len(result.structured_content["result"]["items"]) == top_k
 
 
 @pytest.mark.asyncio()
@@ -619,16 +644,39 @@ async def test_register_drive_source_change_is_reflected_without_restart(
 
 @pytest.mark.asyncio()
 async def test_get_document_returns_full_content(seeded_mcp: FastMCP) -> None:
-    """원문 조회가 제목·출처·URL·본문을 모두 반환한다."""
+    """원문 조회가 제목·출처·URL·본문·버전을 모두 반환한다."""
     payload = _result(
         await seeded_mcp.call_tool(
             "get_document", {"source": SOURCE_DRIVE, "external_id": "d1"}
         )
     )
 
+    assert set(payload) == {"title", "source", "url", "content", "version"}
     assert payload["content"] == "OAuth 로그인 흐름 상세"
     assert payload["title"] == "로그인 인증 설계서"
     assert payload["source"] == SOURCE_DRIVE
+    assert payload["version"] is None
+
+
+@pytest.mark.asyncio()
+async def test_get_document_and_search_documents_expose_parsed_version(
+    mcp_server: FastMCP, seed_default_project_sources, fake_drive_source
+) -> None:
+    """제목에 버전 표기가 있으면 search_documents/get_document 둘 다 version 을 채워 반환한다."""
+    fake_drive_source.put("d1", "결제 정책 v_1.0", "결제 정책 본문", modified_at=_T1)
+    await mcp_server.call_tool("refresh_index", arguments={})
+
+    search_items = _result(
+        await mcp_server.call_tool("search_documents", {"query": "결제"})
+    )["items"]
+    get_payload = _result(
+        await mcp_server.call_tool(
+            "get_document", {"source": SOURCE_DRIVE, "external_id": "d1"}
+        )
+    )
+
+    assert [i["version"] for i in search_items] == ["v1.0"]
+    assert get_payload["version"] == "v1.0"
 
 
 @pytest.mark.asyncio()

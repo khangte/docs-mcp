@@ -197,6 +197,49 @@ def test_whitespace_variant_query_matches_title_with_space(
     assert [i.title for i in items] == ["트러블슈팅 가이드"]
 
 
+# --- P1: version 필드 파싱(항목3) ----------------------------------------------
+
+
+def test_search_item_includes_version_parsed_from_title(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """검색 결과 아이템에는 title 에서 파싱한 version 이 실린다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서 v_1.0")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert [i.version for i in items] == ["v1.0"]
+
+
+def test_search_item_version_is_none_without_version_marker(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """제목에 버전 표기가 없으면 version 은 None 이다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert [i.version for i in items] == [None]
+
+
+def test_search_ranking_is_unaffected_by_version_presence(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """version 유무는 순위에 영향을 주지 않는다(회귀) — title_score/body_score 계산은
+    version 파싱과 무관하게 그대로다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "versioned", "로그인 설계서 v2.0")
+    _seed_meta(db_session, SOURCE_DRIVE, "unversioned", "로그인 설계서")
+    fake_drive_source.bodies["versioned"] = "로그인 흐름 설명"
+    fake_drive_source.bodies["unversioned"] = "로그인 흐름 설명"
+
+    items = search_service.search("로그인", DocumentSearchOptions(top_k=2))
+
+    assert {i.title for i in items} == {"로그인 설계서 v2.0", "로그인 설계서"}
+    assert len({i.score for i in items}) == 1
+
+
 # --- P1: 본문 fetch 예산(top_k 컷을 2단계 이전으로 당기지 않기 위한 오버스캔) -----
 
 
@@ -747,6 +790,29 @@ def test_get_document_without_cached_meta_still_returns_content(
 
     assert content.content == "캐시에 없는 문서 본문"
     assert content.title == ""
+
+
+def test_get_document_includes_version_parsed_from_title(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """get_document 결과에도 title 에서 파싱한 version 이 실린다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "배포 가이드 v3")
+    fake_drive_source.bodies["d1"] = "본문"
+
+    content = search_service.get_document(SOURCE_DRIVE, "d1")
+
+    assert content.version == "v3"
+
+
+def test_get_document_without_cached_meta_has_none_version(
+    search_service, fake_drive_source
+) -> None:
+    """메타 캐시에 없는 문서는 title 이 빈 문자열이라 version 도 None 이다."""
+    fake_drive_source.bodies["orphan"] = "캐시에 없는 문서 본문"
+
+    content = search_service.get_document(SOURCE_DRIVE, "orphan")
+
+    assert content.version is None
 
 
 def test_get_document_picks_most_recently_synced_project_when_shared(

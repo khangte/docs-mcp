@@ -120,6 +120,7 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
             "url": item.url,
             "snippet": item.snippet,
             "score": item.score,
+            "version": item.version,
         }
         for item in items
     ]
@@ -133,6 +134,7 @@ def _to_document_content_payload(content: DocumentContent) -> DocumentContentPay
         "source": cast(Literal["drive", "notion"], content.source),
         "url": content.url,
         "content": content.content,
+        "version": content.version,
     }
 
 

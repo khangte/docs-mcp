@@ -158,6 +158,7 @@ class DocumentSearchItemPayload(TypedDict):
     url: str
     snippet: str
     score: float
+    version: str | None
 
 
 class DocumentSearchResponse(TypedDict):
@@ -173,6 +174,7 @@ class DocumentContentPayload(TypedDict):
     source: Literal["drive", "notion"]
     url: str
     content: str
+    version: str | None
 
 
 class RegisteredResyncResult(TypedDict):

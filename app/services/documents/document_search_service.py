@@ -44,6 +44,7 @@ from app.services.documents.sources.document_source import (
 from app.services.documents.project_source_resolver import ProjectSourceResolver
 from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
 from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
+from app.services.documents.version_parser import parse_version
 
 _LOG = get_logger("docs_mcp.documents.search")
 
@@ -106,6 +107,8 @@ class DocumentSearchItem:
     url: str
     snippet: str
     score: float
+    #: title 에서 파싱한 버전 표기(예: "v1.0"). 없으면 None — 순위엔 영향 없다.
+    version: str | None
 
 
 @dataclass(frozen=True)
@@ -116,6 +119,8 @@ class DocumentContent:
     source: str
     url: str
     content: str
+    #: title 에서 파싱한 버전 표기(예: "v1.0"). 없으면 None — 순위엔 영향 없다.
+    version: str | None
 
 
 class DocumentSearchService:
@@ -185,8 +190,9 @@ class DocumentSearchService:
             external_id: 출처 시스템의 문서 식별자.
 
         Returns:
-            제목·출처·URL·본문을 담은 DTO. 제목/URL 은 메타 캐시에 있으면 그
-            값을, 없으면 빈 문자열/식별자 기반 기본값을 쓴다.
+            제목·출처·URL·본문·버전을 담은 DTO. 제목/URL 은 메타 캐시에 있으면
+            그 값을, 없으면 빈 문자열/식별자 기반 기본값을 쓴다. version 은
+            title 에서 파싱한 값(`parse_version`)이며 표기 없으면 None.
 
         Raises:
             ValidationError: source 가 허용값이 아니거나 external_id 가 빈 경우.
@@ -202,11 +208,13 @@ class DocumentSearchService:
         project = row.project if row is not None else DEFAULT_PROJECT
         document_source = self._require_source(project, source_str)
         content = document_source.fetch(normalized_id)
+        title = row.title if row else ""
         return DocumentContent(
-            title=row.title if row else "",
+            title=title,
             source=source_str,
             url=row.url if row else "",
             content=content,
+            version=parse_version(title),
         )
 
     def _find_meta_row(self, source: str, external_id: str) -> DocumentMeta | None:
@@ -366,6 +374,7 @@ class DocumentSearchService:
             url=row.url,
             snippet=_build_snippet(body, query_tokens) or _fallback_snippet(row, query),
             score=round(TITLE_SCORE_WEIGHT * title_score + BODY_SCORE_WEIGHT * body_score, 4),
+            version=parse_version(row.title),
         )
 
     # --- 검증 헬퍼 --------------------------------------------------------
