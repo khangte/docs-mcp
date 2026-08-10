@@ -1,6 +1,6 @@
 # 검색 품질 추가 개선 검토 — RRF 도입 이후 (분석)
 
-- 상태: **P1 구현완료**(2026-08-10, 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md`) — **P2~P5는 제안 상태 유지**(lead 판단 대기).
+- 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md` / P5: HNSW ef_search, 커밋 해시 반영 예정, 실행계획 `docs/exec_plans/search-p4-p5-p6-plan.md`) — **P2~P4는 제안 상태 유지**(lead 판단 대기).
 - 일시: 2026-08-10
 - 작성: architect
 - 관련: `docs/search-rrf-reevaluation.md`(RRF 도입·실측), `docs/search-performance-improvements.md`(P1~P6), `docs/vector-store-qdrant-vs-pgvector.md`
@@ -78,7 +78,7 @@ P2(필드 가중 tsvector)는 "필드 희석" 카테고리가 이미 88~100%로 
 - **개선**: `compare_strategies.py` 로 K∈{10,20,40,60,80}·N 스윕 → 지표 최적점 확인.
 - **효과**: 낮음~중(K는 대체로 둔감, 상방 제한적). **난이도**: 낮음(파라미터 루프). **리스크**: **20질의 과적합** — 반드시 **P1 확장 후** 실행. 개선폭 미미하면 K=60 유지(설정 표면 안 늘림, YAGNI).
 
-### P5 — HNSW `ef_search` GUC + 스코프 필터 over-filtering 점검 (규모 의존, 저비용)
+### P5 — HNSW `ef_search` GUC + 스코프 필터 over-filtering 점검 (규모 의존, 저비용) — ✅ 구현완료(커밋 해시 반영 예정, `search_by_vector`에 `SET LOCAL hnsw.ef_search = max(100, top_k)`; `search-performance-improvements.md` P6과 동일 건)
 - **현 문제**: `hnsw.ef_search` 세션 미설정(기본 40=낮은 recall). 또한 벡터 검색이 `candidate_ids IN (...)`(스코프 내 endpoint 청크)로 **post-filter** — HNSW가 ef_search개 후보를 먼저 뽑고 걸러서, 다문서 프로젝트에서 단일 문서로 좁히면 top_k 미만 반환(recall 저하) 가능.
 - **개선**: `SET LOCAL hnsw.ef_search=100`(융합용 넓은 N에 맞춰), pgvector 0.8+면 `hnsw.iterative_scan` 로 over-filtering 해소 검토.
 - **효과**: **현 규모(단일 문서·수백 청크)에선 낮음**(HNSW가 seq scan으로 폴백할 만큼 작음). **다문서/대규모 시 중.** **난이도**: 낮음. **리스크**: recall↔속도 트레이드오프. 지금은 "인지하고 규모 커지면 착수".

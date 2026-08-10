@@ -1,6 +1,6 @@
 # 검색 성능 개선 방안 (분석)
 
-- 상태: **부분 구현 완료**(2026-08-10 갱신) — 상위제안 RRF·P1·P2·P3 구현됨, P4·P5·P6 미구현(제안 유지). 항목별 상태는 각 절 제목 옆 표기 참조.
+- 상태: **전 항목 구현 완료**(2026-08-10 갱신) — 상위제안 RRF·P1~P6 모두 구현됨. 항목별 상태는 각 절 제목 옆 표기 참조.
 - 일시: 2026-08-08
 - 작성: architect
 - 대상 코드: `app/services/search/`, `app/services/documents/`, `app/repositories/chunk_repository.py`, `app/repositories/document_meta_repository.py`
@@ -36,15 +36,15 @@
 - **효과**: 큼. 벽시계 지연이 sum → max 로. **난이도**: 중(ThreadPool/async, 개별 실패 격리 유지).
 - **리스크/트레이드오프**: 동시 요청이 rate limit 을 칠 수 있음 → **동시성 상한** 필수. 에러 격리(한 건 실패가 전체를 죽이지 않음) 현행 동작 보존.
 
-### P4 — document_meta 1단계 ILIKE를 pg_trgm GIN 인덱스로 — ⬜ 미구현(제안 유지, 현재도 `%token%` 선행 와일드카드 ILIKE)
+### P4 — document_meta 1단계 ILIKE를 pg_trgm GIN 인덱스로 — ✅ 구현완료(커밋 해시 반영 예정, `ix_document_meta_title_trgm`·`ix_document_meta_url_trgm` `gin_trgm_ops`)
 - **현 문제**: `title/url ILIKE '%token%'` 선행 와일드카드 → 인덱스 미사용, seq scan.
 - **효과**: 중(메타 캐시 규모 커질 때). **난이도**: 낮음(`pg_trgm` 확장 + GIN 인덱스). **리스크**: 낮음. `collapse`(공백 제거) 패턴 매칭도 함께 인덱싱하려면 표현식 인덱스 추가 검토.
 
-### P5 — 쿼리 임베딩 LRU 캐시 — ⬜ 미구현(제안 유지)
+### P5 — 쿼리 임베딩 LRU 캐시 — ✅ 구현완료(커밋 해시 반영 예정, `LocalEmbeddingProvider` `functools.lru_cache`)
 - **현 문제**: 벡터 경로마다 `embed([query])` 외부 API 호출.
 - **효과**: 낮음~중(반복 질의에서 지연·비용 절감). 단 벡터는 fallback 경로라 호출 빈도 낮음. **난이도**: 낮음. **리스크**: 낮음.
 
-### P6 — HNSW `ef_search` 튜닝 / `candidate IN` 후처리 재검토 — ⬜ 미구현(제안 유지, `docs/search-quality-post-rrf.md` P5와 동일 건)
+### P6 — HNSW `ef_search` 튜닝 / `candidate IN` 후처리 재검토 — ✅ 구현완료(커밋 해시 반영 예정, `search_by_vector`에 `SET LOCAL hnsw.ef_search = max(100, top_k)`; `docs/search-quality-post-rrf.md` P5와 동일 건)
 - HNSW 인덱스는 존재하나 `hnsw.ef_search` 세션 파라미터 미설정(기본 recall). `candidate_ids IN (...)` 는 후보가 많으면 ANN 순회 후 post-filter 로 recall 저하 가능.
 - **효과**: 낮음(현재 벡터가 fallback 이라 영향 제한적). **난이도**: 낮음. **리스크**: recall↔속도 트레이드오프.
 

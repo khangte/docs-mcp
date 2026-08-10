@@ -2,6 +2,7 @@
 
 > **⚠️ 유지보수 안내 — 이 문서는 "살아있는 문서"다.**
 > 검색 로직을 바꾸면 이 문서도 **같은 커밋에서 함께 갱신**해야 한다. 갱신 대상 코드:
+>
 > - `app/services/search/` (엔드포인트 검색: `endpoint_candidate_search.py`, `keyword_search.py`, `vector_search.py`, `rrf.py`, `tokenize.py`)
 > - `app/services/documents/` (협업문서 검색: `document_search_service.py`, `search_scorer.py`, `snippet_generator.py`)
 > - `app/repositories/chunk_repository.py` (FTS·벡터 SQL), `app/repositories/document_meta_repository.py` (문서 메타 ILIKE 필터)
@@ -19,14 +20,14 @@
 
 이 프로젝트에는 **서로 완전히 독립된 두 검색 경로**가 있다. 대상 데이터·저장 방식·랭킹 전략이 다르므로 코드도 서비스도 분리돼 있다.
 
-| 구분 | 엔드포인트 검색 | 협업문서 검색 |
-|---|---|---|
-| 서비스 | `EndpointCandidateSearch` | `DocumentSearchService` |
-| MCP 도구 | `search_endpoints` (`app/mcp/tools/endpoints.py:30`) | `search_documents` (`app/mcp/tools/documents.py:130`) |
-| 대상 데이터 | OpenAPI 문서에서 색인된 **endpoint 청크**(`api_chunk`, DB 내부) | Drive/Notion **협업 문서 본문**(외부 API, 실시간) |
-| 저장·인덱스 | Postgres: FTS(`text_tsv` GIN) + 벡터(`embedding` HNSW) | Postgres 캐시는 **메타(제목/URL)만**, 본문은 미저장 |
-| 랭킹 전략 | **키워드 + 벡터를 RRF로 항상 융합**(기본 `rrf`) | 제목 매칭 1단계 → 본문 fetch 후 점수 2단계 |
-| 특징 | 두 신호 순위 융합, 사내 데이터라 저지연 | 외부 fetch 비용이 커 **후보를 top_k로 압축**한 뒤에만 fetch |
+| 구분        | 엔드포인트 검색                                                 | 협업문서 검색                                               |
+| ----------- | --------------------------------------------------------------- | ----------------------------------------------------------- |
+| 서비스      | `EndpointCandidateSearch`                                       | `DocumentSearchService`                                     |
+| MCP 도구    | `search_endpoints` (`app/mcp/tools/endpoints.py:30`)            | `search_documents` (`app/mcp/tools/documents.py:130`)       |
+| 대상 데이터 | OpenAPI 문서에서 색인된 **endpoint 청크**(`api_chunk`, DB 내부) | Drive/Notion **협업 문서 본문**(외부 API, 실시간)           |
+| 저장·인덱스 | Postgres: FTS(`text_tsv` GIN) + 벡터(`embedding` HNSW)          | Postgres 캐시는 **메타(제목/URL)만**, 본문은 미저장         |
+| 랭킹 전략   | **키워드 + 벡터를 RRF로 항상 융합**(기본 `rrf`)                 | 제목 매칭 1단계 → 본문 fetch 후 점수 2단계                  |
+| 특징        | 두 신호 순위 융합, 사내 데이터라 저지연                         | 외부 fetch 비용이 커 **후보를 top_k로 압축**한 뒤에만 fetch |
 
 조립은 `app/composition.py`의 `build_services()`에서 이뤄진다(`candidate_search` 라인 209, `document_search_service` 라인 245).
 
@@ -34,7 +35,8 @@
 
 ## 2. 엔드포인트 검색 — 키워드 + 벡터 RRF 융합
 
-`EndpointCandidateSearch.search` (`app/services/search/endpoint_candidate_search.py:108`)가 진입점이다. **후보 식별 정보만**(endpoint_id·method·path·summary·match_type) 반환하고, 상세(파라미터·응답)는 `get_endpoint_details`가 담당한다.
+`EndpointCandidateSearch.search` (`app/services/search/endpoint_candidate_search.py:108`)가 진입점이다.
+**후보 식별 정보만**(endpoint_id·method·path·summary·match_type) 반환하고, 상세(파라미터·응답)는 `get_endpoint_details`가 담당한다.
 
 ### 2.1 전략 두 가지
 
@@ -57,8 +59,8 @@
    - 결과에서 `ref_id`(=endpoint_id) 순위 리스트를 뽑는다.
 5. **벡터 arm(pgvector HNSW)** — 벡터 arm이 활성(`vector_fallback_enabled=True`, 즉 `is_semantic` 임베딩)일 때만:
    - `chunk_repo.list_endpoint_chunk_ids` (`chunk_repository.py:100`)로 스코프 내 endpoint 청크 ID 집합을 가볍게 조회(후보 제한용).
-   - `VectorSearch.search` (`vector_search.py:32`): 질의를 `embedding_provider.embed_query`로 임베딩(로컬 `multilingual-e5-small`, `query:` 접두사 — `embedding_provider.py:146`).
-   - `chunk_repo.search_by_vector` (`chunk_repository.py:241`): pgvector 코사인 거리(`<=>`, `embedding` 컬럼의 **HNSW 인덱스** `ix_api_chunk_embedding_hnsw`/`vector_cosine_ops`)로 top-N, 유사도=`1-거리`. `ref_id`를 SQL로 함께 프로젝션(역매핑용 전체 적재 불필요). `candidate_ids IN (...)`로 후보 제한.
+   - `VectorSearch.search` (`vector_search.py:32`): 질의를 `embedding_provider.embed_query`로 임베딩(로컬 `multilingual-e5-small`, `query:` 접두사 — `embedding_provider.py:146`). 로컬 provider는 같은 질의 재임베딩을 피하려 **쿼리 임베딩을 LRU 캐시**한다(`LocalEmbeddingProvider`, `functools.lru_cache`, 장수 `AppState`에 상주).
+   - `chunk_repo.search_by_vector` (`chunk_repository.py:245`): 쿼리 실행 직전 `SET LOCAL hnsw.ef_search = max(100, top_k)`(`_HNSW_EF_SEARCH=100`, 트랜잭션 스코프)로 넓은 후보폭에서도 HNSW recall을 확보한다. 이어 pgvector 코사인 거리(`<=>`, `embedding` 컬럼의 **HNSW 인덱스** `ix_api_chunk_embedding_hnsw`/`vector_cosine_ops`)로 top-N, 유사도=`1-거리`. `ref_id`를 SQL로 함께 프로젝션(역매핑용 전체 적재 불필요). `candidate_ids IN (...)`로 후보 제한.
    - 점수 0 이하 후보는 제외하고 `ref_id` 순위 리스트를 뽑는다.
    - 벡터 arm 비활성(해시 폴백 등 `is_semantic=False`)이면 이 단계를 조용히 생략하고 **키워드 단독 순위로 degrade**.
 6. **RRF 융합** — `reciprocal_rank_fuse` (`rrf.py:42`)
@@ -102,7 +104,7 @@ flowchart TD
 1. **검증·소스 구성 확인** — `_validate`/`_validate_source`/`_require_configured` (`:338`~). "결과 0건"과 "소스 미설정"을 구분하기 위해, 소스가 하나도 구성 안 됐으면 `IntegrationError`.
 2. **질의 토큰화** — `documents_tokenize`(`search_scorer.py`)로 질의 토큰 집합 생성.
 3. **필터 토큰 확장** — 호출자(Claude)가 넘긴 `query_variants`(동의어)를 `_variant_tokens`(`:207`)로 토큰화해 **1단계 SQL 후보 필터에만** 합친다. 서버는 자체 LLM 질의 확장을 하지 않는다(그 판단은 호출측 모델의 몫). **점수 계산은 항상 원본 질의 토큰만** 사용.
-4. **SQL 후보 조회** — `meta_repo.search_by_tokens` (`document_meta_repository.py:~90`): `document_meta`의 title/url에 대해 토큰별 `ILIKE '%token%'` 를 OR로 결합(+ 공백 제거 `collapse` 패턴도 OR). 스코프(source/project)는 SQL WHERE. `(source, external_id)` 순 결정적 정렬. **점수·순위는 SQL이 아니라 Python이** 정한다(SQL은 "가능성 있는 행"만 좁힘).
+4. **SQL 후보 조회** — `meta_repo.search_by_tokens` (`document_meta_repository.py:~90`): `document_meta`의 title/url에 대해 토큰별 `ILIKE '%token%'` 를 OR로 결합(+ 공백 제거 `collapse` 패턴도 OR). title/url에는 **pg_trgm GIN 인덱스**(`ix_document_meta_title_trgm`/`ix_document_meta_url_trgm`, `gin_trgm_ops`)가 걸려 있어 선행 와일드카드 ILIKE도 인덱스로 처리된다(캐시 규모가 커질 때 seq scan 회피). 스코프(source/project)는 SQL WHERE. `(source, external_id)` 순 결정적 정렬. **점수·순위는 SQL이 아니라 Python이** 정한다(SQL은 "가능성 있는 행"만 좁힘).
 5. **후보 점수·정렬·컷** — `_select_candidates` (`:217`): `_title_score`(원본 토큰만)로 채점 후 (원본 매치 여부 내림차순, title_score 내림차순, external_id) 정렬 → **상위 top_k만** 남긴다. top_k는 2단계 fetch 예산 상한이므로, 원본 신호 있는 행이 먼저 자리를 채우고 variant-only 매치는 남는 자리만 채운다.
 6. **후보 0건이면 즉시 종료** — 외부 API를 **한 번도 호출하지 않고** 빈 리스트 반환(`:144`).
 
