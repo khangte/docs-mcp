@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sqlalchemy import text
 from sqlalchemy.orm import attributes
 
 from app.models.openapi import EMBEDDING_DIM, ApiChunk, ApiDocument
@@ -350,6 +351,29 @@ def test_search_by_vector_returns_ref_id(db_session) -> None:
     assert len(hits) == 1
     assert hits[0].chunk_id == "chunk-1"
     assert hits[0].ref_id == "ep-1"
+
+
+# --- P6: search_by_vector 의 hnsw.ef_search 세션 GUC 설정 ---------------------
+
+
+def test_search_by_vector_sets_hnsw_ef_search_floor(db_session) -> None:
+    """벡터 검색 시 hnsw.ef_search 를 모듈 상수(100) 이상으로 설정한다."""
+    repo = ChunkRepository(db_session)
+
+    repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
+
+    value = db_session.execute(text("SHOW hnsw.ef_search")).scalar()
+    assert int(value) == 100
+
+
+def test_search_by_vector_ef_search_at_least_top_k(db_session) -> None:
+    """top_k 가 기본 하한(100)보다 크면 ef_search 도 top_k 이상으로 맞춘다."""
+    repo = ChunkRepository(db_session)
+
+    repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=150)
+
+    value = db_session.execute(text("SHOW hnsw.ef_search")).scalar()
+    assert int(value) == 150
 
 
 # --- RRF: list_endpoint_chunk_ids(전체 로우 미적재 스코프 조회) ----------------
