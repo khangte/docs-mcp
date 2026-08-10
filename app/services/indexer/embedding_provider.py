@@ -9,6 +9,7 @@ SentenceTransformer 를 돌려 실제 의미 유사도를 갖는 벡터를 만�
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import math
 from collections.abc import Sequence
@@ -23,6 +24,9 @@ from app.services.search.tokenize import tokenize
 #: 공간에서 비교되지 않아 벡터 검색 품질이 무너진다.
 _PASSAGE_PREFIX = "passage: "
 _QUERY_PREFIX = "query: "
+
+#: LocalEmbeddingProvider.embed_query 결과 캐시 크기(질의 문자열 기준).
+_QUERY_CACHE_SIZE = 256
 
 
 class _SentenceEncoder(Protocol):
@@ -124,6 +128,9 @@ class LocalEmbeddingProvider:
         self._encoder: _SentenceEncoder = (
             encoder if encoder is not None else SentenceTransformer(model_name, device="cpu")
         )
+        self._embed_query_cached = functools.lru_cache(maxsize=_QUERY_CACHE_SIZE)(
+            self._embed_query_uncached
+        )
 
     @property
     def dim(self) -> int:
@@ -144,7 +151,11 @@ class LocalEmbeddingProvider:
         return [list(vector) for vector in vectors]
 
     def embed_query(self, text: str) -> list[float]:
-        """질의 텍스트에 "query: " 접두사를 붙여 인코딩한다."""
+        """질의 텍스트에 "query: " 접두사를 붙여 인코딩한다(원본 질의 기준 LRU 캐시 적용)."""
+        return list(self._embed_query_cached(text))
+
+    def _embed_query_uncached(self, text: str) -> list[float]:
+        """캐시를 거치지 않고 질의 텍스트를 실제로 인코딩한다."""
         vectors = self._encoder.encode([_QUERY_PREFIX + text], normalize_embeddings=True)
         return list(vectors[0])
 

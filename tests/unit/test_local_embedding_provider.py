@@ -87,6 +87,51 @@ def test_returned_vectors_are_l2_normalized() -> None:
     assert abs(norm - 1.0) < 1e-6
 
 
+def test_embed_query_caches_same_query_and_skips_re_encoding() -> None:
+    """같은 질의로 두 번 호출하면 인코더는 한 번만 불린다."""
+    # Arrange
+    encoder = _FakeEncoder()
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    # Act
+    first = provider.embed_query("로그인")
+    second = provider.embed_query("로그인")
+
+    # Assert
+    assert encoder.encode_calls == [["query: 로그인"]]
+    assert first == second
+
+
+def test_embed_query_different_queries_are_encoded_separately() -> None:
+    """다른 질의는 각각 인코딩된다(캐시가 과도하게 뭉개지 않음)."""
+    # Arrange
+    encoder = _FakeEncoder()
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    # Act
+    provider.embed_query("로그인")
+    provider.embed_query("로그아웃")
+
+    # Assert
+    assert encoder.encode_calls == [["query: 로그인"], ["query: 로그아웃"]]
+
+
+def test_embed_query_returns_defensive_copy_not_shared_with_cache() -> None:
+    """반환된 벡터를 호출측이 변형해도 캐시된 값·다음 호출 결과에 영향 없다."""
+    # Arrange
+    encoder = _FakeEncoder()
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    # Act
+    first = provider.embed_query("로그인")
+    first[0] = 999.0
+    second = provider.embed_query("로그인")
+
+    # Assert
+    assert second[0] != 999.0
+    assert encoder.encode_calls == [["query: 로그인"]]
+
+
 @pytest.mark.slow
 def test_semantic_similarity_ranks_related_pair_higher() -> None:
     """실제 모델(다국어 E5)을 로드해 의미 유사도가 실제로 동작하는지 확인한다.
