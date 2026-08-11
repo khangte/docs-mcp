@@ -25,6 +25,20 @@ class EndpointRepository:
         """ID 로 엔드포인트를 조회한다."""
         return self._session.get(ApiEndpoint, endpoint_id)
 
+    def get_many(self, endpoint_ids: Sequence[str]) -> dict[str, ApiEndpoint]:
+        """여러 ID 를 `WHERE id IN (...)` 한 번으로 배치 조회한다.
+
+        검색 결과 후보(top_k 개)를 결과당 `get()` 으로 반복 조회하던
+        N+1 패턴을 없애기 위한 메서드다. 없는 ID 는 반환 매핑에서 조용히
+        빠진다(호출측이 존재 여부를 판단). 빈 입력은 쿼리 없이 빈 매핑을
+        돌려준다(`IN ()` 은 무의미한 왕복이다).
+        """
+        if not endpoint_ids:
+            return {}
+        stmt = select(ApiEndpoint).where(ApiEndpoint.id.in_(endpoint_ids))
+        rows = self._session.execute(stmt).scalars().all()
+        return {row.id: row for row in rows}
+
     def list_by_document(self, document_id: str) -> Sequence[ApiEndpoint]:
         """특정 문서의 엔드포인트 목록을 반환한다."""
         stmt = select(ApiEndpoint).where(ApiEndpoint.document_id == document_id)

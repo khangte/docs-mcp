@@ -353,6 +353,56 @@ def test_search_by_vector_returns_ref_id(db_session) -> None:
     assert hits[0].ref_id == "ep-1"
 
 
+# --- Q2: search_by_vector 의 chunk_type='endpoint' SQL 필터 ------------------
+
+
+def test_search_by_vector_excludes_non_endpoint_chunks_without_candidate_ids(
+    db_session,
+) -> None:
+    """candidate_ids 없이도 schema 청크는 벡터 검색 결과에서 제외된다.
+
+    이전에는 `candidate_ids`(endpoint 청크 ID 집합)가 "endpoint 만 남기는
+    필터"를 겸했다. 전역 스코프에서는 candidate_ids 를 아예 넘기지 않게
+    되므로(Q2), SQL 자체에 chunk_type 조건이 없으면 schema 청크가 섞여
+    들어온다.
+    """
+    document = ApiDocument(
+        id="doc-1",
+        project="default",
+        source_url=None,
+        title="샘플 문서",
+        content_hash="hash",
+        raw_text="{}",
+    )
+    db_session.add(document)
+    db_session.add(
+        ApiChunk(
+            id="chunk-endpoint",
+            document_id="doc-1",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.add(
+        ApiChunk(
+            id="chunk-schema",
+            document_id="doc-1",
+            chunk_type="schema",
+            ref_id="schema-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
+
+    assert [h.chunk_id for h in hits] == ["chunk-endpoint"]
+
+
 # --- P6: search_by_vector 의 hnsw.ef_search 세션 GUC 설정 ---------------------
 
 

@@ -302,6 +302,58 @@ def test_vector_fallback_disabled_still_returns_keyword_results(
     assert all(c.match_type == "keyword" for c in candidates)
 
 
+# --- Q2: 전역 스코프면 벡터 arm 에 candidate_ids=None 을 전달 ------------------
+
+
+def test_global_scope_passes_no_candidate_ids_to_vector_search(
+    app_state, sample_openapi_3: str
+) -> None:
+    """document_id/project 모두 없으면(전역) 벡터 arm 에 candidates=None 을 넘긴다.
+
+    이전에는 전역 스코프에서도 `list_endpoint_chunk_ids()` 로 endpoint 청크
+    ID 전체를 앱 메모리에 적재해 `candidate_ids` 로 넘겼다 — chunk_type
+    필터가 SQL 로 내려간 지금은(Q2) 그 전량 로드가 불필요한 낭비다.
+    """
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    stub = StubVectorSearch([], score=0.9)
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=KeywordSearch(bundle.chunk_repo),
+        vector_search=stub,
+        document_repo=bundle.document_repo,
+    )
+
+    search.search("find pet by id", CandidateSearchOptions(top_k=5))
+
+    assert stub.call_count == 1
+    assert stub.last_candidates is None
+
+
+def test_narrow_scope_still_passes_candidate_ids_to_vector_search(
+    app_state, sample_openapi_3: str
+) -> None:
+    """document_id 로 스코프를 좁히면 여전히 candidate_ids(IN 목록)를 넘긴다."""
+    document_id = _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    stub = StubVectorSearch([], score=0.9)
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=KeywordSearch(bundle.chunk_repo),
+        vector_search=stub,
+        document_repo=bundle.document_repo,
+    )
+
+    search.search(
+        "find pet by id", CandidateSearchOptions(top_k=5, document_id=document_id)
+    )
+
+    assert stub.call_count == 1
+    assert stub.last_candidates is not None
+
+
 # --- RRF 융합: match_type="both" --------------------------------------------
 
 

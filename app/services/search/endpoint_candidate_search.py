@@ -154,8 +154,10 @@ class EndpointCandidateSearch:
 
         vector_ref_ids: list[str] = []
         if self._vector_fallback_enabled:
-            candidate_ids = self._chunk_repo.list_endpoint_chunk_ids(
-                document_id=document_id, project=project
+            candidate_ids = (
+                self._chunk_repo.list_endpoint_chunk_ids(document_id=document_id, project=project)
+                if document_id is not None or project is not None
+                else None
             )
             vector_hits = self._vector_search.search(query, top_k=width, candidates=candidate_ids)
             vector_ref_ids = [h.ref_id for h in vector_hits if h.score > 0.0]
@@ -220,13 +222,18 @@ class EndpointCandidateSearch:
     def _to_candidates(
         self, ordered_ref_ids: list[str], match_type: MatchType, top_k: int
     ) -> list[EndpointCandidate]:
-        """엔드포인트 ID 순서를 유지한 채 후보 DTO 로 변환한다(중복·유실 제거)."""
+        """엔드포인트 ID 순서를 유지한 채 후보 DTO 로 변환한다(중복·유실 제거).
+
+        결과당 `get()` 을 반복하던 N+1 을 `get_many()` 배치 조회 한 번으로
+        대체한다(Q3).
+        """
+        endpoints = self._endpoint_repo.get_many(ordered_ref_ids)
         candidates: list[EndpointCandidate] = []
         seen: set[str] = set()
         for endpoint_id in ordered_ref_ids:
             if endpoint_id in seen:
                 continue
-            endpoint = self._endpoint_repo.get(endpoint_id)
+            endpoint = endpoints.get(endpoint_id)
             if endpoint is None:
                 _LOG.warning("청크가 참조하는 엔드포인트를 찾을 수 없음: %s", endpoint_id)
                 continue
@@ -247,10 +254,15 @@ class EndpointCandidateSearch:
     def _to_candidates_from_fused(
         self, fused: list[FusedResult]
     ) -> list[EndpointCandidate]:
-        """RRF 융합 결과(ref_id + match_type)를 후보 DTO 로 변환한다."""
+        """RRF 융합 결과(ref_id + match_type)를 후보 DTO 로 변환한다.
+
+        결과당 `get()` 을 반복하던 N+1 을 `get_many()` 배치 조회 한 번으로
+        대체한다(Q3).
+        """
+        endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
         candidates: list[EndpointCandidate] = []
         for item in fused:
-            endpoint = self._endpoint_repo.get(item.ref_id)
+            endpoint = endpoints.get(item.ref_id)
             if endpoint is None:
                 _LOG.warning("청크가 참조하는 엔드포인트를 찾을 수 없음: %s", item.ref_id)
                 continue

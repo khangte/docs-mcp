@@ -115,6 +115,8 @@ class StubVectorSearch:
         self._chunks = list(chunks)
         self._score = score
         self.call_count = 0
+        #: 마지막 호출에 전달된 candidates(Q2: 전역 스코프면 None 이어야 한다).
+        self.last_candidates: set[str] | None = None
 
     def search(
         self,
@@ -124,6 +126,7 @@ class StubVectorSearch:
     ) -> list[VectorSearchHit]:
         """보관한 (청크 ID, ref_id) 를 고정 점수로 top_k 만큼 반환한다."""
         self.call_count += 1
+        self.last_candidates = candidates
         allowed = [
             (chunk_id, ref_id)
             for chunk_id, ref_id in self._chunks

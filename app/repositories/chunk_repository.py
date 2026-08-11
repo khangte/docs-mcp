@@ -250,7 +250,11 @@ class ChunkRepository:
     ) -> list[ChunkVectorHit]:
         """pgvector 코사인 거리(`<=>`)로 top_k 를 유사도 내림차순으로 반환한다.
 
-        `candidate_ids` 가 주어지면 그 안의 청크만 고려한다.
+        `candidate_ids` 가 주어지면 그 안의 청크만 고려한다. `chunk_type` 은
+        `candidate_ids` 유무와 무관하게 항상 SQL 로 `endpoint` 로 제한한다
+        (Q2: 이전에는 `candidate_ids` 가 "endpoint 만 남기는 필터"를 겸했는데,
+        전역 스코프에서 `candidate_ids=None` 을 넘기게 되면서 SQL 자체에
+        조건이 없으면 schema 청크가 섞여 들어온다).
         코사인 거리는 [0, 2] 범위이므로 유사도 = 1 - 거리 로 변환한다.
         `ref_id` 를 함께 SQL 로 프로젝션해(`ApiChunk.ref_id`, 조인 불필요),
         호출측이 chunk_id → ref_id 를 역매핑하려고 전체 청크를 메모리에
@@ -266,6 +270,7 @@ class ChunkRepository:
         distance = ApiChunk.embedding.cosine_distance(query_vector)
         stmt = (
             select(ApiChunk.id, ApiChunk.ref_id, distance.label("distance"))
+            .where(ApiChunk.chunk_type == "endpoint")
             .where(ApiChunk.embedding.is_not(None))
         )
         if candidate_ids is not None:
