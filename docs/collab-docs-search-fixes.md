@@ -1,6 +1,6 @@
 # 협업 문서(Drive/Notion) 검색 수정사항 — Notion 검색 실패 사례 검토 후속
 
-- 상태: **착수**
+- 상태: **완료**(항목 1~5 구현 완료, 항목 6은 기각·구현 되돌림 — 아래 상태 표 참조)
 - 일시: 2026-08-10
 - 작성: lead
 - 배경: uhok-sonata 프로젝트에서 `search_documents`로 유사상품 추천 로직 문서를 찾을 때,
@@ -15,12 +15,12 @@
 
 | # | 우선순위 | 내용 | 상태 |
 |---|---|---|---|
-| 1 | P0 | `collapse` 매칭이 `query_variants`를 반영하지 않음 | 대기 |
-| 2 | P1 | top_k 컷이 제목 점수만으로 2단계 이전에 발생 | 대기 |
-| 3 | P1 | `version` 필드/개념 부재 | 대기 |
-| 4 | P2 | `get_document`가 title/url을 빈 문자열로 반환 | 대기 |
-| 5 | P2 | 본문 절단 시 `truncated` 플래그 없음 | 대기 |
-| 6 | P3 | score 0 결과가 필터 없이 반환됨 | **기각(전제 불성립)** |
+| 1 | P0 | `collapse` 매칭이 `query_variants`를 반영하지 않음 | 완료(`ced07c7`) |
+| 2 | P1 | top_k 컷이 제목 점수만으로 2단계 이전에 발생 | 완료(`3d8297a`) |
+| 3 | P1 | `version` 필드/개념 부재 | 완료(`7f04caa`) |
+| 4 | P2 | `get_document`가 title/url을 빈 문자열로 반환 | 완료(`b96da11`) |
+| 5 | P2 | 본문 절단 시 `truncated` 플래그 없음 | 완료(`b96da11`) |
+| 6 | P3 | score 0 결과가 필터 없이 반환됨 | **기각(전제 불성립, `60e0876`)** |
 
 ## 항목별 상세
 
@@ -45,7 +45,7 @@
   - **영향 범위**: 프로덕션 호출부는 `_select_candidates` 하나뿐. 나머지는 저장소 단위
     테스트(`test_document_meta_repository.py`의 `query=` kwarg 사용부)로, 구현 시
     `queries=[...]`로 함께 갱신. docstring의 `query` 인자 계약도 `queries`로 개정.
-- 수정: 완료 대기
+- 수정: 완료(커밋 `ced07c7`)
 
 ### 2. top_k 컷이 제목 점수만으로 2단계 이전에 발생 (P1)
 
@@ -102,7 +102,7 @@
   - 테스트: fetch 예산 경계(top_k=5→15, top_k=10→20 cap, top_k>cap→top_k),
     "title_score=0·body 강함" 문서가 최종 top_k에 진입하는 회귀 케이스,
     후보<top_k일 때 budget=candidate_count 확인.
-- 수정: 완료 대기
+- 수정: 완료(커밋 `3d8297a`)
 
 ### 3. version 필드/개념 부재 (P1)
 
@@ -158,7 +158,7 @@
   - 테스트: `parse_version` 단위(정상 `v_1.0`/`v2`/`V 3.1`, 단어 내부 v 배제,
     다중 매치 시 마지막, 표기 없음→None), 검색/조회 payload에 `version` 키가
     실리고 버전 없는 문서는 null인지, 순위가 version에 영향받지 않는지 회귀.
-- 수정: 완료 대기
+- 수정: 완료(커밋 `7f04caa`)
 
 ### 4. get_document가 title/url을 빈 문자열로 반환 (P2)
 
@@ -200,7 +200,7 @@
     `truncated`가 추가되므로 편집이 겹치는 점만 developer가 함께 처리.
   - 테스트: 메타 행 없음 → `content`는 fetch 값, `title`/`url`은 `""`,
     예외 없이 반환됨을 명시하는 회귀 테스트(계약 고정).
-- 수정: 완료 대기
+- 수정: 완료(커밋 `b96da11`)
 
 ### 5. 본문 절단 시 truncated 플래그 없음 (P2)
 
@@ -250,7 +250,7 @@
   - 테스트: 어댑터가 `max_chars` 초과 시 `truncated=True`·경계(정확히 max_chars면
     False), `get_document` payload에 `truncated` 전파, search 결과는 truncated에
     영향받지 않음(회귀).
-- 수정: 완료 대기
+- 수정: 완료(커밋 `b96da11`)
 
 ### 6. score 0 결과가 필터 없이 반환됨 (P3)
 
@@ -330,4 +330,5 @@
   - 테스트: title=0·body=0 문서가 결과에서 제외됨, 양의 점수 문서는 유지됨,
     모든 후보가 0점이면 `[]` 반환, 0점이 top_k 자리를 차지하지 않는지(컷과의
     순서) 회귀.
-- 수정: 완료 대기
+- 수정: **기각·구현 되돌림**(커밋 `60e0876`) — 위 "설계 재검토" 참조. 이 원안은
+  실행되지 않았다.

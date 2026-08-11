@@ -1,5 +1,7 @@
 # `services/documents/` 경계 정리 방안
 
+**상태**: 제안 1·3 실행 완료(각각 커밋 `12d7684`, `9c8e49c`). 제안 2(개명)만 미착수로 남아 있다.
+
 ## 배경
 
 `app/services/` 는 문서타입별이 아니라 **처리 계층(파이프라인 단계)별**로 나뉜다.
@@ -30,24 +32,26 @@ A 와 B 는 같은 "협업문서(Drive/Notion)" 세계에 속해 응집이 높�
 - `tags/tag_catalog_service.py`
 
 즉 **등록형 API 문서 파이프라인 전반이 쓰는 공용 유틸**인데 `documents/`(협업문서
-전용 디렉토리) 밑에 있다. 이게 "`documents/` 가 문서 전반을 관장한다"는 착시의
-가장 큰 원인이다. project 정규화는 협업문서와 무관하며, 특정 도메인에 속하지 않는다.
+전용 디렉토리) 밑에 있었다. 이게 "`documents/` 가 문서 전반을 관장한다"는 착시의
+가장 큰 원인이었다. project 정규화는 협업문서와 무관하며, 특정 도메인에 속하지 않는다.
 
 ## 제안
 
-### 제안 1 (핵심) — `project_scope.py` 를 공용 위치로 이동
+### 제안 1 (핵심, 완료) — `project_scope.py` 를 공용 위치로 이동
 
-`app/services/documents/project_scope.py` → `app/core/project_scope.py`
-(또는 `app/services/project_scope.py`).
+**실행 완료(커밋 `12d7684`)**: `app/services/documents/project_scope.py` →
+`app/services/project_scope.py` (services 최상위 — 아래 절충안 채택).
 
 - **근거**: 6개 서로 다른 파이프라인이 공유하는, 도메인 중립 정규화 규칙.
-  협업문서 디렉토리에 둘 이유가 없다. `app/core/` 에는 이미 `errors`, `logging`,
-  `config` 같은 횡단 관심사가 모여 있어 자연스럽다.
-- **영향**: import 경로 변경 5곳(사용처 4 + `documents/` 내부 사용처). 동작 변경 없음.
-- **주의**: `project_scope` 는 `app.models.openapi.PROJECT_MAX_LENGTH` 와
-  `DocumentRepository` 를 참조한다. `app/core/` 로 옮기면 core→models/repositories
-  방향 의존이 생긴다. 이 방향이 프로젝트 레이어링상 허용되는지 확인 필요.
-  꺼려지면 **`app/services/project_scope.py`**(services 최상위)가 무난한 절충.
+  협업문서 디렉토리에 둘 이유가 없다.
+- **영향**: import 경로 변경(사용처: `tags/tag_catalog_service.py`,
+  `search/endpoint_candidate_search.py`, `ingestor/sync_service.py`,
+  `schema_resolution/schema_ref_resolver.py`, `documents/project_source_service.py`).
+  동작 변경 없음.
+- **주의였던 점**: `project_scope` 는 `app.models.openapi.PROJECT_MAX_LENGTH` 와
+  `DocumentRepository` 를 참조해 `app/core/` 이동 시 core→models/repositories
+  역방향 의존 문제가 있었다. 그래서 **`app/services/project_scope.py`**(services
+  최상위)로 절충해 실행했다.
 
 ### 제안 2 — `documents/` 를 도메인 이름으로 개명
 
@@ -63,19 +67,18 @@ A 와 B 는 같은 "협업문서(Drive/Notion)" 세계에 속해 응집이 높�
 - **트레이드오프**: 변경 범위가 제안 1보다 크다. 제안 1만으로도 착시의 주원인
   (공용 유틸의 오배치)은 해소되므로, **제안 2는 선택 사항**으로 둔다.
 
-### 제안 3 (즉시) — 빈 `schemas/` 디렉토리 제거
+### 제안 3 (즉시, 완료) — 빈 `schemas/` 디렉토리 제거
 
-`app/services/schemas/` 는 비어 있다(`schema_resolution/` 로 개명한 잔재, 커밋 3dbcbce).
-`services/` 목록에서 유령 디렉토리로 남아 혼란을 준다. 즉시 삭제 가능.
+**실행 완료(커밋 `9c8e49c`)**. `app/services/schemas/` 는 `schema_resolution/` 로
+개명한 잔재로 비어 있었고(커밋 3dbcbce), `services/` 목록의 유령 디렉토리를
+없애기 위해 삭제했다.
 
-## 권고 실행 순서
-
-1. **제안 3** — 빈 `schemas/` 삭제 (리스크 0, 즉시)
-2. **제안 1** — `project_scope` 를 공용 위치로 이동 (착시의 주원인 해소, 저리스크)
-3. **제안 2** — `documents/` → `collab_docs/` 개명 (원하면; 범위 큼, 순수 개명)
+## 남은 것 — 제안 2 (미착수)
 
 제안 1·3만으로 "`documents/` 가 문서 전반을 담당한다"는 오해의 실질적 뿌리는
-제거된다. 제안 2는 이름의 정확성을 위한 선택적 마감이다.
+이미 제거됐다. 제안 2(`documents/` → `collab_docs/` 개명, 위 "제안 2" 절 참조)는
+이름의 정확성을 위한 선택 사항으로 아직 미착수다 — 원하면 착수, 아니면 보류해도
+무방하다(트레이드오프는 위 제안 2 절 참조).
 
 ## 하지 않는 것
 

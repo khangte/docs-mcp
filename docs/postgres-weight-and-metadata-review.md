@@ -59,7 +59,7 @@
 - `ApiChunk.text` — FTS substrate·재임베딩(`reembed`)·표시. **필수.**
 - `ApiChunk.embedding` — 벡터 검색. **필수.**
 - `ApiDocument.project` — 프로젝트 scope JOIN(`ix_api_document_project`). **필수.**
-- `ApiDocument.raw_text` — `endpoints.py:197`(원문 반환 도구)·`sync_service`(재파싱 비교)에서 **읽음**. 업로드 문서는 재fetch 소스가 없어 **유일 원본**이라 대체 불가. 크지만 필수.
+- `ApiDocument.raw_text` — `endpoints.py:198`(원문 반환 도구)·`sync_service`(재파싱 비교)에서 **읽음**. 업로드 문서는 재fetch 소스가 없어 **유일 원본**이라 대체 불가. 크지만 필수.
 - `ApiDocument.content_hash` — 변경 감지로 불필요 재색인 skip(`sync_service` 다수). **필수.**
 - `ApiEndpoint.summary`/`method`/`path`/`description`/`tags_json` — 후보/상세 출력·필터. **필수.**
 - `ApiParameter`/`ApiResponse`/`ApiRequestBody`/`ApiSchema` 의 `schema_json`/`example_json` 등 — `get_endpoint_details` 상세 구성. **필수.**

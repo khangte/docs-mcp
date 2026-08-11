@@ -10,7 +10,11 @@
 두 개의 독립된 검색 경로가 있다.
 
 ### 1) OpenAPI 엔드포인트 검색 — `EndpointCandidateSearch`
-- 전략: **키워드 우선 + 벡터 보조**. 키워드 결과가 정확히 0건일 때만 벡터 검색을 호출한다(SPEC Phase 0 결정 6).
+- 전략(작성 당시, 2026-08-08): **키워드 우선 + 벡터 보조**. 키워드 결과가 정확히 0건일 때만 벡터 검색을 호출한다(SPEC Phase 0 결정 6).
+  ⚠️ **이후 RRF가 기본 전략으로 전환돼 이 서술은 더 이상 현재 동작이 아니다** — 지금 기본값은
+  **키워드·벡터 두 arm을 항상 병렬 실행해 RRF로 융합**(`search_strategy: str = "rrf"`,
+  `endpoint_candidate_search.py:80`, 클래스 docstring `:69`)이며, 여기 서술된 "0건일 때만 벡터"는
+  롤백 스위치인 `fallback` 전략으로 격하됐다(아래 "RRF" 절 및 `docs/search-rrf-reevaluation.md` 참조).
 - `list_endpoint_chunks()` 가 `select(ApiChunk)` 로 endpoint 청크 **전 행을 적재**(256차원 `embedding` 벡터 컬럼 포함) → `KeywordSearch` 가 Python 레벨에서 **매 질의마다 모든 청크 텍스트를 재토큰화**해 겹침 비율 점수 계산.
 - 벡터 검색: pgvector 코사인 거리(`<=>`). **HNSW 인덱스는 이미 존재**(`ix_api_chunk_embedding_hnsw`, `vector_cosine_ops`). `candidate_ids IN (...)` 로 후보를 제한.
 
@@ -35,6 +39,12 @@
 - **현 문제**: top_k 개 외부(Drive/Notion) fetch 를 순차 루프 → 지연이 **합산**됨(top_k=5면 5회 왕복 직렬).
 - **효과**: 큼. 벽시계 지연이 sum → max 로. **난이도**: 중(ThreadPool/async, 개별 실패 격리 유지).
 - **리스크/트레이드오프**: 동시 요청이 rate limit 을 칠 수 있음 → **동시성 상한** 필수. 에러 격리(한 건 실패가 전체를 죽이지 않음) 현행 동작 보존.
+- **후속 수정(커밋 `3d8297a`)**: 2단계로 넘기는 후보 수를 top_k 그대로 쓰면 title_score만으로 조기 컷돼
+  본문에서만 강하게 매칭되는 문서가 fetch 기회조차 못 받는 결함이 있었다. `_body_fetch_budget(top_k,
+  candidate_count)`(`document_search_service.py:52-76`)가 top_k보다 넓은 **fetch 예산**
+  (`overscan = min(top_k*3, 20)`, `budget = min(max(top_k, overscan), candidate_count)`)을 계산해
+  1단계 컷을 대신하고, 최종 top_k 컷은 본문 점수까지 반영한 2단계 뒤로 미뤄졌다(`docs/collab-docs-search-fixes.md`
+  항목 2 참조). P3의 병렬화 자체(동시성 상한 5)는 그대로다.
 
 ### P4 — document_meta 1단계 ILIKE를 pg_trgm GIN 인덱스로 — ✅ 구현완료(커밋 `21522e8`, `ix_document_meta_title_trgm`·`ix_document_meta_url_trgm` `gin_trgm_ops`)
 - **현 문제**: `title/url ILIKE '%token%'` 선행 와일드카드 → 인덱스 미사용, seq scan.
