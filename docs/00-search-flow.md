@@ -12,7 +12,7 @@
 
 - 최종 갱신: 2026-08-11 (reviewer 대조검토 반영: 라인번호 정정, 누락 분기 2건 추가)
 - 작성: architect
-- 관련 설계 근거: `docs/07-search-rrf-reevaluation.md`(RRF), `docs/04-search-p1-keyword-fts-design.md`(키워드 FTS), `docs/03-search-performance-improvements.md`(P1~P6), `docs/11-collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등)
+- 관련 설계 근거: `docs/07-search-rrf-reevaluation.md`(RRF), `docs/04-search-p1-keyword-fts-design.md`(키워드 FTS), `docs/03-search-performance-improvements.md`(P1~P6), `docs/10-collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등)
 
 ---
 

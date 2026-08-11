@@ -300,7 +300,7 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 
 관련 문서:
 
-- [`docs/10-search-flow.md`](docs/10-search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
+- [`docs/00-search-flow.md`](docs/00-search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
 - [`docs/03-search-performance-improvements.md`](docs/03-search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
 - [`docs/09-search-quality-post-rrf.md`](docs/09-search-quality-post-rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
 

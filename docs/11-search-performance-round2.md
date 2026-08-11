@@ -3,7 +3,7 @@
 - 상태: Quick win(Q1~Q3) **구현 완료** (6절 참조) · 구조적 개선(S1~S3)은 **분석/제안 only**(코드 미수정)
 - 일시: 2026-08-11
 - 작성: architect
-- 선행 문서: `docs/03-search-performance-improvements.md`(P1~P6·RRF 전부 구현완료), `docs/10-search-flow.md`(현재 흐름)
+- 선행 문서: `docs/03-search-performance-improvements.md`(P1~P6·RRF 전부 구현완료), `docs/00-search-flow.md`(현재 흐름)
 - 대상 코드: `app/services/search/endpoint_candidate_search.py`, `app/services/documents/document_search_service.py`,
   `app/repositories/chunk_repository.py`, `app/repositories/document_meta_repository.py`,
   `app/repositories/endpoint_repository.py`, `app/services/search/vector_search.py`
@@ -82,7 +82,7 @@
 |---|------|------|------|--------|---------------------|
 | **S1** | **B1**: RRF arm 부분 병렬화 | 벡터 arm의 **임베딩 추론(순수 CPU, Session 무관)** 을 워커 스레드로 띄워 키워드 FTS DB 왕복과 **겹친다**. 임베딩 완료 후 벡터 DB 쿼리는 기존 Session에서 순차 수행. 총 지연 ≈ `max(embed_infer, keyword_db) + vector_db` | 큼(지배 비용을 겹침) | 중 | **Session 스레드 세이프 아님** → DB 왕복은 병렬화 금지, 오직 임베딩 추론만 오프로드. 스레드 1개면 GIL 영향 적음(추론은 C 확장에서 GIL 해제) |
 | **S2** | **B2 근본**: 벡터 스코프를 IN이 아닌 JOIN으로 | `search_by_vector`가 `ApiDocument` JOIN + `chunk_type='endpoint'` 조건을 직접 걸어 스코프 필터를 SQL로 내림. `list_endpoint_chunk_ids` 왕복 제거 | 중~큼 | 중 | HNSW+필터는 여전히 post-filter라 recall 관리 필요(ef_search 유지). 부분 인덱스 검토 여지 |
-| **S3** | 문서 서술 정정 | `10-search-flow.md`/`endpoint_candidate_search` docstring의 "항상 병렬 실행" → 현행 직렬 반영 (S1 착수 전이라면) | — | 낮음 | 문서-코드 정합성. **살아있는 문서 규칙상 별건이라도 정정 필요** |
+| **S3** | 문서 서술 정정 | `00-search-flow.md`/`endpoint_candidate_search` docstring의 "항상 병렬 실행" → 현행 직렬 반영 (S1 착수 전이라면) | — | 낮음 | 문서-코드 정합성. **살아있는 문서 규칙상 별건이라도 정정 필요** |
 
 ---
 

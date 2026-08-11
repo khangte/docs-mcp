@@ -43,7 +43,7 @@
   본문에서만 강하게 매칭되는 문서가 fetch 기회조차 못 받는 결함이 있었다. `_body_fetch_budget(top_k,
   candidate_count)`(`document_search_service.py:52-76`)가 top_k보다 넓은 **fetch 예산**
   (`overscan = min(top_k*3, 20)`, `budget = min(max(top_k, overscan), candidate_count)`)을 계산해
-  1단계 컷을 대신하고, 최종 top_k 컷은 본문 점수까지 반영한 2단계 뒤로 미뤄졌다(`docs/11-collab-docs-search-fixes.md`
+  1단계 컷을 대신하고, 최종 top_k 컷은 본문 점수까지 반영한 2단계 뒤로 미뤄졌다(`docs/10-collab-docs-search-fixes.md`
   항목 2 참조). P3의 병렬화 자체(동시성 상한 5)는 그대로다.
 
 ### P4 — document_meta 1단계 ILIKE를 pg_trgm GIN 인덱스로 — ✅ 구현완료(커밋 `21522e8`, `ix_document_meta_title_trgm`·`ix_document_meta_url_trgm` `gin_trgm_ops`)
