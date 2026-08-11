@@ -1,4 +1,4 @@
-"""검색 성능 벤치마크 (`docs/search-performance-round2.md` Quick win Q1~Q3 before/after 측정용).
+"""검색 성능 벤치마크 (`docs/12-search-performance-round2.md` Quick win Q1~Q3 before/after 측정용).
 
 임시 postgres 데이터베이스(pgvector/pg_trgm 확장 포함)를 만들어 규모 있는
 코퍼스를 시딩한 뒤, 다음 세 케이스를 반복 호출해 latency(평균/p95)를 잰다.

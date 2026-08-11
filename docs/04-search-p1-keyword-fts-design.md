@@ -3,7 +3,7 @@
 - 상태: **구현완료**(2026-08-10 갱신 — 키워드 FTS 이관 커밋 `aa4de84`, embedding 컬럼 로딩 제거 커밋 `054fbfd`). 한글 방침 A안 lead 승인(2026-08-08).
 - 일시: 2026-08-08
 - 작성: architect
-- 관련: `docs/search-performance-improvements.md` P1/P2, ADR-0002
+- 관련: `docs/03-search-performance-improvements.md` P1/P2, ADR-0002
 - 대상: `app/services/search/keyword_search.py`, `app/repositories/chunk_repository.py`, `app/models/openapi.py`, `alembic/versions/`, `app/services/search/endpoint_candidate_search.py`
 
 ## 확인된 사실(설계 전제)

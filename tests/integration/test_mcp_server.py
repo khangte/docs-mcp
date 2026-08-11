@@ -107,7 +107,7 @@ async def test_search_marks_match_type_from_contract_values(seeded_mcp: FastMCP)
 
     기본 전략은 rrf(키워드+벡터 항상 병렬 실행)라 어느 arm 이 기여했는지는
     임베딩 유사도에 따라 달라질 수 있다 — "both" 도 유효한 결과다
-    (`docs/search-rrf-reevaluation.md` 5.1). fallback 전략의 배타적
+    (`docs/07-search-rrf-reevaluation.md` 5.1). fallback 전략의 배타적
     match_type="keyword" 계약은 `test_search_marks_keyword_match_type_under_fallback_strategy`
     가 별도로 고정한다.
     """

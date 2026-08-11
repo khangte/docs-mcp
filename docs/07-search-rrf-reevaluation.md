@@ -3,7 +3,7 @@
 - 상태: **구현+실측 완료**(RRF 구현·배포 커밋 `33d1dbe`, 평가셋 커밋 `c197ec9`). 5절 설계 확정 → 6절 실측 결과 참조.
 - 일시: 2026-08-08
 - 작성: architect
-- 관련: `docs/search-performance-improvements.md`(상위 제안 RRF), `docs/search-p1-keyword-fts-design.md`, ADR-0002, SPEC Phase 0 결정 6
+- 관련: `docs/03-search-performance-improvements.md`(상위 제안 RRF), `docs/04-search-p1-keyword-fts-design.md`, ADR-0002, SPEC Phase 0 결정 6
 - 대상: `app/services/search/endpoint_candidate_search.py`, `keyword_search.py`, `vector_search.py`, `app/repositories/chunk_repository.py`
 
 ## 현재(P1 이후) 구조 재확인
@@ -209,7 +209,7 @@ RRF가 구현·배포되고(커밋 `33d1dbe`), 5.0에서 후속으로 격하했�
 **의미**: 4절은 "품질 신호 없이는 개선/회귀를 검증할 수 없다"며 착수를 조건부로 묶었고, 5.0은 그 정량 입증을 후속으로 미뤘다. 이제 그 measurement가 존재하며, RRF는 **top-1을 지키면서 top-3 recall만 끌어올리는**(순수 이득, 회귀 0) 결과로 확인됐다. 5.0의 "골든 회귀 + 롤백 스위치 2겹 방어" 전제 위에서 착수한 판단이 실측으로 정당화됐다.
 
 > **후속 정정(2026-08-10)**: 위 "top-1 불변(80%)"은 **20질의 평가셋의 표본편향**이었다.
-> `docs/search-quality-post-rrf.md`의 P1(커밋 `97f3c2d`·`731d43c`)이 평가셋을 84질의로
+> `docs/09-search-quality-post-rrf.md`의 P1(커밋 `97f3c2d`·`731d43c`)이 평가셋을 84질의로
 > 확장 재측정한 결과, **Recall@1도 60%→69%로 개선**되는 것으로 나타났다(P1 실측 결과 절
 > 참조). 즉 이 절의 "top-1 동일"은 최종 수치가 아니라 초기 소표본 관측치이며, 최신
-> 수치는 `search-quality-post-rrf.md`를 따른다.
+> 수치는 `09-search-quality-post-rrf.md`를 따른다.

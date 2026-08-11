@@ -4,7 +4,7 @@
 - 일시: 2026-08-08
 - 작성: architect
 - 지시: lead(사용자 질문 — "postgresql이 용도에 비해 무겁지 않은가", "메타데이터를 굳이 저장할 필요가 있나")
-- 관련: `docs/vector-store-qdrant-vs-pgvector.md`, `docs/supabase-migration-review.md`, `docs/embedding-provider-local-model-design.md`(구현 완료 커밋 `be774dd`)
+- 관련: `docs/06-vector-store-qdrant-vs-pgvector.md`, `docs/supabase-migration-review.md`, `docs/05-embedding-provider-local-model-design.md`(구현 완료 커밋 `be774dd`)
 - 대상: `app/core/db.py`, `app/models/openapi.py`, `docker-compose.yml`, `alembic/versions/*`, `.env.example`, `app/services/ingestor/sync_service.py`
 
 ## 요약(결정 사항)
@@ -47,7 +47,7 @@
 
 - **한글 FTS(가장 큰 걱정) — 이식 가능**: 현재 튜닝(`GET요청`→`get`,`요청`; 경로 분해; 비-영숫자-한글 strip)은 **DB 고유 토크나이저 마법이 아니라 `regexp_replace` 전처리**다(`TEXT_TSV_EXPRESSION`). Postgres 에선 STORED generated 컬럼식으로, SQLite 에선 **동일 정규식을 Python `re` 로 write 시점에 적용해 shadow 텍스트를 만들고 그걸 FTS5 에 인덱싱**하면 된다. 즉 **투자한 자산이 Postgres 에 락인돼 있지 않다.** (질의 측 토크나이저 `[0-9A-Za-z_]+|[가-힣]+` 도 그대로 재사용.) — 단, 랭킹이 `ts_rank`→FTS5 `bm25()` 로 바뀌어 **순위가 달라지므로 골든 기대값 재검증**이 필요(회귀 관리 대상).
 - **벡터 — brute-force 로 충분**: sqlite-vec 는 ANN(HNSW) 미제공이나, 384dim × 수천~수만 = 수십 MB 선형 스캔 = 한 자릿~수십 ms. **이 규모에선 HNSW 빌드/튜닝이 오히려 불필요한 복잡도**였다. 코사인 지원.
-- **단일 스토어 하이브리드 유지**: FTS5 와 sqlite-vec 가 **같은 파일·같은 커넥션**에 있어, RRF 융합(FTS5 MATCH 등수 + vec KNN 등수)을 한 곳에서 수행 가능. `search-rrf-reevaluation.md` 가 기댄 **"두 랭커가 한 스토어"** 전제가 pgvector 와 동일하게 보존된다(Qdrant 분리와 대조적으로 여기선 안 깨진다).
+- **단일 스토어 하이브리드 유지**: FTS5 와 sqlite-vec 가 **같은 파일·같은 커넥션**에 있어, RRF 융합(FTS5 MATCH 등수 + vec KNN 등수)을 한 곳에서 수행 가능. `07-search-rrf-reevaluation.md` 가 기댄 **"두 랭커가 한 스토어"** 전제가 pgvector 와 동일하게 보존된다(Qdrant 분리와 대조적으로 여기선 안 깨진다).
 - **SQLAlchemy 이식성**: 세션/ORM 대부분은 dialect 중립이나, **PG 고유 요소는 전면 교체 대상** — `pgvector.Vector`·HNSW·`cosine_distance`·`TSVECTOR`·`Computed(generated)`·`schema="app"`·psycopg 드라이버·alembic 리비전 3개(`dfbe6143212a`/`ff8aa8f36266`/`a17165213545`)가 전부 PG-ism. → **스토리지 계층 광범위 재작성**(적은 일 아님).
 
 ## 4. 메타데이터 필요성 — 필드별 실사용 추적

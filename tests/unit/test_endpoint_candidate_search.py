@@ -120,7 +120,7 @@ def test_section_chunks_are_not_returned_as_endpoints(app_state) -> None:
 # --- fallback 전략(롤백 스위치): 키워드가 맞으면 임베딩 API 를 호출하지 않는다 ---
 #
 # 기본 전략은 rrf(키워드+벡터 항상 병렬 실행)라 이 배타적 불변식은 더는
-# 기본값이 아니다. `docs/search-rrf-reevaluation.md` 5.6 에 따라 SPEC Phase 0
+# 기본값이 아니다. `docs/07-search-rrf-reevaluation.md` 5.6 에 따라 SPEC Phase 0
 # 결정 6("키워드 0건일 때만 벡터")은 이제 `search_strategy="fallback"` 에
 # 한해서만 유효한 계약이므로, 이 절의 테스트는 전략을 명시적으로 고정한다.
 
@@ -288,7 +288,7 @@ def test_vector_fallback_disabled_still_returns_keyword_results(
 
     `vector_fallback_enabled=False`(해시 임베딩 폴백 등)면 rrf 전략이어도
     벡터 arm 을 실행하지 않고 전부 match_type="keyword" 로 나온다
-    (`docs/search-rrf-reevaluation.md` 5.5 불변식).
+    (`docs/07-search-rrf-reevaluation.md` 5.5 불변식).
     """
     _register(app_state, sample_openapi_3)
     app_state.vector_fallback_enabled = False

@@ -2,7 +2,7 @@
 
 - 상태: accepted
 - 일시: 2026-08-08
-- 관련: `docs/embedding-provider-local-model-design.md`, ARCHITECTURE.md §7, ADR-0002
+- 관련: `docs/05-embedding-provider-local-model-design.md`, ARCHITECTURE.md §7, ADR-0002
 
 ## 컨텍스트
 기존 벡터 검색은 `GeminiEmbeddingProvider`(Gemini 임베딩 API, 256차원)를 통해 의미
@@ -28,7 +28,7 @@
   `local`(의미 유사도 있음)인지"로 바꿨다(`is_vector_fallback_available`).
   `HashEmbeddingProvider` 는 테스트·모델 로드 실패 폴백 용도로 유지한다.
 - Qdrant 등 별도 벡터 DB 로의 전환은 검토했으나 비권장으로 결론 내렸다
-  (`docs/vector-store-qdrant-vs-pgvector.md`) — pgvector 유지, 컬럼/인덱스
+  (`docs/06-vector-store-qdrant-vs-pgvector.md`) — pgvector 유지, 컬럼/인덱스
   구조는 그대로 두고 차원만 바꿨다.
 
 ## 결과
