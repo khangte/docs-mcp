@@ -12,7 +12,7 @@
 
 - 최종 갱신: 2026-08-11
 - 작성: architect
-- 관련 설계 근거: `docs/search-rrf-reevaluation.md`(RRF), `docs/search-p1-keyword-fts-design.md`(키워드 FTS), `docs/search-performance-improvements.md`(P1~P6)
+- 관련 설계 근거: `docs/search-rrf-reevaluation.md`(RRF), `docs/search-p1-keyword-fts-design.md`(키워드 FTS), `docs/search-performance-improvements.md`(P1~P6), `docs/collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등)
 
 ---
 
@@ -110,11 +110,11 @@ flowchart TD
 
 ### 3.2 2단계 — 후보 본문 실시간 병렬 fetch (비쌈)
 
-`_rank_with_body` (`:257`):
+`_rank_with_body` (`:308`):
 
 1. **어댑터 사전 resolve(메인 스레드)** — 후보에 등장하는 project별로 `resolver.resolve_for_project`를 **미리** 호출해 둔다. 이 호출은 요청-스코프 SQLAlchemy Session을 읽어 스레드 세이프하지 않으므로 워커에 맡기지 않는다.
-2. **병렬 fetch** — `ThreadPoolExecutor(max_workers=min(len(candidates), MAX_CONCURRENT_BODY_FETCHES))`. **동시성 상한 `MAX_CONCURRENT_BODY_FETCHES=5`**(`:52`)가 Drive/Notion rate limit·지연 합산을 막는 핵심 장치다. `executor.map`은 입력 순서로 결과를 모아 스레드 안전.
-3. **건별 fetch+채점** — `_fetch_and_score` (`:295`): 워커 스레드에서 순수 I/O인 `document_source.fetch()`만 수행. **개별 fetch 실패는 그 문서만 건너뛴다**(한 건의 권한 오류가 검색 전체를 죽이지 않음, `None` 반환). 성공 시 `_body_score`(원본 토큰) + 스니펫(`_build_snippet`/`_fallback_snippet`) 생성.
+2. **병렬 fetch** — `ThreadPoolExecutor(max_workers=min(len(candidates), MAX_CONCURRENT_BODY_FETCHES))`. **동시성 상한 `MAX_CONCURRENT_BODY_FETCHES=5`**(`:71`)가 Drive/Notion rate limit·지연 합산을 막는 핵심 장치다. `executor.map`은 입력 순서로 결과를 모아 스레드 안전.
+3. **건별 fetch+채점** — `_fetch_and_score` (`:352`): 워커 스레드에서 순수 I/O인 `document_source.fetch()`만 수행. `fetch()`는 평문 문자열이 아니라 `FetchedDocument(text, truncated)`(`sources/document_source.py:40`)를 반환한다 — 이 경로는 `.text`만 스니펫/점수 계산에 쓰고 **`.truncated`는 버린다**(스니펫은 원래 발췌라 절단 여부가 무의미; `truncated`는 `get_document` 원문 조회 경로에만 노출된다). **개별 fetch 실패는 그 문서만 건너뛴다**(한 건의 권한 오류가 검색 전체를 죽이지 않음, `None` 반환). 성공 시 `_body_score`(원본 토큰) + 스니펫(`_build_snippet`/`_fallback_snippet`) 생성 + `DocumentSearchItem.version = parse_version(row.title)`(제목에서 버전 표기 파싱, 없으면 None — **순위 계산에는 영향 없음**, 노출용 필드).
 4. **최종 점수·정렬·top_k 컷** — `score = round(0.4*title_score + 0.6*body_score, 4)`(`TITLE_SCORE_WEIGHT=0.4`). fetch 순서와 무관하게 (score 내림차순, title) 재정렬한 뒤 **여기서 비로소 상위 top_k만** 남겨 반환한다(`items[:top_k]`) — 1단계에서 fetch 예산만큼 살아남은 후보가 본문 점수까지 반영해 재평가된 결과다.
 
 ### 3.3 mermaid — 협업문서 검색
@@ -132,7 +132,7 @@ flowchart TD
     Z -->|"예"| EMPTY["빈 리스트<br/>(외부 fetch 없음)"]
     Z -->|"아니오"| PR["project별 어댑터<br/>메인 스레드에서 사전 resolve"]
     PR --> POOL["2단계: ThreadPoolExecutor<br/>동시성 상한 5<br/>병렬 본문 fetch"]
-    POOL --> FS["_fetch_and_score (워커)<br/>fetch 실패 → 해당 건만 skip<br/>_body_score + 스니펫"]
+    POOL --> FS["_fetch_and_score (워커)<br/>fetch() → FetchedDocument(text,truncated)<br/>.text만 사용, .truncated는 버림<br/>fetch 실패 → 해당 건만 skip<br/>_body_score + 스니펫 + version 파싱"]
     FS --> RANK["score = 0.4*title + 0.6*body<br/>score 내림차순 재정렬 →<br/>여기서 top_k 컷"]
     RANK --> OUT["DocumentSearchItem 리스트"]
 ```
