@@ -24,24 +24,6 @@ OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 �
 - **Schema/DTO**: Pydantic v2
 <!-- /AUTO-GENERATED -->
 
-## 검색 아키텍처 (요약)
-
-엔드포인트 검색은 **키워드 arm**(Postgres FTS — `tsvector`+GIN, `to_tsquery`)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다(기본 전략 `rrf`, 롤백용 `fallback` 병존). 최종 답변은 서버가 고르지 않고 호출 LLM이 반환된 후보(top_k) 중에서 선택합니다 — 즉 서버는 **후보 피더**이며 품질 지표는 recall@k입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
-
-적용된 개선(상세는 아래 문서):
-
-- **RRF 하이브리드 융합** 도입 — 키워드 0건일 때만 벡터를 쓰던 배타 분기를 두 arm 상시 융합으로 전환
-- **키워드 검색을 Postgres FTS로 이관**(P1), 키워드 경로의 벡터 컬럼 로딩 제거(P2)
-- **협업문서 검색 2단계 본문 fetch 병렬화**(P3, 동시성 상한)
-- **`document_meta` pg_trgm GIN 인덱스**(P4), **쿼리 임베딩 LRU 캐시**(P5), **HNSW `ef_search` 튜닝**(P6)
-- **평가셋 확장(84질의)+지표 보강**(Recall@k·MRR·nDCG), **RRF `K` 스윕** 결과 표준값 `K=60` 유지 확인
-
-관련 문서:
-
-- [`docs/search-flow.md`](docs/search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
-- [`docs/search-performance-improvements.md`](docs/search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
-- [`docs/search-quality-post-rrf.md`](docs/search-quality-post-rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
-
 ## 시작하기
 
 아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 준비 단계입니다.
@@ -153,46 +135,42 @@ claude mcp remove docs-mcp   # 등록 해제
 
 ### 3. uvx로 실행 (uv 프로젝트 설치 없이 실행)
 
-`pyproject.toml`의 `[project.scripts]`에 `docs-mcp = "app.mcp.server:main"`이
-등록되어 있어, `uv sync` 로 이 프로젝트에 의존성을 설치하지 않고도
-[uvx](https://docs.astral.sh/uv/guides/tools/)로 격리된 환경에서 바로 실행할
-수 있습니다.
+`pyproject.toml`에 `docs-mcp` 스크립트가 등록되어 있어, `uv sync` 없이도
+[uvx](https://docs.astral.sh/uv/guides/tools/)로 바로 실행할 수 있습니다.
+`command`+`args`를 `uvx`+`["--from", "/path/to/docs-mcp", "docs-mcp"]`로
+바꾸면 되며, `DOCS_MCP_DATABASE_URL`은 위와 동일하게 전달합니다.
 
-```bash
-uvx --from /path/to/docs-mcp docs-mcp
-```
+> `uvx`는 애플리케이션 코드만 격리 설치할 뿐 DB는 대신 띄워주지 않으므로,
+> 실행 전 PostgreSQL(+pgvector)이 별도로 떠 있어야 합니다(온프레미스 서버 어디든
+> `docker compose up -d postgres`로 가능, 클라우드 관리형 Postgres 필수 아님).
 
-MCP 클라이언트 등록 시 `command`+`args`를 `uv run python -m app.mcp.server`
-대신 아래처럼 바꾸면 됩니다.
+### 4. 프로젝트 격리
 
-```json
-{
-  "mcpServers": {
-    "docs-mcp": {
-      "command": "uvx",
-      "args": ["--from", "/path/to/docs-mcp", "docs-mcp"],
-      "env": {
-        "DOCS_MCP_DATABASE_URL": "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
-      }
-    }
-  }
-}
-```
+이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
+서비스합니다. `register_document` 는 `project` 지정이 필수이고, 조회·검색
+도구들(`list_documents`, `search_endpoints`, `list_tags`, `resolve_ref`,
+`search_documents`, `refresh_index`)은 `project` 로 범위를 좁힐 수
+있습니다(생략 시 전체 프로젝트 대상 — 하위 호환).
 
-> **`uvx`는 애플리케이션 코드만 격리 설치할 뿐, DB를 대신 띄워주지 않습니다.**
-> `uvx` 실행 전에 PostgreSQL(+pgvector)이 별도로 떠 있어야 하고,
-> `DOCS_MCP_DATABASE_URL`로 그 위치를 알려줘야 합니다. 이 저장소의
-> `docker-compose.yml`(`pgvector/pgvector:pg16` 이미지)을 온프레미스 서버(사내
-> 서버, NAS, 개인 VM 등 어디든)에 그대로 올려 `docker compose up -d postgres`로
-> 띄우면 되며, 클라우드 관리형 Postgres가 필수 조건은 아닙니다 — pgvector
-> 확장이 설치된 PostgreSQL 인스턴스 하나만 있으면 됩니다.
->
-> Postgres 자체를 다른 DB(SQLite 등)로 교체하는 것은 별개 작업입니다.
-> `app/models/openapi.py`의 임베딩 컬럼이 `pgvector.sqlalchemy.Vector` 타입과
-> HNSW 코사인 인덱스(`vector_cosine_ops`)를 직접 사용하므로, DB 교체는
-> 모델·리포지토리 계층 재작성이 필요한 코드 변경 작업입니다.
+> **`project` 는 단순 문자열 태그이며 보안 경계가 아닙니다.** 인증도, 접근
+> 제어도 하지 않습니다. 같은 서버·같은 DB 자격증명에 접근할 수 있는 누구나
+> 모든 프로젝트의 문서를 `project` 필터 없이 조회할 수 있습니다. 서로 다른
+> 신뢰 수준의 사용자를 프로젝트로 격리하려는 목적이라면 이 기능으로는
+> 부족하며, 별도 서버·별도 DB·인증 계층이 필요합니다. 이 기능이 막아주는
+> 것은 "여러 프로젝트를 한 서버에서 쓸 때 검색 결과가 서로 섞이는 문제"뿐입니다.
 
-### 4. 제공되는 도구 (Tools)
+프로젝트별 Drive/Notion 소스 매핑은 `register_drive_source`/`register_notion_source`/
+`register_notion_page`(아래 도구 표 참고)로 하며, 매핑 등록/변경은 서버 재시작
+없이 다음 호출부터 반영됩니다. 자격증명(`DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`/`_JSON`,
+`DOCS_MCP_NOTION_TOKEN`)은 서버 전체가 하나씩만 갖고, 프로젝트별로 달라지는
+것은 그 자격증명으로 접근할 **폴더/DB 범위**뿐입니다.
+
+**기존 문서의 취급**: `project` 개념이 도입되기 전에 등록된 문서는 모두
+`project="default"` 로 백필되어 있습니다. 다른 프로젝트로 옮기려면 문서를
+재등록하거나, DB 에 직접 SQL 로 `project` 컬럼을 갱신해야 합니다(제공되는
+도구 중에는 기존 문서의 project 를 바꾸는 기능이 없습니다).
+
+### 5. 제공되는 도구 (Tools)
 
 <!-- AUTO-GENERATED: app/mcp/server.py 도구 docstring 기준 -->
 
@@ -243,7 +221,11 @@ search_documents(query="주문조회 API", query_variants=["결제 내역 조회
 
 <!-- /AUTO-GENERATED -->
 
-### 5. 문서별 등록 방법
+### 6. 제공되는 리소스 (Resources)
+
+- `document://{document_id}/raw`: 문서 원문 보기
+
+### 7. 문서별 등록 방법
 
 준비 단계(1~3)와 MCP 서버 등록은 이미 끝났다고 가정합니다 →
 [시작하기](#시작하기), [MCP 연동](#mcp-model-context-protocol-연동).
@@ -263,15 +245,11 @@ register_document(project="my-api", source_url="https://example.com/openapi.json
 register_document(project="my-api", raw_document="<원문 문자열 또는 dict>")
 ```
 
-`doc_type` 을 생략하면 다음 순서로 자동 판별합니다(`source_url` 을 함께 준
-경우 확장자가 `.md`/`.markdown`→markdown, `.csv`→csv 로 우선 적용):
-
-1. 원문이 `{` 로 시작하거나 앞 200자에 `openapi:`/`swagger:` 가 있으면 → openapi
-2. 첫 줄에 쉼표가 있고 `#` 으로 시작하지 않으면 → csv
-3. 그 외 → markdown
-
-판별이 애매하면 `doc_type="openapi"|"markdown"|"csv"` 로 직접 지정하세요.
-`raw_document` 가 dict 이면 내부적으로 JSON 문자열로 변환됩니다.
+`doc_type` 을 생략하면 원문 내용을 보고 openapi/csv/markdown 순으로 자동
+판별합니다(규칙은 `app/services/parser/document_router.py`의
+`detect_doc_type` 참고). 판별이 애매하면 `doc_type="openapi"|"markdown"|"csv"`
+로 직접 지정하세요. `raw_document` 가 dict 이면 내부적으로 JSON 문자열로
+변환됩니다.
 
 **(C) PDF/DOCX — base64 원문 + doc_type 필수**
 
@@ -314,44 +292,17 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 > 시점에 원본을 실시간 조회합니다. 새로 만든 문서가 검색되지 않으면
 > `refresh_index` 를 먼저 실행하세요(자세한 내용은 위 도구 표 아래 설명 참고).
 
-### 6. 프로젝트 격리
+## 검색 아키텍처 (요약)
 
-이 서버는 하나의 프로세스·하나의 DB 로 **여러 프로젝트**의 문서를 함께
-서비스합니다. `register_document` 는 `project` 지정이 필수이고, 조회·검색
-도구들(`list_documents`, `search_endpoints`, `list_tags`, `resolve_ref`,
-`search_documents`, `refresh_index`)은 `project` 로 범위를 좁힐 수
-있습니다(생략 시 전체 프로젝트 대상 — 하위 호환).
+엔드포인트 검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM이 반환된 후보(top_k) 중에서 선택합니다 — 즉 서버는 **후보 피더**이며 품질 지표는 recall@k입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
 
-> **`project` 는 단순 문자열 태그이며 보안 경계가 아닙니다.** 인증도, 접근
-> 제어도 하지 않습니다. 같은 서버·같은 DB 자격증명에 접근할 수 있는 누구나
-> 모든 프로젝트의 문서를 `project` 필터 없이 조회할 수 있습니다. 서로 다른
-> 신뢰 수준의 사용자를 프로젝트로 격리하려는 목적이라면 이 기능으로는
-> 부족하며, 별도 서버·별도 DB·인증 계층이 필요합니다. 이 기능이 막아주는
-> 것은 "여러 프로젝트를 한 서버에서 쓸 때 검색 결과가 서로 섞이는 문제"뿐입니다.
+성능 개선(P1~P6)·평가셋·RRF K 스윕 등 상세 내역은 아래 문서를 참고하세요.
 
-**프로젝트별 Drive 폴더/Notion DB 등록**: `register_drive_source(project,
-folder_id)` / `register_notion_source(project, database_id)` (또는 Notion
-페이지 하위 트리를 쓰려면 `register_notion_page(project, page_id)`) 로
-프로젝트마다 다른 소스를 매핑한 뒤 `refresh_index` 를 실행하면 메타 캐시가
-채워집니다. 한 project 는 Notion database 매핑과 page 매핑을 동시에 가질 수
-없습니다(나중 호출이 이전 매핑을 덮어씀). 매핑 등록/변경은 서버 재시작 없이
-다음 호출부터 바로 반영됩니다. `list_*_sources` 로 확인하고
-`remove_*_source` 로 제거합니다(미등록 project 제거는 오류 아님 —
-`removed: false`).
+관련 문서:
 
-자격증명(`DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`/`_JSON`,
-`DOCS_MCP_NOTION_TOKEN`)은 서버 전체가 **하나씩만** 갖고, 프로젝트별로
-달라지는 것은 그 자격증명으로 접근할 **폴더/DB 범위**뿐입니다(Drive ↔ Notion
-동일 원칙).
-
-**기존 문서의 취급**: `project` 개념이 도입되기 전에 등록된 문서는 모두
-`project="default"` 로 백필되어 있습니다. 다른 프로젝트로 옮기려면 문서를
-재등록하거나, DB 에 직접 SQL 로 `project` 컬럼을 갱신해야 합니다(제공되는
-도구 중에는 기존 문서의 project 를 바꾸는 기능이 없습니다).
-
-### 7. 제공되는 리소스 (Resources)
-
-- `document://{document_id}/raw`: 문서 원문 보기
+- [`docs/search-flow.md`](docs/search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
+- [`docs/search-performance-improvements.md`](docs/search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
+- [`docs/search-quality-post-rrf.md`](docs/search-quality-post-rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
 
 ## 테스트 실행
 
