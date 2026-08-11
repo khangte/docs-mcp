@@ -152,6 +152,25 @@ class DocumentMetaRepository:
         stmt = stmt.order_by(DocumentMeta.source, DocumentMeta.external_id)
         return self._session.execute(stmt).scalars().all()
 
+    def find_latest_by_source_and_external_id(
+        self, source: str, external_id: str
+    ) -> DocumentMeta | None:
+        """(source, external_id) 를 가진 행 중 가장 최근 last_synced_at 행 한 건을 조회한다.
+
+        `get_document` 전용 포인트 조회다. project 를 명시하지 않는 이유는
+        같은 external_id 가 여러 project 에 공유될 수 있어서다(SPEC 기능 6
+        검증 기준). `list_all()` 로 그 source 의 행 전체를 앱에 적재한 뒤
+        Python 에서 걸러내던 이전 방식과 달리, WHERE + ORDER BY + LIMIT 1 을
+        SQL 에 내려 한 행만 왕복한다.
+        """
+        stmt = (
+            select(DocumentMeta)
+            .where(DocumentMeta.source == source, DocumentMeta.external_id == external_id)
+            .order_by(DocumentMeta.last_synced_at.desc())
+            .limit(1)
+        )
+        return self._session.execute(stmt).scalars().first()
+
     def delete(self, meta: DocumentMeta) -> None:
         """메타 행을 세션에서 삭제한다."""
         self._session.delete(meta)

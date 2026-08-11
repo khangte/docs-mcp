@@ -236,16 +236,10 @@ class DocumentSearchService:
 
         같은 external_id 가 여러 project 에 공유될 수 있으므로(SPEC 기능 6
         검증 기준: A·B 소스에 공유된 문서는 2행), project 를 명시하지 않고
-        source/external_id 만으로 조회한다.
+        source/external_id 만으로 조회한다. 저장소의 인덱스 포인트 조회
+        메서드에 그대로 위임한다(그 source 행 전체를 적재하지 않는다).
         """
-        rows = [
-            row
-            for row in self._meta_repo.list_all(source=source)
-            if row.external_id == external_id
-        ]
-        if not rows:
-            return None
-        return max(rows, key=lambda row: row.last_synced_at)
+        return self._meta_repo.find_latest_by_source_and_external_id(source, external_id)
 
     # --- 1단계: 메타 캐시 후보 압축 ----------------------------------------
 

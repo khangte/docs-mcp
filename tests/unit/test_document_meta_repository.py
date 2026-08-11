@@ -180,6 +180,69 @@ def test_list_all_is_deterministically_ordered(
     assert [m.external_id for m in repo.list_all()] == ["d1", "d2", "d3"]
 
 
+# --- find_latest_by_source_and_external_id (Q1: 포인트 조회) -------------------
+
+
+def test_find_latest_by_source_and_external_id_returns_row(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """(source, external_id) 로 행 한 건을 찾는다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "설계서"))
+    db_session.commit()
+
+    found = repo.find_latest_by_source_and_external_id(SOURCE_DRIVE, "d1")
+
+    assert found is not None
+    assert found.title == "설계서"
+
+
+def test_find_latest_by_source_and_external_id_returns_none_when_absent(
+    repo: DocumentMetaRepository,
+) -> None:
+    """일치하는 행이 없으면 None 을 반환한다."""
+    assert repo.find_latest_by_source_and_external_id(SOURCE_DRIVE, "nope") is None
+
+
+def test_find_latest_by_source_and_external_id_ignores_other_source(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """source 가 다르면 매칭하지 않는다."""
+    repo.add(_row(SOURCE_NOTION, "shared", "노션 문서"))
+    db_session.commit()
+
+    assert repo.find_latest_by_source_and_external_id(SOURCE_DRIVE, "shared") is None
+
+
+def test_find_latest_by_source_and_external_id_picks_most_recent_across_projects(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """같은 external_id 가 여러 project 에 공유되면 가장 최근 last_synced_at 행을 고른다."""
+    older = DocumentMeta(
+        project=_PROJECT_A,
+        source=SOURCE_DRIVE,
+        external_id="shared",
+        title="A 문서",
+        url="https://a",
+        last_synced_at=datetime(2026, 7, 1, 9, 0, 0),
+    )
+    newer = DocumentMeta(
+        project=_PROJECT_B,
+        source=SOURCE_DRIVE,
+        external_id="shared",
+        title="B 문서",
+        url="https://b",
+        last_synced_at=datetime(2026, 7, 2, 9, 0, 0),
+    )
+    db_session.add(older)
+    db_session.add(newer)
+    db_session.commit()
+
+    found = repo.find_latest_by_source_and_external_id(SOURCE_DRIVE, "shared")
+
+    assert found is not None
+    assert found.title == "B 문서"
+
+
 def test_delete_removes_row(db_session, repo: DocumentMetaRepository) -> None:
     """삭제한 행은 더 이상 조회되지 않는다."""
     repo.add(_row(SOURCE_DRIVE, "d1"))

@@ -47,6 +47,9 @@ class DocumentMeta(Base):
         ),
         Index("ix_document_meta_source", "source"),
         Index("ix_document_meta_project", "project"),
+        #: `get_document` 의 (source, external_id) 포인트 조회
+        #: (`find_latest_by_source_and_external_id`) 전용 인덱스.
+        Index("ix_document_meta_source_external_id", "source", "external_id"),
         #: title/url 의 선행 와일드카드 ILIKE('%token%')를 GIN trgm 인덱스로 처리하기 위함
         #: (1단계 후보 필터, `DocumentMetaRepository.search_by_tokens`).
         Index(
