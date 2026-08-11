@@ -143,6 +143,7 @@ class ChunkRepository:
         top_k: int,
         document_id: str | None = None,
         project: str | None = None,
+        score_terms: Sequence[str] | None = None,
     ) -> list[ChunkTextHit]:
         """endpoint 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
 
@@ -152,6 +153,13 @@ class ChunkRepository:
         지나치게 좁힌다). 각 term 은 리터럴 lexeme 으로 인용해(`_quote_tsquery_lexeme`)
         tsquery 연산자로 오인되지 않게 한다.
 
+        `score_terms` 는 `ts_rank` 계산에만 쓰는 별도 term 집합이다(생략하면
+        `terms` 를 그대로 쓴다 — 기존 호출부와 하위 호환). `query_variants`
+        배선(`KeywordSearch.search`)이 이 파라미터를 쓴다 — 후보 필터(`terms`)는
+        원본+variant term 으로 넓히되, 점수는 원본 term(`score_terms`)만으로
+        계산해 variant 매칭만 있는 후보가 원본 매칭 후보보다 부당하게 높은
+        순위를 받지 않게 한다(문서 검색과 동일 규약).
+
         정렬은 `ts_rank` 내림차순, 동점이면 `id` 오름차순이라 결과가 결정적이다.
         `text_tsv` 컬럼 자체는 필터 전용이라 select 하지 않는다.
         """
@@ -160,7 +168,17 @@ class ChunkRepository:
             return []
         tsquery_str = " | ".join(_quote_tsquery_lexeme(t) for t in normalized_terms)
         tsq = func.to_tsquery("simple", tsquery_str)
-        rank = func.ts_rank(ApiChunk.text_tsv, tsq)
+
+        score_source = terms if score_terms is None else score_terms
+        normalized_score_terms = [t for t in score_source if t]
+        score_tsq = (
+            func.to_tsquery(
+                "simple", " | ".join(_quote_tsquery_lexeme(t) for t in normalized_score_terms)
+            )
+            if normalized_score_terms
+            else tsq
+        )
+        rank = func.ts_rank(ApiChunk.text_tsv, score_tsq)
         stmt = (
             select(ApiChunk.id, ApiChunk.ref_id, rank.label("score"))
             .where(ApiChunk.chunk_type == "endpoint")

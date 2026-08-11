@@ -13,6 +13,7 @@ from app.mcp.types import (
     NotionSourceItem,
     ParameterItem,
     RefreshIndexResult,
+    RelatedEndpointItem,
     RequestBodyItem,
     ResolvedSchemaResult,
     ResponseItem,
@@ -67,6 +68,10 @@ def _to_endpoint_details_payload(result: EndpointDetailsResult) -> EndpointDetai
         }
         for r in result.responses
     ]
+    related_endpoints: list[RelatedEndpointItem] = [
+        {"endpoint_id": r.endpoint_id, "method": r.method, "path": r.path}
+        for r in result.related_endpoints
+    ]
     payload: EndpointDetails = {
         "endpoint_id": result.endpoint_id,
         "document_id": result.document_id,
@@ -78,6 +83,8 @@ def _to_endpoint_details_payload(result: EndpointDetailsResult) -> EndpointDetai
         "parameters": parameters,
         "request_body": request_body,
         "responses": responses,
+        "referenced_schema_refs": result.referenced_schema_refs,
+        "related_endpoints": related_endpoints,
     }
     if result.example_code is not None:
         payload["example_code"] = result.example_code

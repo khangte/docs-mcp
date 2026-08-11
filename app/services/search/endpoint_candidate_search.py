@@ -64,6 +64,11 @@ class CandidateSearchOptions:
     top_k: int = 5
     document_id: str | None = None
     project: str | None = None
+    #: 호출자(Claude)가 원본 질의와 함께 넘기는 동의어/유사 표현. 키워드
+    #: arm(FTS OR 후보 필터)만 넓히는 데 쓰고, 점수 계산에는 섞이지 않는다
+    #: — 벡터 arm은 이미 의미 유사도로 흡수하므로 손대지 않는다
+    #: (`docs/12-rag-depth-directions.md` 후보4).
+    query_variants: list[str] | None = None
 
 
 class EndpointCandidateSearch:
@@ -129,26 +134,46 @@ class EndpointCandidateSearch:
             return []
 
         if self._search_strategy == "fallback":
-            return self._search_fallback(normalized_query, options.top_k, document_id, project)
-        return self._search_rrf(normalized_query, options.top_k, document_id, project)
+            return self._search_fallback(
+                normalized_query, options.top_k, document_id, project, options.query_variants
+            )
+        return self._search_rrf(
+            normalized_query, options.top_k, document_id, project, options.query_variants
+        )
 
     def _search_fallback(
-        self, query: str, top_k: int, document_id: str | None, project: str | None
+        self,
+        query: str,
+        top_k: int,
+        document_id: str | None,
+        project: str | None,
+        query_variants: list[str] | None,
     ) -> list[EndpointCandidate]:
         """키워드 우선·벡터는 0건일 때만(롤백 스위치, 옛 배타 분기 그대로)."""
-        keyword_candidates = self._search_by_keyword(query, top_k, document_id, project)
+        keyword_candidates = self._search_by_keyword(
+            query, top_k, document_id, project, query_variants
+        )
         if keyword_candidates:
             return keyword_candidates
         return self._search_by_vector(query, top_k, document_id, project)
 
     def _search_rrf(
-        self, query: str, top_k: int, document_id: str | None, project: str | None
+        self,
+        query: str,
+        top_k: int,
+        document_id: str | None,
+        project: str | None,
+        query_variants: list[str] | None,
     ) -> list[EndpointCandidate]:
         """키워드·벡터 두 ranker를 항상 병렬 실행해 RRF로 융합한다."""
         width = max(top_k * _CANDIDATE_WIDTH_MULTIPLIER, _MIN_CANDIDATE_WIDTH)
 
         keyword_hits = self._keyword_search.search(
-            query, top_k=width, document_id=document_id, project=project
+            query,
+            top_k=width,
+            document_id=document_id,
+            project=project,
+            query_variants=query_variants,
         )
         keyword_ref_ids = [h.ref_id for h in keyword_hits]
 
@@ -192,11 +217,20 @@ class EndpointCandidateSearch:
         return normalized_query, document_id, project
 
     def _search_by_keyword(
-        self, query: str, top_k: int, document_id: str | None, project: str | None
+        self,
+        query: str,
+        top_k: int,
+        document_id: str | None,
+        project: str | None,
+        query_variants: list[str] | None = None,
     ) -> list[EndpointCandidate]:
         """Postgres FTS 로 1차 키워드 검색을 수행해 후보를 만든다."""
         hits = self._keyword_search.search(
-            query, top_k=top_k, document_id=document_id, project=project
+            query,
+            top_k=top_k,
+            document_id=document_id,
+            project=project,
+            query_variants=query_variants,
         )
         ordered_ref_ids = [h.ref_id for h in hits]
         return self._to_candidates(ordered_ref_ids, "keyword", top_k)

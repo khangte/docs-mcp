@@ -42,16 +42,27 @@ class KeywordSearch:
         *,
         document_id: str | None = None,
         project: str | None = None,
+        query_variants: list[str] | None = None,
     ) -> list[KeywordHit]:
         """질의 term 을 OR 로 결합해 top_k 결과를 `ts_rank` 내림차순으로 반환한다.
 
         스코프(document_id/project)는 SQL 로 필터링한다 — 후보 청크를
         Python 메모리에 미리 적재하지 않는다.
+
+        `query_variants`(호출자가 넘긴 동의어/유사 표현)는 FTS OR 후보
+        필터만 넓히는 데 쓴다 — `ts_rank` 점수는 항상 원본 질의 term 만으로
+        계산한다(협업문서 검색과 동일 규약, `docs/00-search-flow.md` §3.1).
         """
         terms = tokenize_terms(query)
         if not terms:
             return []
+        variant_terms = tokenize_terms(" ".join(query_variants)) if query_variants else []
+        filter_terms = list(dict.fromkeys([*terms, *variant_terms]))
         hits = self._chunk_repo.search_endpoint_by_text(
-            terms, top_k=top_k, document_id=document_id, project=project
+            filter_terms,
+            top_k=top_k,
+            document_id=document_id,
+            project=project,
+            score_terms=terms,
         )
         return [KeywordHit(chunk_id=h.chunk_id, ref_id=h.ref_id, score=h.score) for h in hits]

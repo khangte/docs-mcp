@@ -93,10 +93,21 @@ class ResponseItem(TypedDict):
     schema_ref: str | None
 
 
+class RelatedEndpointItem(TypedDict):
+    """get_endpoint_details 응답의 related_endpoints 원소 타입(순회 힌트)."""
+
+    endpoint_id: str
+    method: str
+    path: str
+
+
 class EndpointDetails(TypedDict):
     """get_endpoint_details 의 반환 타입.
 
     `example_code` 는 include_example=True 로 호출했을 때만 키가 존재한다.
+    `referenced_schema_refs`/`related_endpoints` 는 순회 힌트다 — 서버가
+    다음 홉을 자동 호출하지 않고 후보만 노출한다(밟을지는 호출측 판단,
+    `docs/12-rag-depth-directions.md` 후보2 얇은 버전).
     """
 
     endpoint_id: str
@@ -110,6 +121,8 @@ class EndpointDetails(TypedDict):
     request_body: RequestBodyItem | None
     responses: list[ResponseItem]
     example_code: NotRequired[str]
+    referenced_schema_refs: list[str]
+    related_endpoints: list[RelatedEndpointItem]
 
 
 class SchemaFieldItem(TypedDict):

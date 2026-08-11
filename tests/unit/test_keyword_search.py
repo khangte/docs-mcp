@@ -122,6 +122,27 @@ def test_keyword_search_project_scopes_results(db_session) -> None:
     assert [h.chunk_id for h in hits] == ["c1"]
 
 
+def test_keyword_search_query_variants_widen_filter_but_not_score(db_session) -> None:
+    """query_variants 는 FTS OR 후보 필터만 넓히고, 점수(ts_rank)는 원본 질의 토큰만 쓴다.
+
+    문서 검색(`DocumentSearchService`)과 동일 규약(`docs/00-search-flow.md` §3.1) —
+    variant 는 후보를 놓치지 않게 넓히는 용도일 뿐, 순위는 항상 원본 질의로 정한다.
+    """
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep-c1")
+    _seed_chunk(db_session, "c2", "doc1", "동물 조회 엔드포인트", ref_id="ep-c2")
+    db_session.commit()
+    search = KeywordSearch(ChunkRepository(db_session))
+
+    without_variants = search.search("find pet", top_k=10)
+    assert [h.chunk_id for h in without_variants] == ["c1"]
+
+    with_variants = search.search("find pet", top_k=10, query_variants=["동물 조회"])
+
+    assert [h.chunk_id for h in with_variants] == ["c1", "c2"]
+    assert with_variants[0].score > 0
+    assert with_variants[1].score == 0.0
+
+
 def test_keyword_search_matches_korean_query(db_session) -> None:
     """한글 질의도 매칭된다(A안: 한글 포함 FTS)."""
     _seed_chunk(db_session, "c1", "doc1", "주문 목록을 조회하는 API", ref_id="ep1")

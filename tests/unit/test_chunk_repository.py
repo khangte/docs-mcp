@@ -174,6 +174,43 @@ def test_search_endpoint_by_text_excludes_non_endpoint_chunks(db_session) -> Non
     assert repo.search_endpoint_by_text(["pet"], top_k=10) == []
 
 
+def test_search_endpoint_by_text_score_terms_scores_independently_of_filter_terms(
+    db_session,
+) -> None:
+    """`score_terms` 를 주면 필터(`terms`)와 별개로 그 term 만으로 ts_rank 를 계산한다.
+
+    query_variants 배선: 필터는 원본+variant term 을 OR 로 넓히되, 점수는
+    원본 term 만으로 계산해야 한다(엔드포인트 검색도 문서 검색과 동일 규약).
+    """
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep1")
+    _seed_chunk(db_session, "c2", "doc1", "동물 조회 엔드포인트", ref_id="ep2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    # 필터는 원본("find","pet") + variant("동물","조회")로 넓어져 c2 도 후보에 들어오지만,
+    # score_terms 가 원본만이라 c2 의 ts_rank 는 0 이어야 한다.
+    hits = repo.search_endpoint_by_text(
+        ["find", "pet", "동물", "조회"], top_k=10, score_terms=["find", "pet"]
+    )
+
+    assert [h.chunk_id for h in hits] == ["c1", "c2"]
+    assert hits[0].score > 0
+    assert hits[1].score == 0.0
+
+
+def test_search_endpoint_by_text_score_terms_defaults_to_terms(db_session) -> None:
+    """`score_terms` 를 생략하면 기존처럼 `terms` 로 점수를 계산한다(하위 호환)."""
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep1")
+    _seed_chunk(db_session, "c2", "doc1", "find user", ref_id="ep2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(["find", "pet"], top_k=10)
+
+    assert [h.chunk_id for h in hits] == ["c1", "c2"]
+    assert hits[0].score > hits[1].score
+
+
 def test_search_endpoint_by_text_document_id_scopes_results(db_session) -> None:
     """document_id 를 지정하면 다른 문서의 청크는 후보에서 빠진다."""
     _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep1")

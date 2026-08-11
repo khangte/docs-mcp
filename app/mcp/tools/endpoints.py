@@ -32,6 +32,7 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
         top_k: int = 5,
         document_id: str | None = None,
         project: str | None = None,
+        query_variants: list[str] | None = None,
     ) -> EndpointSearchResponse | ErrorPayload:
         """자연어/키워드로 API 엔드포인트 후보를 가볍게 검색한다.
 
@@ -46,6 +47,11 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             project: 특정 프로젝트로 검색 범위를 제한하고 싶을 때 지정.
                 document_id 와 함께 오면 document_id 가 우선하되, 그 문서가
                 해당 project 소속이 아니면 document_not_found 오류가 된다.
+            query_variants: query 와 같은 의미의 동의어·영한 혼용·유사 표현
+                목록. 키워드 arm(FTS) 후보 필터만 넓히고 점수·순위 계산에는
+                영향을 주지 않는다 — 벡터 arm은 이미 의미 유사도로 이를
+                흡수하므로 손대지 않는다. 결과 0건 또는 부족 시 재질의할
+                때 사용.
 
         Returns:
             items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,
@@ -58,7 +64,10 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
         def _sync() -> EndpointSearchResponse | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> EndpointSearchResponse:
                 options = CandidateSearchOptions(
-                    top_k=top_k, document_id=document_id, project=project
+                    top_k=top_k,
+                    document_id=document_id,
+                    project=project,
+                    query_variants=query_variants,
                 )
                 candidates = bundle.candidate_search.search(query, options)
                 items: list[EndpointCandidateItem] = [
@@ -88,6 +97,13 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
         schema_ref 는 참조 문자열 그대로 반환하며 스키마 본문을 펼치지 않는다.
         스키마 필드가 필요하면 resolve_ref 도구로 따로 조회한다.
 
+        응답에는 다음 순회 후보도 함께 실린다(서버가 자동으로 다음 홉을
+        호출하지는 않는다 — 밟을지는 호출측 판단):
+        referenced_schema_refs(이 엔드포인트가 참조하는 스키마 ref 모음,
+        resolve_ref 로 펼칠 후보), related_endpoints(같은 문서에서 태그 또는
+        경로 접두사를 공유하는 다른 엔드포인트, get_endpoint_details 로
+        이어서 조회할 후보).
+
         Args:
             endpoint_id: search_endpoints 등에서 얻은 엔드포인트 식별자.
             include_example: True 일 때만 curl 호출 예시(example_code)를
@@ -96,10 +112,10 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Returns:
             endpoint_id, document_id, method, path, summary, description, tags,
-            parameters, request_body, responses 필드를 갖는 dict.
-            include_example=True 이면 example_code 가 추가된다. endpoint_id가
-            존재하지 않으면 error/code/message 필드를 담은 ErrorPayload를
-            대신 반환한다.
+            parameters, request_body, responses, referenced_schema_refs,
+            related_endpoints 필드를 갖는 dict. include_example=True 이면
+            example_code 가 추가된다. endpoint_id가 존재하지 않으면
+            error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
         def _sync() -> EndpointDetails | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> EndpointDetails:

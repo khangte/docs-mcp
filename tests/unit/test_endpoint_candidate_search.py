@@ -354,6 +354,36 @@ def test_narrow_scope_still_passes_candidate_ids_to_vector_search(
     assert stub.last_candidates is not None
 
 
+# --- query_variants: 키워드 arm 후보 필터만 확장(docs/12 후보4) ----------------
+
+
+def test_query_variants_widen_keyword_arm_candidate_pool(app_state) -> None:
+    """query_variants 를 넘기면 원본 질의만으로는 못 찾는 엔드포인트도 후보에 든다.
+
+    벡터 arm 은 해시 임베딩(비의미론적)으로 비활성화해, 이 테스트가 오직
+    키워드 arm 배선만 검증하게 한다.
+    """
+    raw = (
+        '{"openapi":"3.0.3","info":{"title":"Zoo","version":"1"},'
+        '"paths":{"/animals":{"get":{"operationId":"listAnimals",'
+        '"summary":"동물 조회 엔드포인트","responses":{"200":{"description":"ok"}}}}}}'
+    )
+    _register(app_state, raw)
+    app_state.vector_fallback_enabled = False
+
+    without_variants = _bundle(app_state).candidate_search.search(
+        "find pet", CandidateSearchOptions(top_k=5)
+    )
+    assert without_variants == []
+
+    with_variants = _bundle(app_state).candidate_search.search(
+        "find pet", CandidateSearchOptions(top_k=5, query_variants=["동물 조회"])
+    )
+
+    assert [c.path for c in with_variants] == ["/animals"]
+    assert all(c.match_type == "keyword" for c in with_variants)
+
+
 # --- RRF 융합: match_type="both" --------------------------------------------
 
 

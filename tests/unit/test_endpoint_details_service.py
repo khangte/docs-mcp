@@ -5,6 +5,8 @@ SPEC 기능 2 의 검증 기준을 그대로 옮긴다.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.composition import build_services
@@ -158,6 +160,118 @@ def test_endpoint_without_request_body_returns_none(
     result = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
 
     assert result.request_body is None
+
+
+# --- 순회 힌트 링크: referenced_schema_refs / related_endpoints --------------
+#
+# docs/12-rag-depth-directions.md 후보2(얇은 버전) — 서버는 판단하지 않고
+# 다음 홉 후보만 노출한다. 밟을지는 호출측(Claude)이 정한다.
+
+
+def test_referenced_schema_refs_dedups_across_request_body_and_responses(
+    app_state, sample_openapi_3: str
+) -> None:
+    """requestBody·응답이 같은 스키마를 참조해도 한 번만 노출한다(None 은 제외)."""
+    doc_id = _register(app_state, sample_openapi_3)
+    endpoint_id = _find_endpoint_id(app_state, doc_id, "POST", "/pet")
+
+    result = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+
+    # requestBody(Pet) + 응답 200(Pet) + 응답 400(schema_ref 없음) → Pet 한 번만.
+    assert result.referenced_schema_refs == ["#/components/schemas/Pet"]
+
+
+def test_referenced_schema_refs_from_parameter_schema_ref(
+    app_state, sample_openapi_3: str
+) -> None:
+    """파라미터의 schema_ref 도 집계에 포함된다(있는 경우)."""
+    doc_id = _register(app_state, sample_openapi_3)
+    endpoint_id = _find_endpoint_id(app_state, doc_id, "GET", "/pet/{petId}")
+
+    result = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+
+    # petId 파라미터는 schema_ref 가 없고, 응답 200 만 Pet 을 참조한다.
+    assert result.referenced_schema_refs == ["#/components/schemas/Pet"]
+
+
+def test_referenced_schema_refs_empty_when_endpoint_has_no_refs(
+    app_state, sample_openapi_3: str
+) -> None:
+    """어디에도 $ref 가 없으면 빈 리스트다."""
+    doc_id = _register(app_state, sample_openapi_3)
+    endpoint_id = _find_endpoint_id(app_state, doc_id, "DELETE", "/pet/{petId}")
+
+    result = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+
+    assert result.referenced_schema_refs == []
+
+
+def test_related_endpoints_includes_same_tag_and_path_prefix_siblings(
+    app_state, sample_openapi_3: str
+) -> None:
+    """같은 태그·경로 접두사를 공유하는 다른 엔드포인트를 후보로 노출한다(자기 자신 제외)."""
+    doc_id = _register(app_state, sample_openapi_3)
+    endpoint_id = _find_endpoint_id(app_state, doc_id, "GET", "/pet/{petId}")
+
+    result = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+
+    related = {(r.method, r.path) for r in result.related_endpoints}
+    assert related == {("POST", "/pet"), ("DELETE", "/pet/{petId}")}
+    assert (endpoint_id, "GET", "/pet/{petId}") not in {
+        (r.endpoint_id, r.method, r.path) for r in result.related_endpoints
+    }
+
+
+def test_related_endpoints_excludes_unrelated_tag_and_prefix(
+    app_state, sample_openapi_3: str
+) -> None:
+    """태그도 경로 접두사도 겹치지 않는 엔드포인트는 후보에서 빠진다."""
+    doc_id = _register(app_state, sample_openapi_3)
+    endpoint_id = _find_endpoint_id(app_state, doc_id, "POST", "/user")
+
+    result = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+
+    assert result.related_endpoints == []
+
+
+def test_related_endpoints_capped_and_deterministic(app_state) -> None:
+    """관련 엔드포인트가 많아도 상한을 넘지 않고, 반복 호출 시 순서가 같다."""
+    paths = {
+        f"/pet/sub{i}": {
+            "get": {
+                "operationId": f"getSub{i}",
+                "summary": f"sub {i}",
+                "tags": ["pet"],
+                "responses": {"200": {"description": "ok"}},
+            }
+        }
+        for i in range(15)
+    }
+    raw = json.dumps(
+        {
+            "openapi": "3.0.3",
+            "info": {"title": "Many", "version": "1"},
+            "paths": {
+                "/pet": {
+                    "get": {
+                        "operationId": "listPets",
+                        "summary": "list pets",
+                        "tags": ["pet"],
+                        "responses": {"200": {"description": "ok"}},
+                    }
+                },
+                **paths,
+            },
+        }
+    )
+    doc_id = _register(app_state, raw)
+    endpoint_id = _find_endpoint_id(app_state, doc_id, "GET", "/pet")
+
+    first = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+    second = _bundle(app_state).endpoint_details_service.get_details(endpoint_id)
+
+    assert 0 < len(first.related_endpoints) <= 10
+    assert first.related_endpoints == second.related_endpoints
 
 
 # --- 에러 케이스 -------------------------------------------------------------

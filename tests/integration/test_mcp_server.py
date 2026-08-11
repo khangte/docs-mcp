@@ -75,7 +75,7 @@ async def test_search_endpoints_has_no_mode_parameter(mcp_server: FastMCP) -> No
     properties = await _tool_parameters(mcp_server, "search_endpoints")
 
     assert "mode" not in properties
-    assert set(properties) == {"query", "top_k", "document_id", "project"}
+    assert set(properties) == {"query", "top_k", "document_id", "project", "query_variants"}
 
 
 @pytest.mark.asyncio()
@@ -154,6 +154,38 @@ async def test_search_no_match_returns_empty_items(seeded_mcp: FastMCP) -> None:
     assert result.structured_content["result"]["items"] == []
 
 
+@pytest.mark.asyncio()
+async def test_search_query_variants_widen_keyword_candidate_pool(
+    app_state, sample_openapi_3: str
+) -> None:
+    """query_variants 로 넘긴 동의어도 키워드 arm 후보 필터에 반영된다(docs/12 후보4).
+
+    벡터 arm 은 해시 임베딩(비의미론적)이라 비활성화해 키워드 arm 배선만 검증한다.
+    """
+    app_state.vector_fallback_enabled = False
+    mcp = create_mcp_server(app_state)
+    await mcp.call_tool(
+        "register_document", arguments={"project": "default", "raw_document": sample_openapi_3}
+    )
+
+    without_variants = await mcp.call_tool(
+        "search_endpoints", arguments={"query": "강아지를 아이디로 찾기"}
+    )
+    assert without_variants.structured_content["result"]["items"] == []
+
+    with_variants = await mcp.call_tool(
+        "search_endpoints",
+        arguments={
+            "query": "강아지를 아이디로 찾기",
+            "query_variants": ["find pet by id"],
+        },
+    )
+    items = with_variants.structured_content["result"]["items"]
+
+    assert items
+    assert any(item["path"] == "/pet/{petId}" for item in items)
+
+
 # --- 기능 2: get_endpoint_details -------------------------------------------
 
 
@@ -199,6 +231,43 @@ async def test_details_exposes_schema_ref(seeded_mcp: FastMCP) -> None:
 
     assert details["request_body"]["schema_ref"] == "#/components/schemas/Pet"
     assert "properties" not in details["request_body"]["schema"]
+
+
+@pytest.mark.asyncio()
+async def test_details_exposes_traversal_hints(seeded_mcp: FastMCP) -> None:
+    """상세 응답에 순회 힌트(referenced_schema_refs·related_endpoints)가 실린다.
+
+    서버는 다음 홉을 자동으로 호출하지 않는다 — 힌트는 후보 노출일 뿐이다
+    (`docs/12-rag-depth-directions.md` 후보2 얇은 버전).
+    """
+    candidate = await _first_candidate(seeded_mcp, "find pet by id")
+
+    result = await seeded_mcp.call_tool(
+        "get_endpoint_details", arguments={"endpoint_id": candidate["endpoint_id"]}
+    )
+    details = result.structured_content["result"]
+
+    assert details["referenced_schema_refs"] == ["#/components/schemas/Pet"]
+    related = {(r["method"], r["path"]) for r in details["related_endpoints"]}
+    assert related  # /pet 태그를 공유하는 다른 엔드포인트가 있어야 검증이 의미 있다
+    assert (candidate["method"], candidate["path"]) not in related
+
+
+@pytest.mark.asyncio()
+async def test_search_endpoints_do_not_carry_traversal_hints(seeded_mcp: FastMCP) -> None:
+    """search_endpoints 후보는 얇은 후보 계약을 유지하며 순회 힌트를 싣지 않는다.
+
+    순회 힌트는 get_endpoint_details 전용이다 — search_endpoints 에까지
+    실으면 파라미터/응답 추가 조회가 필요해 2단계 분리(후보 피더 정체성)를
+    훼손한다(architect 판단, docs/12 후보2/후보3 근거).
+    """
+    result = await seeded_mcp.call_tool("search_endpoints", arguments={"query": "pet"})
+    items = result.structured_content["result"]["items"]
+
+    assert items
+    for item in items:
+        assert "referenced_schema_refs" not in item
+        assert "related_endpoints" not in item
 
 
 @pytest.mark.asyncio()

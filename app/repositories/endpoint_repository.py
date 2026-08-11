@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.openapi import ApiDocument, ApiEndpoint, ApiSchema, ApiSection
@@ -61,6 +61,41 @@ class EndpointRepository:
                 ApiDocument.project == project
             )
         stmt = stmt.order_by(ApiEndpoint.path, ApiEndpoint.method)
+        return self._session.execute(stmt).scalars().all()
+
+    def list_related(
+        self,
+        document_id: str,
+        exclude_endpoint_id: str,
+        tags: Sequence[str],
+        path_prefix: str,
+        limit: int,
+    ) -> Sequence[ApiEndpoint]:
+        """같은 문서 내에서 태그 또는 경로 접두사를 공유하는 엔드포인트를 SQL 로 직접 찾는다.
+
+        `get_endpoint_details` 의 순회 힌트(`related_endpoints`)용이다. 문서
+        전체를 적재해 Python 에서 걸러내지 않고, 필터(태그 OR 경로 접두사)와
+        `LIMIT` 을 SQL 로 내려 필요한 건수만 가져온다(대량 엔드포인트
+        문서에서도 비용이 고정). `tags` 는 `list_by_endpoint_filter` 와 같은
+        방식(`tags_json.contains`)으로 매칭하고, `path_prefix` 는 그 자체와
+        일치하거나 `f"{path_prefix}/"` 로 시작하는 경로를 매칭한다(첫 경로
+        세그먼트 동일 판정). 둘 다 비었으면(빈 tags, 빈 prefix) 매칭 조건이
+        없으므로 쿼리 없이 빈 결과를 반환한다.
+        """
+        conditions = [ApiEndpoint.tags_json.contains(f'"{tag}"') for tag in tags]
+        if path_prefix:
+            conditions.append(ApiEndpoint.path == path_prefix)
+            conditions.append(ApiEndpoint.path.like(f"{path_prefix}/%"))
+        if not conditions:
+            return []
+        stmt = (
+            select(ApiEndpoint)
+            .where(ApiEndpoint.document_id == document_id)
+            .where(ApiEndpoint.id != exclude_endpoint_id)
+            .where(or_(*conditions))
+            .order_by(ApiEndpoint.path, ApiEndpoint.method)
+            .limit(limit)
+        )
         return self._session.execute(stmt).scalars().all()
 
     def get_schema_by_name(self, document_id: str, name: str) -> ApiSchema | None:

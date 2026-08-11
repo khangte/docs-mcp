@@ -6,7 +6,14 @@ from app.models.openapi import ApiDocument, ApiEndpoint
 from app.repositories.endpoint_repository import EndpointRepository
 
 
-def _seed_endpoint(session, endpoint_id: str, document_id: str = "doc-1") -> None:
+def _seed_endpoint(
+    session,
+    endpoint_id: str,
+    document_id: str = "doc-1",
+    method: str = "GET",
+    path: str | None = None,
+    tags: list[str] | None = None,
+) -> None:
     """엔드포인트 한 건을 저장한다(문서가 없으면 함께 만든다)."""
     if session.get(ApiDocument, document_id) is None:
         session.add(
@@ -20,15 +27,16 @@ def _seed_endpoint(session, endpoint_id: str, document_id: str = "doc-1") -> Non
             )
         )
         session.flush()
-    session.add(
-        ApiEndpoint(
-            id=endpoint_id,
-            document_id=document_id,
-            method="GET",
-            path=f"/{endpoint_id}",
-            summary=f"{endpoint_id} 조회",
-        )
+    endpoint = ApiEndpoint(
+        id=endpoint_id,
+        document_id=document_id,
+        method=method,
+        path=path or f"/{endpoint_id}",
+        summary=f"{endpoint_id} 조회",
     )
+    if tags is not None:
+        endpoint.tags = tags
+    session.add(endpoint)
 
 
 # --- Q3: get_many(ids) 배치 조회 ---------------------------------------------
@@ -64,3 +72,116 @@ def test_get_many_empty_input_returns_empty_mapping(db_session) -> None:
     repo = EndpointRepository(db_session)
 
     assert repo.get_many([]) == {}
+
+
+# --- list_related: 순회 힌트(태그/경로 접두사 OR, SQL 필터+LIMIT) --------------
+
+
+def test_list_related_matches_by_shared_tag(db_session) -> None:
+    """태그를 공유하면 경로 접두사가 달라도 후보에 든다."""
+    _seed_endpoint(db_session, "self", path="/pet/{id}", tags=["pet"])
+    _seed_endpoint(db_session, "sib", path="/store/order", tags=["pet"])
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_related(
+        document_id="doc-1",
+        exclude_endpoint_id="self",
+        tags=["pet"],
+        path_prefix="/pet",
+        limit=10,
+    )
+
+    assert [e.id for e in result] == ["sib"]
+
+
+def test_list_related_matches_by_path_prefix(db_session) -> None:
+    """태그가 달라도 경로 접두사(첫 세그먼트)를 공유하면 후보에 든다."""
+    _seed_endpoint(db_session, "self", path="/pet/{id}", tags=["pet"])
+    _seed_endpoint(db_session, "sib", path="/pet/food", tags=["nutrition"])
+    _seed_endpoint(db_session, "unrelated", path="/petstore", tags=["other"])
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_related(
+        document_id="doc-1",
+        exclude_endpoint_id="self",
+        tags=["pet"],
+        path_prefix="/pet",
+        limit=10,
+    )
+
+    # "/petstore" 는 첫 세그먼트가 "petstore" 라 "/pet" 접두사와 다르다.
+    assert [e.id for e in result] == ["sib"]
+
+
+def test_list_related_excludes_self(db_session) -> None:
+    """exclude_endpoint_id 로 지정한 자기 자신은 결과에서 빠진다."""
+    _seed_endpoint(db_session, "self", path="/pet/{id}", tags=["pet"])
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_related(
+        document_id="doc-1",
+        exclude_endpoint_id="self",
+        tags=["pet"],
+        path_prefix="/pet",
+        limit=10,
+    )
+
+    assert result == []
+
+
+def test_list_related_scopes_to_document(db_session) -> None:
+    """다른 문서의 엔드포인트는 태그/경로가 겹쳐도 후보에서 빠진다."""
+    _seed_endpoint(db_session, "self", document_id="doc-1", path="/pet/{id}", tags=["pet"])
+    _seed_endpoint(db_session, "other-doc", document_id="doc-2", path="/pet/food", tags=["pet"])
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_related(
+        document_id="doc-1",
+        exclude_endpoint_id="self",
+        tags=["pet"],
+        path_prefix="/pet",
+        limit=10,
+    )
+
+    assert result == []
+
+
+def test_list_related_respects_limit(db_session) -> None:
+    """limit 를 초과하는 결과는 반환하지 않는다."""
+    _seed_endpoint(db_session, "self", path="/pet/{id}", tags=["pet"])
+    for i in range(5):
+        _seed_endpoint(db_session, f"sib-{i}", path=f"/pet/{i}", tags=["pet"])
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_related(
+        document_id="doc-1",
+        exclude_endpoint_id="self",
+        tags=["pet"],
+        path_prefix="/pet",
+        limit=2,
+    )
+
+    assert len(result) == 2
+
+
+def test_list_related_no_tags_or_prefix_returns_empty_without_query(db_session) -> None:
+    """태그도 경로 접두사도 없으면 쿼리 없이 빈 결과를 반환한다."""
+    _seed_endpoint(db_session, "self", path="/", tags=[])
+    _seed_endpoint(db_session, "other", path="/pet", tags=["pet"])
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_related(
+        document_id="doc-1",
+        exclude_endpoint_id="self",
+        tags=[],
+        path_prefix="",
+        limit=10,
+    )
+
+    assert result == []

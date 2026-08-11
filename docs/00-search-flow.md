@@ -10,9 +10,9 @@
 >
 > 코드와 이 문서가 어긋나면 신규 참여자가 잘못된 그림을 갖게 된다. **코드가 진실, 문서는 그 요약**임을 전제로, 흐름·파일·함수 위치가 바뀌면 반드시 반영한다.
 
-- 최종 갱신: 2026-08-11 (reviewer 대조검토 반영: 라인번호 정정, 누락 분기 2건 추가)
+- 최종 갱신: 2026-08-12 (developer: `query_variants`를 엔드포인트 키워드 arm에도 배선 — `docs/12-rag-depth-directions.md` 후보4)
 - 작성: architect
-- 관련 설계 근거: `docs/07-search-rrf-reevaluation.md`(RRF), `docs/04-search-p1-keyword-fts-design.md`(키워드 FTS), `docs/03-search-performance-improvements.md`(P1~P6), `docs/10-collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등)
+- 관련 설계 근거: `docs/07-search-rrf-reevaluation.md`(RRF), `docs/04-search-p1-keyword-fts-design.md`(키워드 FTS), `docs/03-search-performance-improvements.md`(P1~P6), `docs/10-collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등), `docs/12-rag-depth-directions.md`(후보4: query_variants 확장)
 
 ---
 
@@ -49,18 +49,18 @@
 
 ### 2.2 rrf 전략 단계별 흐름
 
-1. **입력 검증·스코프 확정** — `_validate` (`:168`). 빈 질의·top_k 범위(1~50) 체크, `document_id`/`project` 스코프 해석(미등록 document_id는 `DocumentNotFoundError`로 구분).
+1. **입력 검증·스코프 확정** — `_validate` (`:195`). 빈 질의·top_k 범위(1~50) 체크, `document_id`/`project` 스코프 해석(미등록 document_id는 `DocumentNotFoundError`로 구분).
 2. **endpoint 청크 존재 확인** — `chunk_repo.has_endpoint_chunks` (`chunk_repository.py:121`). 스코프에 endpoint 청크가 아예 없으면 검색·임베딩 없이 즉시 `[]`.
-3. **후보 폭 N 계산** — `width = max(top_k * 4, 50)` (`:148`, 상수 `_CANDIDATE_WIDTH_MULTIPLIER=4`, `_MIN_CANDIDATE_WIDTH=50`). 정답이 한쪽 arm 상위에만 있어도 융합에서 건지도록 top_k보다 넓게 조회한다.
+3. **후보 폭 N 계산** — `width = max(top_k * 4, 50)` (`:169`, 상수 `_CANDIDATE_WIDTH_MULTIPLIER=4`, `_MIN_CANDIDATE_WIDTH=50`). 정답이 한쪽 arm 상위에만 있어도 융합에서 건지도록 top_k보다 넓게 조회한다.
 4. **키워드 arm(FTS)** — `KeywordSearch.search` (`keyword_search.py:38`)
-   - 질의를 `tokenize_terms`(`keyword_search.py:13`, 정규식 `[0-9A-Za-z_]+|[가-힣]+`, 소문자화)로 term 분해.
-   - `chunk_repo.search_endpoint_by_text` (`chunk_repository.py:140`): term들을 `|`(OR)로 결합해 `to_tsquery('simple', ...)`를 만들고, `api_chunk.text_tsv` **GIN 인덱스**(`ix_api_chunk_text_tsv`)에 `@@` 매칭. 각 term은 리터럴 lexeme으로 인용(`_quote_tsquery_lexeme`, tsquery 연산자 오인 방지). 정렬은 `ts_rank` 내림차순, 동점이면 `id` 오름차순(결정적). 스코프(document_id/project)는 SQL WHERE + `ApiDocument` JOIN으로 필터.
+   - 질의를 `tokenize_terms`(`keyword_search.py:13`, 정규식 `[0-9A-Za-z_]+|[가-힣]+`, 소문자화)로 term 분해. 호출자(Claude)가 `CandidateSearchOptions.query_variants`로 동의어/유사 표현을 넘기면 같은 토크나이저로 분해해 필터 term 에 합류시킨다(**docs/12-rag-depth-directions.md** 후보4 — 협업문서 검색과 동일 규약: variant는 필터만 넓히고 점수엔 안 섞는다).
+   - `chunk_repo.search_endpoint_by_text` (`chunk_repository.py:140`): 필터 term(원본+variant)들을 `|`(OR)로 결합해 `to_tsquery('simple', ...)`를 만들고, `api_chunk.text_tsv` **GIN 인덱스**(`ix_api_chunk_text_tsv`)에 `@@` 매칭. 각 term은 리터럴 lexeme으로 인용(`_quote_tsquery_lexeme`, tsquery 연산자 오인 방지). **`ts_rank` 점수는 별도 `score_terms`(원본 질의 term만, `query_variants` 생략 시 필터 term과 동일)로 계산**해, variant 매칭만 있는 후보가 원본 매칭 후보보다 부당하게 높은 순위를 받지 않게 한다. 정렬은 그 점수 내림차순, 동점이면 `id` 오름차순(결정적). 스코프(document_id/project)는 SQL WHERE + `ApiDocument` JOIN으로 필터.
    - `text_tsv`는 `TEXT_TSV_EXPRESSION`(`app/models/openapi.py:46`)으로 채워지는 STORED generated 컬럼 — ASCII↔한글 경계에 공백을 삽입한 뒤 `to_tsvector('simple', ...)`로 만든다(한글 단어·경로 세그먼트·혼합복합어 매칭).
    - 결과에서 `ref_id`(=endpoint_id) 순위 리스트를 뽑는다.
 5. **벡터 arm(pgvector HNSW)** — 벡터 arm이 활성(`vector_fallback_enabled=True`, 즉 `is_semantic` 임베딩)일 때만:
    - `chunk_repo.list_endpoint_chunk_ids` (`chunk_repository.py:104`)로 스코프 내 endpoint 청크 ID 집합을 가볍게 조회(후보 제한용).
-   - `VectorSearch.search` (`vector_search.py:32`): 질의를 `embedding_provider.embed_query`로 임베딩(로컬 `multilingual-e5-small`, `query:` 접두사 — `embedding_provider.py:146`). 로컬 provider는 같은 질의 재임베딩을 피하려 **쿼리 임베딩을 LRU 캐시**한다(`LocalEmbeddingProvider`, `functools.lru_cache`, 장수 `AppState`에 상주).
-   - `chunk_repo.search_by_vector` (`chunk_repository.py:245`): 쿼리 실행 직전 `SET LOCAL hnsw.ef_search = max(100, top_k)`(`_HNSW_EF_SEARCH=100`, 트랜잭션 스코프)로 넓은 후보폭에서도 HNSW recall을 확보한다. 이어 pgvector 코사인 거리(`<=>`, `embedding` 컬럼의 **HNSW 인덱스** `ix_api_chunk_embedding_hnsw`/`vector_cosine_ops`)로 top-N, 유사도=`1-거리`. `ref_id`를 SQL로 함께 프로젝션(역매핑용 전체 적재 불필요). `candidate_ids IN (...)`로 후보 제한.
+   - `VectorSearch.search` (`vector_search.py:32`): 질의를 `embedding_provider.embed_query`로 임베딩(로컬 `multilingual-e5-small`, `query:` 접두사 — `embedding_provider.py:146`). 로컬 provider는 같은 질의 재임베딩을 피하려 **쿼리 임베딩을 LRU 캐시**한다(`LocalEmbeddingProvider`, `functools.lru_cache`, 장수 `AppState`에 상주). `query_variants`는 이 arm에는 배선하지 않는다 — 벡터 arm은 이미 의미 유사도로 동의어/유사 표현을 흡수한다.
+   - `chunk_repo.search_by_vector` (`chunk_repository.py:263`): 쿼리 실행 직전 `SET LOCAL hnsw.ef_search = max(100, top_k)`(`_HNSW_EF_SEARCH=100`, 트랜잭션 스코프)로 넓은 후보폭에서도 HNSW recall을 확보한다. 이어 pgvector 코사인 거리(`<=>`, `embedding` 컬럼의 **HNSW 인덱스** `ix_api_chunk_embedding_hnsw`/`vector_cosine_ops`)로 top-N, 유사도=`1-거리`. `ref_id`를 SQL로 함께 프로젝션(역매핑용 전체 적재 불필요). `candidate_ids IN (...)`로 후보 제한.
    - 점수 0 이하 후보는 제외하고 `ref_id` 순위 리스트를 뽑는다.
    - 벡터 arm 비활성(해시 폴백 등 `is_semantic=False`)이면 이 단계를 조용히 생략하고 **키워드 단독 순위로 degrade**.
 6. **RRF 융합** — `reciprocal_rank_fuse` (`rrf.py:42`)
@@ -68,7 +68,7 @@
    - `score(ref) = Σ_arm 1/(K + rank_arm(ref))`, `K=60`(`RRF_K`, 상수 고정·env 미노출). 해당 arm에 없으면 그 항은 0.
    - `match_type`: 양쪽 등장=`both`, 키워드만=`keyword`, 벡터만=`vector`.
    - 정렬: score 내림차순, **동점이면 ref_id 오름차순**(결정적 tie-break — 골든 회귀 테스트 전제). top_k로 컷.
-7. **DTO 변환** — `_to_candidates_from_fused` (`:247`). `endpoint_repo.get(ref_id)`로 method/path/summary를 채워 `EndpointCandidate` 리스트 반환. 참조 깨진 ref_id는 경고 로그 후 건너뜀.
+7. **DTO 변환** — `_to_candidates_from_fused` (`:288`). `endpoint_repo.get(ref_id)`로 method/path/summary를 채워 `EndpointCandidate` 리스트 반환. 참조 깨진 ref_id는 경고 로그 후 건너뜀.
 
 ### 2.3 mermaid — 엔드포인트 검색(rrf)
 
@@ -82,7 +82,7 @@ flowchart TD
     D -->|"있음"| STRAT{"search_strategy"}
     STRAT -->|"fallback"| FB["키워드 먼저 →<br/>0건일 때만 벡터"]
     STRAT -->|"rrf (기본)"| W["후보 폭 N = max(top_k*4, 50)"]
-    W --> KW["키워드 arm (FTS)<br/>KeywordSearch.search<br/>to_tsquery + ts_rank<br/>text_tsv GIN"]
+    W --> KW["키워드 arm (FTS)<br/>KeywordSearch.search<br/>필터=원본+query_variants term(OR)<br/>ts_rank=원본 term만<br/>text_tsv GIN"]
     W --> VECGATE{"벡터 arm 활성?<br/>(is_semantic)"}
     VECGATE -->|"예"| VEC["벡터 arm (pgvector)<br/>embed_query →<br/>cosine HNSW top-N"]
     VECGATE -->|"아니오"| SKIP["벡터 생략<br/>(키워드 단독 degrade)"]
@@ -147,6 +147,6 @@ flowchart TD
 ## 4. 두 경로의 공통 원칙 (설계 메모)
 
 - **스코프 필터는 SQL로** — 두 경로 모두 document_id/project/source 범위를 Python이 아니라 SQL WHERE(+JOIN)로 좁힌다. 전체 행을 메모리에 적재하지 않는다.
-- **질의 확장은 호출측 LLM의 몫** — 서버는 동의어/약어 확장을 위해 별도 LLM을 호출하지 않는다. 엔드포인트 검색은 벡터 arm이 의미 유사도를 담당하고, 문서 검색은 호출자가 넘긴 `query_variants`를 **후보 필터에만** 쓴다(점수엔 원본 토큰만).
+- **질의 확장은 호출측 LLM의 몫** — 서버는 동의어/약어 확장을 위해 별도 LLM을 호출하지 않는다. 두 경로 모두 호출자가 넘긴 `query_variants`를 **키워드 후보 필터(FTS OR / ILIKE)에만** 쓰고 점수는 원본 질의 토큰만으로 계산한다(`docs/12-rag-depth-directions.md` 후보4). 엔드포인트 검색의 벡터 arm은 `query_variants`를 받지 않는다 — 이미 의미 유사도로 동의어/유사 표현을 흡수하기 때문이다.
 - **결정성** — 두 경로 모두 동점 tie-break를 고정 키(ref_id / external_id / title)로 못박아 결과가 결정적이다(엔드포인트 검색은 골든 회귀 테스트 전제).
 - **"없음"의 구분** — 미등록 document_id·미구성 소스는 빈 결과가 아니라 명시적 오류로 구분해, 호출 LLM이 "문서 없음"과 "결과 없음"을 혼동하지 않게 한다.
