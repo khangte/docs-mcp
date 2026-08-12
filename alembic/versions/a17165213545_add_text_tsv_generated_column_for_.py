@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-from app.models.openapi import TEXT_TSV_EXPRESSION
+from app.models.chunk import TEXT_TSV_EXPRESSION
 
 
 # revision identifiers, used by Alembic.

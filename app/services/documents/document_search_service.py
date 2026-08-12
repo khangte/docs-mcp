@@ -34,8 +34,8 @@ from dataclasses import dataclass, replace
 
 from app.core.errors import IntegrationError, ValidationError
 from app.core.logging import get_logger
+from app.models import DEFAULT_PROJECT
 from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
-from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,

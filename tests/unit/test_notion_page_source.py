@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from app.core.errors import ValidationError
-from app.models.openapi import DEFAULT_PROJECT
+from app.models import DEFAULT_PROJECT
 from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.documents.sources.notion_source import NotionSource
 from app.services.documents.project_source_service import ProjectSourceService

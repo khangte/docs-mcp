@@ -25,8 +25,8 @@ from sqlalchemy import text as sa_text
 
 from app.core.config import Settings
 from app.core.db import create_db_engine, create_session_factory
+from app.models import ApiChunk, ApiDocument, ApiEndpoint, create_all
 from app.models.document_meta import SOURCE_DRIVE, DocumentMeta
-from app.models.openapi import ApiChunk, ApiDocument, ApiEndpoint, create_all
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository

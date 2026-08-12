@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import create_session_factory
-from app.models.openapi import EMBEDDING_DIM
+from app.models import EMBEDDING_DIM
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository

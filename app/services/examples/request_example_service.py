@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 from app.core.errors import EndpointNotFoundError, ValidationError
-from app.models.openapi import (
+from app.models import (
     ApiEndpoint,
     ApiParameter,
     ApiRequestBody,

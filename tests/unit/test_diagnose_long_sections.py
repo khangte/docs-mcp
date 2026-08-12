@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import create_db_engine
-from app.models.openapi import ApiChunk, ApiDocument, create_all
+from app.models import ApiChunk, ApiDocument, create_all
 from app.scripts.diagnose_long_sections import diagnose
 
 _ADMIN_DATABASE_URL = "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"

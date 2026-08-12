@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.errors import DocumentNotFoundError, ValidationError
-from app.models.openapi import PROJECT_MAX_LENGTH
+from app.models import PROJECT_MAX_LENGTH
 from app.services.project_scope import normalize_project, resolve_document_scope
 
 # --- normalize_project ---------------------------------------------------------

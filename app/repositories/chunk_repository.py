@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session, defer
 
-from app.models.openapi import ApiChunk, ApiDocument, ApiEndpoint
+from app.models import ApiChunk, ApiDocument, ApiEndpoint
 
 #: 벡터 검색 시 강제할 hnsw.ef_search 하한. 기본값(40)은 RRF 융합용 넓은 후보폭
 #: (top_k 최대 200)보다 작아 recall 을 깎을 수 있어 세션 GUC 로 올려 잡는다.

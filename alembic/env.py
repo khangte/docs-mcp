@@ -7,13 +7,13 @@ from sqlalchemy import text as sa_text
 from alembic import context
 
 from app.core.config import get_settings
-from app.models.openapi import SCHEMA, Base
 
-# Base.metadata 에 별도 모듈로 분리된 모델을 등록해 autogenerate 대상에 포함시킨다.
-# 빠지면 실제 DB 에는 있는 테이블이 "메타데이터엔 없다"고 오판되어
-# autogenerate 가 잘못된 DROP TABLE 마이그레이션을 만든다.
-import app.models.document_meta  # noqa: F401,E402
-import app.models.project_source  # noqa: F401,E402
+# app.models(등록 허브)가 전 모델 모듈을 import 해 Base.metadata 에 등록한다.
+# 빠짐없이 여기 한 줄로 끝나므로, 새 모델 모듈이 추가돼도 env.py 를 건드릴
+# 필요가 없다(과거 project_drive_source/project_notion_source 누락 사건과
+# 동종 버그를 구조적으로 막는 지점).
+import app.models  # noqa: E402
+from app.models import SCHEMA, Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

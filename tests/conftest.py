@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.composition import AppState
 from app.core.db import create_db_engine, create_session_factory
+from app.models import DEFAULT_PROJECT, EMBEDDING_DIM, create_all
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.models.openapi import DEFAULT_PROJECT, EMBEDDING_DIM, create_all
 from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher

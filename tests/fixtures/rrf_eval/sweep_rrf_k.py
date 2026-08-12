@@ -23,7 +23,7 @@ from pathlib import Path
 
 from app.composition import AppState, build_services
 from app.core.db import create_db_engine
-from app.models.openapi import create_all
+from app.models import create_all
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from app.services.search.rrf import RRF_K, reciprocal_rank_fuse
 from compare_strategies import (  # type: ignore[import-not-found]

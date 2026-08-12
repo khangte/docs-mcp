@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.models.openapi import ApiChunk, ApiDocument
+from app.models import ApiChunk, ApiDocument
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.search.keyword_search import KeywordSearch, tokenize_terms
 

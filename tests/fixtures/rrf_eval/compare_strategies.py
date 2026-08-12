@@ -27,7 +27,7 @@ from sqlalchemy import text
 
 from app.composition import AppState, build_services
 from app.core.db import create_db_engine
-from app.models.openapi import create_all
+from app.models import create_all
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
 

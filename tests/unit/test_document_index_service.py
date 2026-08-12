@@ -12,8 +12,8 @@ from datetime import datetime
 import pytest
 
 from app.core.errors import IntegrationError
+from app.models import DEFAULT_PROJECT
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_index_service import BATCH_SIZE, DocumentIndexService
 

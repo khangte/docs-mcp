@@ -27,7 +27,7 @@ from sqlalchemy import text
 import app.services.indexer.indexer_service as indexer_service_module
 from app.composition import AppState, build_services
 from app.core.db import create_db_engine
-from app.models.openapi import create_all
+from app.models import create_all
 from app.services.indexer.chunk_builder import (
     BuiltChunk,
     build_chunks as build_chunks_baseline,

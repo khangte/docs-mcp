@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.models.openapi import DocumentSyncHistory
+from app.models import DocumentSyncHistory
 
 
 class SyncHistoryRepository:

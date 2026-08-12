@@ -20,7 +20,7 @@ import re
 import pytest
 
 from app.composition import build_services
-from app.models.openapi import ApiChunk
+from app.models import ApiChunk
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
 from app.services.search.keyword_search import KeywordSearch
@@ -145,7 +145,7 @@ def test_ascii_recall_gate_catches_mixed_script_compound_regression(app_state) -
 def test_more_distinct_overlap_ranks_not_lower(db_session) -> None:
     """더 많은 distinct 질의 토큰을 포함한 청크가 더 적게 포함한 청크보다
     순위가 낮지 않다(단조성)."""
-    from app.models.openapi import ApiDocument
+    from app.models import ApiDocument
 
     db_session.add(
         ApiDocument(
@@ -182,7 +182,7 @@ def test_more_distinct_overlap_ranks_not_lower(db_session) -> None:
 
 def test_symbol_only_query_returns_empty(db_session) -> None:
     """검색 가능한 term 이 없는 질의(기호만)는 빈 리스트다."""
-    from app.models.openapi import ApiDocument
+    from app.models import ApiDocument
 
     db_session.add(
         ApiDocument(

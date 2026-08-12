@@ -20,8 +20,8 @@ from datetime import datetime
 import pytest
 
 from app.core.errors import IntegrationError, ValidationError
+from app.models import DEFAULT_PROJECT
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
-from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_search_service import (
     BODY_FETCH_OVERSCAN,

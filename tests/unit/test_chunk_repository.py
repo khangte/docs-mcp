@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.orm import attributes
 
-from app.models.openapi import EMBEDDING_DIM, ApiChunk, ApiDocument
+from app.models import EMBEDDING_DIM, ApiChunk, ApiDocument
 from app.repositories.chunk_repository import ChunkRepository
 
 

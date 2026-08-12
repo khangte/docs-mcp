@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.openapi import PROJECT_MAX_LENGTH, Base
+from app.models.base import PROJECT_MAX_LENGTH, Base
 
 
 def _utcnow() -> datetime:

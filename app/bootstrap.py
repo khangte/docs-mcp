@@ -10,8 +10,8 @@ from sqlalchemy.engine import Engine
 from app.composition import AppState
 from app.core.config import Settings, get_settings
 from app.core.db import create_db_engine, create_session_factory, managed_session
+from app.models import DEFAULT_PROJECT, create_all
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.models.openapi import DEFAULT_PROJECT, create_all
 from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher
 

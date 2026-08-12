@@ -12,7 +12,7 @@ import math
 
 import pytest
 
-from app.models.openapi import EMBEDDING_DIM
+from app.models import EMBEDDING_DIM
 from app.services.indexer.embedding_provider import LocalEmbeddingProvider
 
 

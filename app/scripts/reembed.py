@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.bootstrap import bootstrap_app_state
 from app.composition import AppState
-from app.models.openapi import ApiChunk
+from app.models import ApiChunk
 
 logger = logging.getLogger(__name__)
 

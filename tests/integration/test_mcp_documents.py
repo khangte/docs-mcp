@@ -14,8 +14,8 @@ import pytest
 from fastmcp import FastMCP
 
 from app.mcp.server import create_mcp_server
+from app.models import DEFAULT_PROJECT
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.models.openapi import DEFAULT_PROJECT
 from app.services.documents.document_search_service import _body_fetch_budget
 
 DOCUMENT_TOOL_NAMES = {"search_documents", "get_document", "refresh_index"}

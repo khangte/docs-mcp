@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from app.composition import build_services
-from app.models.openapi import EMBEDDING_DIM
+from app.models import EMBEDDING_DIM
 from app.scripts.reembed import reembed_all
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
 

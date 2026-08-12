@@ -2,8 +2,8 @@
 
 `document_meta` 는 협업 문서(Google Drive / Notion)의 **메타데이터만** 보관한다.
 본문은 저장하지 않고 검색 시점에 원본 API 에서 실시간으로 가져온다(SPEC 기능 6).
-OpenAPI 경로(`app/models/openapi.py`)와 같은 `Base`/스키마를 재사용하되,
-성격이 다른 도메인이므로 파일을 분리한다.
+다른 도메인 모델과 같은 `Base`/스키마를 재사용하되, 성격이 다른 도메인이므로
+파일을 분리한다.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.openapi import PROJECT_MAX_LENGTH, Base
+from app.models.base import PROJECT_MAX_LENGTH, Base
 
 #: `document_meta.source` 로 허용되는 값.
 SOURCE_DRIVE = "drive"

@@ -10,8 +10,8 @@ from datetime import datetime
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.models import DEFAULT_PROJECT
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
-from app.models.openapi import DEFAULT_PROJECT
 from app.repositories.document_meta_repository import DocumentMetaRepository
 
 _NOW = datetime(2026, 7, 1, 9, 0, 0)

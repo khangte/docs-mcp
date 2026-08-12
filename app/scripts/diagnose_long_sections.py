@@ -24,7 +24,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import create_db_engine
-from app.models.openapi import SCHEMA, ApiChunk, ApiDocument
+from app.models import SCHEMA, ApiChunk, ApiDocument
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.errors import ValidationError
-from app.models.openapi import ApiSchema
+from app.models import ApiSchema
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope

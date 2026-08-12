@@ -5,12 +5,12 @@
 변형 축은 "청킹"이 아니라 "임베딩 provider + 벡터 컬럼 dim"이다.
 
 **비자명한 마찰(docs/15 §3-1)**: `ApiChunk.embedding = mapped_column(Vector(EMBEDDING_DIM))`
-은 `app/models/openapi.py` **import 시점**에 dim이 고정된다. 런타임에 상수만
+은 `app/models/chunk.py` **import 시점**에 dim이 고정된다. 런타임에 상수만
 바꿔도 이미 정의된 컬럼 타입은 안 바뀐다. 이 스크립트는 §3-1 권장안(모델별
 서브프로세스 격리)을 따른다 — 각 변형을 `--worker` 서브프로세스로 띄우고,
-그 프로세스가 `app.models.openapi`를 import하기 **전에** 소스 코드 레벨에서
+그 프로세스가 `app.models.chunk`를 import하기 **전에** 소스 코드 레벨에서
 `EMBEDDING_DIM` 상수를 후보 dim으로 패치한 모듈을 `sys.modules`에 미리
-등록한다. 프로덕션 파일(`app/models/openapi.py`)은 디스크에서 전혀 수정되지
+등록한다. 프로덕션 파일(`app/models/chunk.py`)은 디스크에서 전혀 수정되지
 않는다 — 패치는 이 스크립트가 메모리에서 읽어 exec하는 사본에만 적용된다.
 
 사용법(로컬 postgres 필요, `docker compose up -d postgres`):
@@ -114,30 +114,30 @@ def _format_summary_line(label: str, summary: EvalSummary) -> str:
 
 
 def _patch_embedding_dim(candidate_dim: int) -> None:
-    """`app.models.openapi` 소스의 `EMBEDDING_DIM = 384`를 후보 dim으로 바꿔
+    """`app.models.chunk` 소스의 `EMBEDDING_DIM = 384`를 후보 dim으로 바꿔
     `sys.modules`에 미리 등록한다. 디스크의 원본 파일은 건드리지 않는다.
 
-    이후 어디서든 `from app.models.openapi import ...`를 하면 import 기계가
-    `sys.modules["app.models.openapi"]`를 먼저 확인하므로, 이 패치된 모듈을
-    그대로 재사용한다(원본 재실행 없음) — `ApiChunk.embedding` 컬럼이 후보
-    dim으로 정의된다.
+    이후 어디서든 `from app.models import ...`(또는 `app.models.chunk`)를
+    하면 import 기계가 `sys.modules["app.models.chunk"]`를 먼저 확인하므로,
+    이 패치된 모듈을 그대로 재사용한다(원본 재실행 없음) — `ApiChunk.embedding`
+    컬럼이 후보 dim으로 정의된다.
     """
     import importlib.util
 
-    spec = importlib.util.find_spec("app.models.openapi")
+    spec = importlib.util.find_spec("app.models.chunk")
     assert spec is not None and spec.loader is not None
-    source = spec.loader.get_source("app.models.openapi")
+    source = spec.loader.get_source("app.models.chunk")
     assert source is not None
     marker = "EMBEDDING_DIM = 384"
     hit_count = source.count(marker)
     if hit_count != 1:
         raise RuntimeError(
             f"EMBEDDING_DIM 패치 지점을 못박지 못함(marker {marker!r} 매칭 {hit_count}건, 기대값 1) "
-            "— app/models/openapi.py가 바뀌어 이 스크립트의 패치 가정이 깨졌을 수 있다."
+            "— app/models/chunk.py가 바뀌어 이 스크립트의 패치 가정이 깨졌을 수 있다."
         )
     patched_source = source.replace(marker, f"EMBEDDING_DIM = {candidate_dim}", 1)
     module = importlib.util.module_from_spec(spec)
-    sys.modules["app.models.openapi"] = module
+    sys.modules["app.models.chunk"] = module
     exec(compile(patched_source, spec.origin, "exec"), module.__dict__)
 
 
@@ -173,7 +173,7 @@ def _run_worker(model_name: str, candidate_dim: int) -> dict:
 
     from app.composition import AppState, build_services
     from app.core.db import create_db_engine
-    from app.models.openapi import ApiChunk, EMBEDDING_DIM, create_all
+    from app.models import ApiChunk, EMBEDDING_DIM, create_all
     from app.services.indexer.embedding_provider import LocalEmbeddingProvider
     from app.services.ingestor.openapi_fetcher import InMemoryFetcher
     from app.services.search.endpoint_candidate_search import CandidateSearchOptions

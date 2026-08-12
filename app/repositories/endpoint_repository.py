@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models.openapi import ApiDocument, ApiEndpoint, ApiSchema, ApiSection
+from app.models import ApiDocument, ApiEndpoint, ApiSchema, ApiSection
 
 
 class EndpointRepository:

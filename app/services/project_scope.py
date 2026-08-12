@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal, overload
 
 from app.core.errors import DocumentNotFoundError, ValidationError
-from app.models.openapi import PROJECT_MAX_LENGTH
+from app.models import PROJECT_MAX_LENGTH
 
 if TYPE_CHECKING:
     from app.repositories.document_repository import DocumentRepository

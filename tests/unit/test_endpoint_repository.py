@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.models.openapi import ApiDocument, ApiEndpoint
+from app.models import ApiDocument, ApiEndpoint
 from app.repositories.endpoint_repository import EndpointRepository
 
 

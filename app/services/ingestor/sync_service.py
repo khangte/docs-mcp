@@ -16,7 +16,7 @@ from app.core.errors import (
     DuplicateDocumentError,
     ValidationError,
 )
-from app.models.openapi import ApiDocument, ApiSchema, ApiSection, DocumentSyncHistory
+from app.models import ApiDocument, ApiSchema, ApiSection, DocumentSyncHistory
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository

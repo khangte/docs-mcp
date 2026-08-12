@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.models.openapi import EMBEDDING_DIM, ApiChunk, ApiDocument
+from app.models import EMBEDDING_DIM, ApiChunk, ApiDocument
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from app.services.search.vector_search import VectorSearch

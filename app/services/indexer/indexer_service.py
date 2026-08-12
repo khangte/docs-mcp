@@ -13,7 +13,7 @@ import hashlib
 import json
 
 
-from app.models.openapi import (
+from app.models import (
     ApiChunk,
     ApiDocument,
     ApiEndpoint,

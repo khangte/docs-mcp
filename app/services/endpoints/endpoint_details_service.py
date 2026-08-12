@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.errors import EndpointNotFoundError
-from app.models.openapi import ApiEndpoint, ApiParameter, ApiRequestBody, ApiResponse
+from app.models import ApiEndpoint, ApiParameter, ApiRequestBody, ApiResponse
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.examples.request_example_service import RequestExampleService
 
