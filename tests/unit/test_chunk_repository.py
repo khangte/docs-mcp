@@ -5,16 +5,16 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.orm import attributes
 
-from app.models import EMBEDDING_DIM, ApiChunk, ApiDocument
+from app.models import EMBEDDING_DIM, Chunk, Document
 from app.repositories.chunk_repository import ChunkRepository
 
 
 def _seed_document(session, doc_id: str, project: str = "default") -> None:
-    """`ApiDocument` 한 건을 저장한다(이미 있으면 건드리지 않는다)."""
-    if session.get(ApiDocument, doc_id) is not None:
+    """`Document` 한 건을 저장한다(이미 있으면 건드리지 않는다)."""
+    if session.get(Document, doc_id) is not None:
         return
     session.add(
-        ApiDocument(
+        Document(
             id=doc_id,
             project=project,
             source_url=None,
@@ -38,7 +38,7 @@ def _seed_chunk(
     """청크 한 건을 저장한다(`text_tsv` 는 DB 가 자동 채운다)."""
     _seed_document(session, document_id, project=project)
     session.add(
-        ApiChunk(
+        Chunk(
             id=chunk_id,
             document_id=document_id,
             chunk_type=chunk_type,
@@ -50,7 +50,7 @@ def _seed_chunk(
 
 def _seed_document_with_chunk(session, chunk_type: str = "endpoint") -> None:
     """endpoint 청크 한 건을 embedding 값과 함께 저장한다."""
-    document = ApiDocument(
+    document = Document(
         id="doc-1",
         project="default",
         source_url=None,
@@ -59,7 +59,7 @@ def _seed_document_with_chunk(session, chunk_type: str = "endpoint") -> None:
         raw_text="{}",
     )
     session.add(document)
-    chunk = ApiChunk(
+    chunk = Chunk(
         id="chunk-1",
         document_id="doc-1",
         chunk_type=chunk_type,
@@ -75,7 +75,7 @@ def _seed_document_with_chunk(session, chunk_type: str = "endpoint") -> None:
 def test_list_all_defers_text_tsv_column(db_session) -> None:
     """text_tsv 는 필터 전용 컬럼이므로 일반 조회 시 지연 로딩되어야 한다.
 
-    `mapped_column(..., deferred=True)` 없이는 `select(ApiChunk)` 로 전체
+    `mapped_column(..., deferred=True)` 없이는 `select(Chunk)` 로 전체
     컬럼을 적재하는 `list_all()`/`list_endpoint_chunks()` 같은 경로에서
     매번 text_tsv(청크 전체 텍스트의 lexeme 표현)까지 전송된다.
     """
@@ -224,7 +224,7 @@ def test_search_endpoint_by_text_document_id_scopes_results(db_session) -> None:
 
 
 def test_search_endpoint_by_text_project_scopes_results(db_session) -> None:
-    """project 를 지정하면 ApiDocument 조인으로 다른 project 청크가 빠진다."""
+    """project 를 지정하면 Document 조인으로 다른 project 청크가 빠진다."""
     _seed_chunk(db_session, "c1", "doc-a", "find pet by id", ref_id="ep1", project="A")
     _seed_chunk(db_session, "c2", "doc-b", "find pet again", ref_id="ep2", project="B")
     db_session.commit()
@@ -361,7 +361,7 @@ def test_has_endpoint_chunks_false_when_only_non_endpoint(db_session) -> None:
 
 def test_search_by_vector_returns_ref_id(db_session) -> None:
     """벡터 검색 결과에 ref_id 가 함께 담겨 chunk_id→ref_id 역매핑 없이 쓸 수 있다."""
-    document = ApiDocument(
+    document = Document(
         id="doc-1",
         project="default",
         source_url=None,
@@ -371,7 +371,7 @@ def test_search_by_vector_returns_ref_id(db_session) -> None:
     )
     db_session.add(document)
     db_session.add(
-        ApiChunk(
+        Chunk(
             id="chunk-1",
             document_id="doc-1",
             chunk_type="endpoint",
@@ -403,7 +403,7 @@ def test_search_by_vector_excludes_non_endpoint_chunks_without_candidate_ids(
     되므로(Q2), SQL 자체에 chunk_type 조건이 없으면 schema 청크가 섞여
     들어온다.
     """
-    document = ApiDocument(
+    document = Document(
         id="doc-1",
         project="default",
         source_url=None,
@@ -413,7 +413,7 @@ def test_search_by_vector_excludes_non_endpoint_chunks_without_candidate_ids(
     )
     db_session.add(document)
     db_session.add(
-        ApiChunk(
+        Chunk(
             id="chunk-endpoint",
             document_id="doc-1",
             chunk_type="endpoint",
@@ -423,7 +423,7 @@ def test_search_by_vector_excludes_non_endpoint_chunks_without_candidate_ids(
         )
     )
     db_session.add(
-        ApiChunk(
+        Chunk(
             id="chunk-schema",
             document_id="doc-1",
             chunk_type="schema",

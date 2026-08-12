@@ -198,7 +198,7 @@ class DocumentContentPayload(TypedDict):
 
 
 class RegisteredResyncResult(TypedDict):
-    """include_registered=True 일 때 URL 기반 ApiDocument 재동기화 집계."""
+    """include_registered=True 일 때 URL 기반 Document 재동기화 집계."""
 
     total: int
     reindexed: int

@@ -17,8 +17,8 @@ from typing import Any
 from sqlalchemy import text
 
 from app.models.base import Base, DEFAULT_PROJECT, PROJECT_MAX_LENGTH, SCHEMA
-from app.models.chunk import ApiChunk, EMBEDDING_DIM, TEXT_TSV_EXPRESSION
-from app.models.document import ApiDocument, ApiSection, DocumentSyncHistory
+from app.models.chunk import Chunk, EMBEDDING_DIM, TEXT_TSV_EXPRESSION
+from app.models.document import Document, DocumentSection, DocumentSyncHistory
 from app.models.document_meta import ALLOWED_SOURCES, SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
 from app.models.openapi import ApiEndpoint, ApiParameter, ApiRequestBody, ApiResponse, ApiSchema
 from app.models.project_source import ProjectSource
@@ -28,10 +28,10 @@ __all__ = [
     "DEFAULT_PROJECT",
     "PROJECT_MAX_LENGTH",
     "SCHEMA",
-    "ApiDocument",
-    "ApiSection",
+    "Document",
+    "DocumentSection",
     "DocumentSyncHistory",
-    "ApiChunk",
+    "Chunk",
     "EMBEDDING_DIM",
     "TEXT_TSV_EXPRESSION",
     "ApiEndpoint",

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from app.models import ApiChunk, ApiDocument
+from app.models import Chunk, Document
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.search.keyword_search import KeywordSearch, tokenize_terms
 
 
 def _seed_document(session, doc_id: str, project: str = "default") -> None:
-    """`ApiDocument` 한 건을 저장한다(이미 있으면 건드리지 않는다)."""
-    if session.get(ApiDocument, doc_id) is not None:
+    """`Document` 한 건을 저장한다(이미 있으면 건드리지 않는다)."""
+    if session.get(Document, doc_id) is not None:
         return
     session.add(
-        ApiDocument(
+        Document(
             id=doc_id,
             project=project,
             source_url=None,
@@ -35,7 +35,7 @@ def _seed_chunk(
     """endpoint 타입 청크 한 건을 저장한다."""
     _seed_document(session, document_id, project=project)
     session.add(
-        ApiChunk(
+        Chunk(
             id=chunk_id,
             document_id=document_id,
             chunk_type="endpoint",

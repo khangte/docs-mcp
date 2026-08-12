@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.db import create_db_engine
-from app.models import ApiChunk, ApiDocument, create_all
+from app.models import Chunk, Document, create_all
 from app.scripts.diagnose_long_sections import diagnose
 
 _ADMIN_DATABASE_URL = "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
@@ -67,7 +67,7 @@ def test_diagnose_returns_empty_and_does_not_create_schema_when_table_missing(
     from sqlalchemy import inspect
 
     engine = create_db_engine(fresh_db_url)
-    assert inspect(engine).has_table("api_chunk", schema="app") is False
+    assert inspect(engine).has_table("chunk", schema="app") is False
 
 
 def test_diagnose_finds_no_overflow_when_all_sections_within_threshold(
@@ -78,7 +78,7 @@ def test_diagnose_finds_no_overflow_when_all_sections_within_threshold(
     session_factory = sessionmaker(bind=engine)
     with session_factory() as session:
         session.add(
-            ApiDocument(
+            Document(
                 id="doc1",
                 project="default",
                 doc_type="markdown",
@@ -88,7 +88,7 @@ def test_diagnose_finds_no_overflow_when_all_sections_within_threshold(
             )
         )
         session.add(
-            ApiChunk(
+            Chunk(
                 id="doc1:chunk:0",
                 document_id="doc1",
                 chunk_type="section",
@@ -110,7 +110,7 @@ def test_diagnose_reports_overflowing_section_with_doc_type(fresh_db_url) -> Non
     long_text = " ".join(["단어"] * 600)  # 페이크 카운터 기준 600토큰 > 512
     with session_factory() as session:
         session.add(
-            ApiDocument(
+            Document(
                 id="doc1",
                 project="default",
                 doc_type="pdf",
@@ -120,7 +120,7 @@ def test_diagnose_reports_overflowing_section_with_doc_type(fresh_db_url) -> Non
             )
         )
         session.add(
-            ApiChunk(
+            Chunk(
                 id="doc1:chunk:0",
                 document_id="doc1",
                 chunk_type="section",
@@ -130,7 +130,7 @@ def test_diagnose_reports_overflowing_section_with_doc_type(fresh_db_url) -> Non
         )
         # endpoint 청크는 진단 대상 아님(섹션만) — 섞여 있어도 결과에 안 나와야 함
         session.add(
-            ApiChunk(
+            Chunk(
                 id="doc1:chunk:1",
                 document_id="doc1",
                 chunk_type="endpoint",

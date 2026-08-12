@@ -13,7 +13,7 @@ _TERM_RE = re.compile(r"[0-9A-Za-z_]+|[가-힣]+")
 def tokenize_terms(query: str) -> list[str]:
     """질의를 영숫자/언더스코어 또는 한글 덩어리 단위 소문자 term 으로 자른다.
 
-    `api_chunk.text_tsv` 생성 컬럼이 `to_tsvector('simple', text)` 로 한글
+    `chunk.text_tsv` 생성 컬럼이 `to_tsvector('simple', text)` 로 한글
     단어 토큰까지 인덱싱하므로, 질의 쪽 term 화도 한글을 포함해 맞춘다.
     """
     return [t.lower() for t in _TERM_RE.findall(query or "")]
@@ -29,7 +29,7 @@ class KeywordHit:
 
 
 class KeywordSearch:
-    """`api_chunk.text_tsv` GIN 인덱스로 endpoint 청크를 키워드 검색한다."""
+    """`chunk.text_tsv` GIN 인덱스로 endpoint 청크를 키워드 검색한다."""
 
     def __init__(self, chunk_repo: ChunkRepository) -> None:
         """청크 저장소 의존성을 보관한다."""

@@ -4,7 +4,7 @@
 `compare_chunking.py`의 temp-DB 생성/등록/지표 로직을 재사용하되, 바꾸는
 변형 축은 "청킹"이 아니라 "임베딩 provider + 벡터 컬럼 dim"이다.
 
-**비자명한 마찰(docs/15 §3-1)**: `ApiChunk.embedding = mapped_column(Vector(EMBEDDING_DIM))`
+**비자명한 마찰(docs/15 §3-1)**: `Chunk.embedding = mapped_column(Vector(EMBEDDING_DIM))`
 은 `app/models/chunk.py` **import 시점**에 dim이 고정된다. 런타임에 상수만
 바꿔도 이미 정의된 컬럼 타입은 안 바뀐다. 이 스크립트는 §3-1 권장안(모델별
 서브프로세스 격리)을 따른다 — 각 변형을 `--worker` 서브프로세스로 띄우고,
@@ -119,7 +119,7 @@ def _patch_embedding_dim(candidate_dim: int) -> None:
 
     이후 어디서든 `from app.models import ...`(또는 `app.models.chunk`)를
     하면 import 기계가 `sys.modules["app.models.chunk"]`를 먼저 확인하므로,
-    이 패치된 모듈을 그대로 재사용한다(원본 재실행 없음) — `ApiChunk.embedding`
+    이 패치된 모듈을 그대로 재사용한다(원본 재실행 없음) — `Chunk.embedding`
     컬럼이 후보 dim으로 정의된다.
     """
     import importlib.util
@@ -173,7 +173,7 @@ def _run_worker(model_name: str, candidate_dim: int) -> dict:
 
     from app.composition import AppState, build_services
     from app.core.db import create_db_engine
-    from app.models import ApiChunk, EMBEDDING_DIM, create_all
+    from app.models import Chunk, EMBEDDING_DIM, create_all
     from app.services.indexer.embedding_provider import LocalEmbeddingProvider
     from app.services.ingestor.openapi_fetcher import InMemoryFetcher
     from app.services.search.endpoint_candidate_search import CandidateSearchOptions
@@ -197,7 +197,7 @@ def _run_worker(model_name: str, candidate_dim: int) -> dict:
 
         # 못박기(docs/15 §3-1 필수 검증): provider.dim == 실제 생성된 벡터 컬럼 dim.
         # 어긋나면 dim 불일치로 인한 조용한 오색인이 일어날 수 있으므로 여기서 죽는다.
-        column_dim = ApiChunk.__table__.c.embedding.type.dim
+        column_dim = Chunk.__table__.c.embedding.type.dim
         assert column_dim == provider.dim, (
             f"벡터 컬럼 dim({column_dim}) != provider.dim({provider.dim}) — EMBEDDING_DIM 패치 실패"
         )

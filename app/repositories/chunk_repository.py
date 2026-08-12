@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session, defer
 
-from app.models import ApiChunk, ApiDocument, ApiEndpoint
+from app.models import ApiEndpoint, Chunk, Document
 
 #: 벡터 검색 시 강제할 hnsw.ef_search 하한. 기본값(40)은 RRF 융합용 넓은 후보폭
 #: (top_k 최대 200)보다 작아 recall 을 깎을 수 있어 세션 GUC 로 올려 잡는다.
@@ -44,39 +44,39 @@ def _quote_tsquery_lexeme(term: str) -> str:
 
 
 class ChunkRepository:
-    """`api_chunk` CRUD + document 별 일괄 교체."""
+    """`chunk` CRUD + document 별 일괄 교체."""
 
     def __init__(self, session: Session) -> None:
         """세션을 보관해 이후 쿼리에 사용한다."""
         self._session = session
 
-    def add(self, chunk: ApiChunk) -> None:
+    def add(self, chunk: Chunk) -> None:
         """청크 한 건을 세션에 추가한다."""
         self._session.add(chunk)
 
-    def bulk_add(self, chunks: Sequence[ApiChunk]) -> None:
+    def bulk_add(self, chunks: Sequence[Chunk]) -> None:
         """청크 여러 건을 한 번에 세션에 추가한다."""
         self._session.add_all(list(chunks))
 
     def delete_by_document(self, document_id: str) -> int:
         """주어진 문서의 모든 청크를 삭제하고 삭제된 행 수를 반환한다."""
-        stmt = delete(ApiChunk).where(ApiChunk.document_id == document_id)
+        stmt = delete(Chunk).where(Chunk.document_id == document_id)
         result = self._session.execute(stmt)
         return int(result.rowcount or 0)
 
-    def list_all(self) -> Sequence[ApiChunk]:
+    def list_all(self) -> Sequence[Chunk]:
         """전체 청크를 반환한다."""
-        stmt = select(ApiChunk)
+        stmt = select(Chunk)
         return self._session.execute(stmt).scalars().all()
 
-    def list_by_document(self, document_id: str) -> Sequence[ApiChunk]:
+    def list_by_document(self, document_id: str) -> Sequence[Chunk]:
         """특정 문서에 속한 청크를 반환한다."""
-        stmt = select(ApiChunk).where(ApiChunk.document_id == document_id)
+        stmt = select(Chunk).where(Chunk.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
 
     def list_endpoint_chunks(
         self, document_id: str | None = None, project: str | None = None
-    ) -> Sequence[ApiChunk]:
+    ) -> Sequence[Chunk]:
         """endpoint 타입 청크만 SQL 로 필터링해 반환한다.
 
         후보 검색은 endpoint 청크만 사용하므로 section/schema 청크를 DB 단계에서
@@ -85,19 +85,19 @@ class ChunkRepository:
 
         Args:
             document_id: 주어지면 해당 문서로 범위를 제한한다.
-            project: 주어지면 `ApiDocument` 와 조인해 해당 project 로
+            project: 주어지면 `Document` 와 조인해 해당 project 로
                 범위를 제한한다(SQL 로 필터링, Python 필터링 금지).
         """
         stmt = (
-            select(ApiChunk)
-            .where(ApiChunk.chunk_type == "endpoint")
-            .options(defer(ApiChunk.embedding))
+            select(Chunk)
+            .where(Chunk.chunk_type == "endpoint")
+            .options(defer(Chunk.embedding))
         )
         if document_id is not None:
-            stmt = stmt.where(ApiChunk.document_id == document_id)
+            stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
-            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
-                ApiDocument.project == project
+            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
+                Document.project == project
             )
         return self._session.execute(stmt).scalars().all()
 
@@ -107,14 +107,14 @@ class ChunkRepository:
         """endpoint 타입 청크의 ID만 가볍게 조회한다(다른 컬럼은 적재하지 않음).
 
         벡터 검색의 스코프(`candidate_ids`)를 만들 때 `list_endpoint_chunks()`
-        처럼 전체 `ApiChunk` 로우를 메모리에 올릴 필요가 없어 이 메서드를 쓴다.
+        처럼 전체 `Chunk` 로우를 메모리에 올릴 필요가 없어 이 메서드를 쓴다.
         """
-        stmt = select(ApiChunk.id).where(ApiChunk.chunk_type == "endpoint")
+        stmt = select(Chunk.id).where(Chunk.chunk_type == "endpoint")
         if document_id is not None:
-            stmt = stmt.where(ApiChunk.document_id == document_id)
+            stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
-            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
-                ApiDocument.project == project
+            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
+                Document.project == project
             )
         return set(self._session.execute(stmt).scalars().all())
 
@@ -127,12 +127,12 @@ class ChunkRepository:
         빠르게 판별해 키워드/벡터 검색(및 임베딩 API 호출)을 생략하는 데 쓴다.
         전체 청크를 적재하지 않으므로 `list_endpoint_chunks()` 보다 가볍다.
         """
-        stmt = select(ApiChunk.id).where(ApiChunk.chunk_type == "endpoint")
+        stmt = select(Chunk.id).where(Chunk.chunk_type == "endpoint")
         if document_id is not None:
-            stmt = stmt.where(ApiChunk.document_id == document_id)
+            stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
-            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
-                ApiDocument.project == project
+            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
+                Document.project == project
             )
         stmt = stmt.limit(1)
         return self._session.execute(stmt).first() is not None
@@ -178,19 +178,19 @@ class ChunkRepository:
             if normalized_score_terms
             else tsq
         )
-        rank = func.ts_rank(ApiChunk.text_tsv, score_tsq)
+        rank = func.ts_rank(Chunk.text_tsv, score_tsq)
         stmt = (
-            select(ApiChunk.id, ApiChunk.ref_id, rank.label("score"))
-            .where(ApiChunk.chunk_type == "endpoint")
-            .where(ApiChunk.text_tsv.op("@@", is_comparison=True)(tsq))
+            select(Chunk.id, Chunk.ref_id, rank.label("score"))
+            .where(Chunk.chunk_type == "endpoint")
+            .where(Chunk.text_tsv.op("@@", is_comparison=True)(tsq))
         )
         if document_id is not None:
-            stmt = stmt.where(ApiChunk.document_id == document_id)
+            stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
-            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
-                ApiDocument.project == project
+            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
+                Document.project == project
             )
-        stmt = stmt.order_by(rank.desc(), ApiChunk.id.asc()).limit(top_k)
+        stmt = stmt.order_by(rank.desc(), Chunk.id.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
             ChunkTextHit(chunk_id=cid, ref_id=ref_id, score=float(score))
@@ -203,12 +203,12 @@ class ChunkRepository:
         tag: str | None = None,
         document_id: str | None = None,
         project: str | None = None,
-    ) -> Sequence[ApiChunk]:
+    ) -> Sequence[Chunk]:
         """method/tag/document_id/project SQL 필터를 적용해 후보 청크를 반환한다.
 
         - endpoint 청크: 조건에 맞는 ApiEndpoint 와 JOIN 해 필터링
         - schema/section 청크: method/tag 조건 없이 document_id/project 만 적용
-        - project 는 `ApiDocument` 와 조인해 SQL 로 필터링한다.
+        - project 는 `Document` 와 조인해 SQL 로 필터링한다.
         필터가 모두 None 이면 전체 청크를 반환한다.
         """
         if method is None and tag is None and document_id is None and project is None:
@@ -217,16 +217,16 @@ class ChunkRepository:
         if method is not None or tag is not None:
             # endpoint 청크는 ApiEndpoint JOIN 필터
             endpoint_stmt = (
-                select(ApiChunk)
-                .join(ApiEndpoint, ApiChunk.ref_id == ApiEndpoint.id)
-                .where(ApiChunk.chunk_type == "endpoint")
+                select(Chunk)
+                .join(ApiEndpoint, Chunk.ref_id == ApiEndpoint.id)
+                .where(Chunk.chunk_type == "endpoint")
             )
             if document_id is not None:
-                endpoint_stmt = endpoint_stmt.where(ApiChunk.document_id == document_id)
+                endpoint_stmt = endpoint_stmt.where(Chunk.document_id == document_id)
             if project is not None:
                 endpoint_stmt = endpoint_stmt.join(
-                    ApiDocument, ApiChunk.document_id == ApiDocument.id
-                ).where(ApiDocument.project == project)
+                    Document, Chunk.document_id == Document.id
+                ).where(Document.project == project)
             if method is not None:
                 endpoint_stmt = endpoint_stmt.where(
                     ApiEndpoint.method == method.upper()
@@ -239,24 +239,24 @@ class ChunkRepository:
             endpoint_chunks = list(self._session.execute(endpoint_stmt).scalars().all())
 
             # schema/section 청크는 method/tag 조건 없이 document_id/project 만 적용
-            other_stmt = select(ApiChunk).where(ApiChunk.chunk_type.in_(("schema", "section")))
+            other_stmt = select(Chunk).where(Chunk.chunk_type.in_(("schema", "section")))
             if document_id is not None:
-                other_stmt = other_stmt.where(ApiChunk.document_id == document_id)
+                other_stmt = other_stmt.where(Chunk.document_id == document_id)
             if project is not None:
                 other_stmt = other_stmt.join(
-                    ApiDocument, ApiChunk.document_id == ApiDocument.id
-                ).where(ApiDocument.project == project)
+                    Document, Chunk.document_id == Document.id
+                ).where(Document.project == project)
             other_chunks = list(self._session.execute(other_stmt).scalars().all())
 
             return endpoint_chunks + other_chunks
 
         # method/tag 없고 document_id/project 만 있는 경우
-        stmt = select(ApiChunk)
+        stmt = select(Chunk)
         if document_id is not None:
-            stmt = stmt.where(ApiChunk.document_id == document_id)
+            stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
-            stmt = stmt.join(ApiDocument, ApiChunk.document_id == ApiDocument.id).where(
-                ApiDocument.project == project
+            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
+                Document.project == project
             )
         return self._session.execute(stmt).scalars().all()
 
@@ -274,7 +274,7 @@ class ChunkRepository:
         전역 스코프에서 `candidate_ids=None` 을 넘기게 되면서 SQL 자체에
         조건이 없으면 schema 청크가 섞여 들어온다).
         코사인 거리는 [0, 2] 범위이므로 유사도 = 1 - 거리 로 변환한다.
-        `ref_id` 를 함께 SQL 로 프로젝션해(`ApiChunk.ref_id`, 조인 불필요),
+        `ref_id` 를 함께 SQL 로 프로젝션해(`Chunk.ref_id`, 조인 불필요),
         호출측이 chunk_id → ref_id 를 역매핑하려고 전체 청크를 메모리에
         적재할 필요가 없게 한다(RRF 융합은 endpoint(ref_id) 단위로 동작).
         """
@@ -285,16 +285,16 @@ class ChunkRepository:
         # ef 는 두 int 의 max() 결과라 사용자 입력이 섞일 수 없어 f-string 삽입이 안전하다.
         # SET LOCAL 이라 현재 트랜잭션 스코프에 한정되고 세션 전역을 오염시키지 않는다.
         self._session.execute(text(f"SET LOCAL hnsw.ef_search = {ef}"))
-        distance = ApiChunk.embedding.cosine_distance(query_vector)
+        distance = Chunk.embedding.cosine_distance(query_vector)
         stmt = (
-            select(ApiChunk.id, ApiChunk.ref_id, distance.label("distance"))
-            .where(ApiChunk.chunk_type == "endpoint")
-            .where(ApiChunk.embedding.is_not(None))
+            select(Chunk.id, Chunk.ref_id, distance.label("distance"))
+            .where(Chunk.chunk_type == "endpoint")
+            .where(Chunk.embedding.is_not(None))
         )
         if candidate_ids is not None:
             if not candidate_ids:
                 return []
-            stmt = stmt.where(ApiChunk.id.in_(candidate_ids))
+            stmt = stmt.where(Chunk.id.in_(candidate_ids))
         stmt = stmt.order_by(distance.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.models import ApiDocument, ApiEndpoint
+from app.models import ApiEndpoint, Document
 from app.repositories.endpoint_repository import EndpointRepository
 
 
@@ -15,9 +15,9 @@ def _seed_endpoint(
     tags: list[str] | None = None,
 ) -> None:
     """엔드포인트 한 건을 저장한다(문서가 없으면 함께 만든다)."""
-    if session.get(ApiDocument, document_id) is None:
+    if session.get(Document, document_id) is None:
         session.add(
-            ApiDocument(
+            Document(
                 id=document_id,
                 project="default",
                 source_url=None,

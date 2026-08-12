@@ -20,7 +20,7 @@ import re
 import pytest
 
 from app.composition import build_services
-from app.models import ApiChunk
+from app.models import Chunk
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
 from app.services.search.keyword_search import KeywordSearch
@@ -46,7 +46,7 @@ def _legacy_score(chunk_text: str, query_tokens: set[str]) -> float:
     return len(overlap) / max(1, len(query_tokens))
 
 
-def _legacy_candidate_scores(chunks: list[ApiChunk], query: str) -> dict[str, float]:
+def _legacy_candidate_scores(chunks: list[Chunk], query: str) -> dict[str, float]:
     """레거시 스코어러로 매칭되는 (ref_id -> score) 매핑(score > 0 만)."""
     query_tokens = set(_legacy_tokenize(query))
     if not query_tokens:
@@ -145,16 +145,16 @@ def test_ascii_recall_gate_catches_mixed_script_compound_regression(app_state) -
 def test_more_distinct_overlap_ranks_not_lower(db_session) -> None:
     """더 많은 distinct 질의 토큰을 포함한 청크가 더 적게 포함한 청크보다
     순위가 낮지 않다(단조성)."""
-    from app.models import ApiDocument
+    from app.models import Document
 
     db_session.add(
-        ApiDocument(
+        Document(
             id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
         )
     )
     db_session.flush()
     db_session.add(
-        ApiChunk(
+        Chunk(
             id="more",
             document_id="doc1",
             chunk_type="endpoint",
@@ -163,7 +163,7 @@ def test_more_distinct_overlap_ranks_not_lower(db_session) -> None:
         )
     )
     db_session.add(
-        ApiChunk(
+        Chunk(
             id="less",
             document_id="doc1",
             chunk_type="endpoint",
@@ -182,16 +182,16 @@ def test_more_distinct_overlap_ranks_not_lower(db_session) -> None:
 
 def test_symbol_only_query_returns_empty(db_session) -> None:
     """검색 가능한 term 이 없는 질의(기호만)는 빈 리스트다."""
-    from app.models import ApiDocument
+    from app.models import Document
 
     db_session.add(
-        ApiDocument(
+        Document(
             id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
         )
     )
     db_session.flush()
     db_session.add(
-        ApiChunk(id="c1", document_id="doc1", chunk_type="endpoint", ref_id="ep1", text="find pet")
+        Chunk(id="c1", document_id="doc1", chunk_type="endpoint", ref_id="ep1", text="find pet")
     )
     db_session.commit()
     search = KeywordSearch(ChunkRepository(db_session))

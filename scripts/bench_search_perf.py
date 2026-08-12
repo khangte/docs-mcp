@@ -25,16 +25,13 @@ from sqlalchemy import text as sa_text
 
 from app.core.config import Settings
 from app.core.db import create_db_engine, create_session_factory
-from app.models import ApiChunk, ApiDocument, ApiEndpoint, create_all
+from app.models import ApiEndpoint, Chunk, Document, create_all
 from app.models.document_meta import SOURCE_DRIVE, DocumentMeta
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
-from app.repositories.project_source_repository import (
-    ProjectDriveSourceRepository,
-    ProjectNotionSourceRepository,
-)
+from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.documents.document_search_service import DocumentSearchService
 from app.services.documents.project_source_resolver import ProjectSourceResolver
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
@@ -98,7 +95,7 @@ def _seed_endpoint_corpus(session_factory, embedding_provider) -> str:
     """endpoint 청크를 시딩하고 narrow 스코프 벤치용 document_id 를 반환한다."""
     session = session_factory()
     texts: list[str] = []
-    rows: list[tuple[ApiEndpoint, ApiChunk]] = []
+    rows: list[tuple[ApiEndpoint, Chunk]] = []
     target_document_id = ""
     try:
         for doc_index in range(N_DOCUMENTS):
@@ -106,7 +103,7 @@ def _seed_endpoint_corpus(session_factory, embedding_provider) -> str:
             if doc_index == 0:
                 target_document_id = document_id
             session.add(
-                ApiDocument(
+                Document(
                     id=document_id,
                     project="default",
                     source_url=None,
@@ -129,7 +126,7 @@ def _seed_endpoint_corpus(session_factory, embedding_provider) -> str:
                     summary=summary,
                     description="",
                 )
-                chunk = ApiChunk(
+                chunk = Chunk(
                     id=f"chunk-{doc_index:03d}-{endpoint_index:03d}",
                     document_id=document_id,
                     chunk_type="endpoint",
@@ -194,24 +191,22 @@ class _FakeDriveSource:
 def _make_resolver(session_factory) -> tuple[ProjectSourceResolver, object]:
     """벤치용 resolver 를 만든다.
 
-    resolver 가 내부적으로 물고 있는 `drive_repo`/`notion_repo` 는 이 함수가 연
-    session 을 계속 참조한다(get_document 벤치가 매 호출 `resolve_for_project()`
-    로 다시 조회하므로). 그 session 은 호출측이 반환값으로 받아 명시적으로
+    resolver 가 내부적으로 물고 있는 `source_repo` 는 이 함수가 연 session 을
+    계속 참조한다(get_document 벤치가 매 호출 `resolve_for_project()` 로
+    다시 조회하므로). 그 session 은 호출측이 반환값으로 받아 명시적으로
     close 해야 한다 — 열어둔 채 두면 `DROP DATABASE ... WITH (FORCE)` 가 이
     세션을 강제 종료시켜 매 실행마다 SQLAlchemy pool 의 reset 실패 트레이스백이
     stderr 에 찍힌다(측정값 자체는 영향 없지만 출력 신뢰도를 해친다).
     """
     session = session_factory()
-    drive_repo = ProjectDriveSourceRepository(session)
-    notion_repo = ProjectNotionSourceRepository(session)
-    drive_repo.upsert("default", "folder-bench")
+    source_repo = ProjectSourceRepository(session)
+    source_repo.upsert("default", "drive", "folder-bench")
     session.commit()
     fake = _FakeDriveSource()
     resolver = ProjectSourceResolver(
         settings=Settings(),
         drive_token_provider=None,
-        drive_repo=drive_repo,
-        notion_repo=notion_repo,
+        source_repo=source_repo,
         drive_source_builder=lambda folder_id: fake,
         notion_source_builder=lambda notion_id, kind: None,
     )

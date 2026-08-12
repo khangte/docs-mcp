@@ -2,7 +2,7 @@
 
 alembic 마이그레이션(`ff8aa8f36266`)은 embedding 컬럼 차원만 바꾸고 값은
 전부 NULL 로 만든다 — ML 모델 로드/추론은 마이그레이션이 아니라 여기서
-전담한다. 이 스크립트는 이미 저장된 `ApiChunk.text` 만 순회해 임베딩을 다시
+전담한다. 이 스크립트는 이미 저장된 `Chunk.text` 만 순회해 임베딩을 다시
 채우며, 문서 재파싱이나 네트워크 호출은 하지 않는다.
 
 실행 순서:
@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.bootstrap import bootstrap_app_state
 from app.composition import AppState
-from app.models import ApiChunk
+from app.models import Chunk
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ _DEFAULT_BATCH_SIZE = 200
 
 
 def reembed_all(state: AppState, batch_size: int = _DEFAULT_BATCH_SIZE) -> int:
-    """전체 `ApiChunk` 를 배치 단위로 순회하며 embedding 을 다시 채운다.
+    """전체 `Chunk` 를 배치 단위로 순회하며 embedding 을 다시 채운다.
 
     문서/엔드포인트는 건드리지 않고 `chunk.text` → 새 임베딩 벡터 갱신만
     수행한다. 배치마다 커밋해 대량 데이터에서도 트랜잭션이 과도하게
@@ -34,7 +34,7 @@ def reembed_all(state: AppState, batch_size: int = _DEFAULT_BATCH_SIZE) -> int:
     """
     provider = state.embedding_provider
     with state.session_factory() as session:
-        chunk_ids = list(session.execute(select(ApiChunk.id).order_by(ApiChunk.id)).scalars())
+        chunk_ids = list(session.execute(select(Chunk.id).order_by(Chunk.id)).scalars())
 
     total = 0
     for start in range(0, len(chunk_ids), batch_size):
@@ -42,7 +42,7 @@ def reembed_all(state: AppState, batch_size: int = _DEFAULT_BATCH_SIZE) -> int:
         with state.session_factory() as session:
             chunks = list(
                 session.execute(
-                    select(ApiChunk).where(ApiChunk.id.in_(batch_ids)).order_by(ApiChunk.id)
+                    select(Chunk).where(Chunk.id.in_(batch_ids)).order_by(Chunk.id)
                 ).scalars()
             )
             vectors = provider.embed_documents(

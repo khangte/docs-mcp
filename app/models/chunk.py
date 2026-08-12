@@ -8,14 +8,14 @@ from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
-from app.models.document import ApiDocument
+from app.models.document import Document
 
 #: `intfloat/multilingual-e5-small` 고정 차원. 로컬 모델은 dim 이 모델 자체에
 #: 고정돼 독립 튜닝 대상이 아니므로, 이 상수 하나가 pgvector 컬럼 dim 의
 #: 유일한 진실원이다(부트스트랩에서 provider.dim 과 일치를 assert 한다).
 EMBEDDING_DIM = 384
 
-#: `api_chunk.text_tsv` 생성 컬럼식(모델·alembic 마이그레이션이 공유 — 두 곳이
+#: `chunk.text_tsv` 생성 컬럼식(모델·alembic 마이그레이션이 공유 — 두 곳이
 #: 어긋나면 alembic autogenerate 가 스푸리어스 diff 를 낼 수 있다).
 #: 순서: (1) ASCII/언더스코어→한글 경계에 공백 삽입 (2) 한글→ASCII/언더스코어
 #: 경계에 공백 삽입 (3) 나머지(영숫자/언더스코어/한글이 아닌 모든 문자)를
@@ -31,7 +31,7 @@ TEXT_TSV_EXPRESSION = (
 )
 
 
-class ApiChunk(Base):
+class Chunk(Base):
     """검색용 청크(텍스트 + 임베딩 + FTS) ORM 모델.
 
     embedding 컬럼 차원은 pgvector 제약상 테이블 생성 시 고정된다.
@@ -40,19 +40,19 @@ class ApiChunk(Base):
     ORM 이 값을 직접 쓰지 않는다(인서트/업데이트 시 코드 변경 불필요).
     """
 
-    __tablename__ = "api_chunk"
+    __tablename__ = "chunk"
     __table_args__ = (
         Index(
-            "ix_api_chunk_embedding_hnsw",
+            "ix_chunk_embedding_hnsw",
             "embedding",
             postgresql_using="hnsw",
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
-        Index("ix_api_chunk_text_tsv", "text_tsv", postgresql_using="gin"),
+        Index("ix_chunk_text_tsv", "text_tsv", postgresql_using="gin"),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    document_id: Mapped[str] = mapped_column(ForeignKey("api_document.id", ondelete="CASCADE"))
+    document_id: Mapped[str] = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     chunk_type: Mapped[str] = mapped_column(String(32), nullable=False)  # endpoint|schema
     ref_id: Mapped[str] = mapped_column(String(64), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -69,4 +69,4 @@ class ApiChunk(Base):
         deferred=True,
     )
 
-    document: Mapped[ApiDocument] = relationship(back_populates="chunks")
+    document: Mapped[Document] = relationship(back_populates="chunks")

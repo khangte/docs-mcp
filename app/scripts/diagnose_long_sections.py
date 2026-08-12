@@ -1,11 +1,11 @@
 """긴 섹션(512토큰 초과) 진단 — 읽기 전용, 프로덕션 무변경.
 
-`docs/architect-review/16-long-section-chunking-blindspot.md` Phase 0. 현재 DB의 `api_chunk`
+`docs/architect-review/16-long-section-chunking-blindspot.md` Phase 0. 현재 DB의 `chunk`
 중 `chunk_type='section'` 행을 훑어, 임베딩 토크나이저 기준 최대
 시퀀스 길이(실측 512, `docs/16` §1-2) 초과 건수·최대 토큰·초과 문서를
 doc_type 별로 집계한다.
 
-DB 스키마를 만들지 않는다(`create_all` 호출 없음) — `api_chunk` 테이블이
+DB 스키마를 만들지 않는다(`create_all` 호출 없음) — `chunk` 테이블이
 아직 없으면 진단할 데이터가 없다는 뜻이므로 빈 결과를 그대로 반환한다.
 
 실행:
@@ -24,7 +24,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import create_db_engine
-from app.models import SCHEMA, ApiChunk, ApiDocument
+from app.models import SCHEMA, Chunk, Document
 
 logger = logging.getLogger(__name__)
 
@@ -61,19 +61,19 @@ def diagnose(
 ) -> list[SectionOverflow]:
     """`chunk_type='section'` 텍스트를 토큰화해 threshold 초과 건을 찾는다.
 
-    `api_chunk` 테이블이 없으면(아직 문서가 색인된 적 없으면) 스키마를
+    `chunk` 테이블이 없으면(아직 문서가 색인된 적 없으면) 스키마를
     만들지 않고 빈 리스트를 반환한다 — 읽기 전용 보장.
     """
     engine = create_db_engine(database_url)
-    if not inspect(engine).has_table(ApiChunk.__tablename__, schema=SCHEMA):
+    if not inspect(engine).has_table(Chunk.__tablename__, schema=SCHEMA):
         return []
 
     session_factory = sessionmaker(bind=engine)
     with session_factory() as session:
         rows = session.execute(
-            select(ApiChunk.document_id, ApiChunk.ref_id, ApiChunk.text, ApiDocument.doc_type)
-            .join(ApiDocument, ApiDocument.id == ApiChunk.document_id)
-            .where(ApiChunk.chunk_type == "section")
+            select(Chunk.document_id, Chunk.ref_id, Chunk.text, Document.doc_type)
+            .join(Document, Document.id == Chunk.document_id)
+            .where(Chunk.chunk_type == "section")
         ).all()
 
     overflows: list[SectionOverflow] = []
@@ -94,7 +94,7 @@ def main() -> None:
     if not overflows:
         print(
             f"512토큰 초과 섹션: 0건 (측정 데이터 없음 또는 전부 {DEFAULT_THRESHOLD}토큰 이내) "
-            f"— api_chunk 테이블이 없으면 아직 색인된 문서가 없다는 뜻이다."
+            f"— chunk 테이블이 없으면 아직 색인된 문서가 없다는 뜻이다."
         )
         return
 

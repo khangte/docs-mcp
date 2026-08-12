@@ -12,7 +12,7 @@ from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
-from app.models.document import ApiDocument
+from app.models.document import Document
 
 
 def _decode_json_dict(raw: str | None) -> dict[str, Any]:
@@ -40,14 +40,14 @@ class ApiEndpoint(Base):
     __table_args__ = (UniqueConstraint("document_id", "method", "path", name="uq_endpoint_doc"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    document_id: Mapped[str] = mapped_column(ForeignKey("api_document.id", ondelete="CASCADE"))
+    document_id: Mapped[str] = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     method: Mapped[str] = mapped_column(String(16), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
     summary: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 
-    document: Mapped[ApiDocument] = relationship(back_populates="endpoints")
+    document: Mapped[Document] = relationship(back_populates="endpoints")
     parameters: Mapped[list["ApiParameter"]] = relationship(
         back_populates="endpoint", cascade="all, delete-orphan"
     )
@@ -169,12 +169,12 @@ class ApiSchema(Base):
     __table_args__ = (UniqueConstraint("document_id", "name", name="uq_schema_doc_name"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    document_id: Mapped[str] = mapped_column(ForeignKey("api_document.id", ondelete="CASCADE"))
+    document_id: Mapped[str] = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     json_schema: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
-    document: Mapped[ApiDocument] = relationship(back_populates="schemas")
+    document: Mapped[Document] = relationship(back_populates="schemas")
 
     @property
     def schema(self) -> dict[str, Any]:

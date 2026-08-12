@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.models import EMBEDDING_DIM, ApiChunk, ApiDocument
+from app.models import EMBEDDING_DIM, Chunk, Document
 from app.repositories.chunk_repository import ChunkRepository
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from app.services.search.vector_search import VectorSearch
@@ -17,7 +17,7 @@ def _unit_vec(components: list[float]) -> list[float]:
 
 def _add_chunk(session, doc_id: str, chunk_id: str, vector: list[float]) -> None:
     session.add(
-        ApiChunk(
+        Chunk(
             id=chunk_id,
             document_id=doc_id,
             chunk_type="endpoint",
@@ -38,7 +38,7 @@ def test_vector_search_empty_query_returns_empty(db_session) -> None:
 def test_vector_search_returns_sorted_by_score(db_session) -> None:
     provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
     db_session.add(
-        ApiDocument(
+        Document(
             id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
         )
     )
@@ -59,7 +59,7 @@ def test_vector_search_returns_ref_id(db_session) -> None:
     """벡터 검색 결과에 ref_id 가 함께 담겨 chunk_id→ref_id 역매핑이 필요 없다."""
     provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
     db_session.add(
-        ApiDocument(
+        Document(
             id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
         )
     )
@@ -78,7 +78,7 @@ def test_vector_search_returns_ref_id(db_session) -> None:
 def test_vector_search_restricts_to_candidates(db_session) -> None:
     provider = HashEmbeddingProvider(dim=EMBEDDING_DIM)
     db_session.add(
-        ApiDocument(
+        Document(
             id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
         )
     )

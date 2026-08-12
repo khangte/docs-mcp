@@ -1,9 +1,9 @@
 """문서 색인/재색인 오케스트레이션.
 
-입력: ParsedDocument + ApiDocument (DB 엔티티)
+입력: ParsedDocument + Document (DB 엔티티)
 출력: (endpoints_count, chunks_count)
 
-임베딩은 ApiChunk.embedding(pgvector 컬럼)에 직접 저장되며, 호출자의
+임베딩은 Chunk.embedding(pgvector 컬럼)에 직접 저장되며, 호출자의
 session.commit() 과 함께 영속화된다.
 """
 
@@ -14,14 +14,14 @@ import json
 
 
 from app.models import (
-    ApiChunk,
-    ApiDocument,
     ApiEndpoint,
     ApiParameter,
     ApiRequestBody,
     ApiResponse,
     ApiSchema,
-    ApiSection,
+    Chunk,
+    Document,
+    DocumentSection,
 )
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.endpoint_repository import EndpointRepository
@@ -51,7 +51,7 @@ class IndexerService:
         self._embedding_provider = embedding_provider
 
     def index_document(
-        self, document: ApiDocument, parsed: ParsedDocument
+        self, document: Document, parsed: ParsedDocument
     ) -> tuple[int, int]:
         """엔드포인트/스키마/청크를 DB 에 저장한다.
 
@@ -90,7 +90,7 @@ class IndexerService:
         for idx, parsed_section in enumerate(parsed.sections):
             section_id = f"{document.id}:section:{idx}"
             section_ids[idx] = section_id
-            section_entity = ApiSection(
+            section_entity = DocumentSection(
                 id=section_id,
                 document_id=document.id,
                 title=parsed_section.title,
@@ -106,7 +106,7 @@ class IndexerService:
             self._embedding_provider.embed_documents(texts, labels=labels) if texts else []
         )
         for idx, (built, vector) in enumerate(zip(built_chunks, embeddings, strict=True)):
-            chunk = ApiChunk(
+            chunk = Chunk(
                 id=f"{document.id}:chunk:{idx}",
                 document_id=document.id,
                 chunk_type=built.chunk_type,

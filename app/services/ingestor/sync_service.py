@@ -16,7 +16,7 @@ from app.core.errors import (
     DuplicateDocumentError,
     ValidationError,
 )
-from app.models import ApiDocument, ApiSchema, ApiSection, DocumentSyncHistory
+from app.models import ApiSchema, Document, DocumentSection, DocumentSyncHistory
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
@@ -31,7 +31,7 @@ from app.services.parser.document_router import detect_doc_type, extract_text, p
 class RegistrationResult:
     """문서 등록/재색인 결과 요약."""
 
-    document: ApiDocument
+    document: Document
     endpoints_count: int
     schemas_count: int
     sections_count: int
@@ -95,7 +95,7 @@ class SyncService:
         parsed = parse_document(raw, resolved_doc_type, title_hint=title_override)
         content_hash = _hash(raw)
 
-        document = ApiDocument(
+        document = Document(
             id=_new_id(),
             project=normalized_project,
             source_url=source_url,
@@ -187,7 +187,7 @@ class SyncService:
         for ep in existing_endpoints:
             self._session.delete(ep)
         self._session.execute(sa_delete(ApiSchema).where(ApiSchema.document_id == document_id))
-        self._session.execute(sa_delete(ApiSection).where(ApiSection.document_id == document_id))
+        self._session.execute(sa_delete(DocumentSection).where(DocumentSection.document_id == document_id))
         self._session.flush()
 
         document.content_hash = new_hash

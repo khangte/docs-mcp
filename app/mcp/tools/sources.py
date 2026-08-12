@@ -44,13 +44,13 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Args:
             source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
-                모든 소스를 갱신한다. api_document 재동기화에는 관여하지
+                모든 소스를 갱신한다. document 재동기화에는 관여하지
                 않는다(drive/notion 개념이 없다).
             project: 특정 프로젝트만 갱신할 때 지정. 생략하면 등록된 전
                 프로젝트를 순회한다. include_registered=True 일 때는
-                api_document 대상도 이 project 로 좁힌다.
+                document 대상도 이 project 로 좁힌다.
             include_registered: True 면 register_document 로 등록한
-                ApiDocument 중 source_url 이 있는(URL 기반) 문서도 원본을
+                Document 중 source_url 이 있는(URL 기반) 문서도 원본을
                 다시 가져와 재동기화한다. raw_document 로 등록한 문서는
                 원본 재fetch가 불가능하므로 자동 제외된다. 기본 False —
                 문서마다 원본 재fetch + 재파싱 + 재색인이 필요해 비용이
@@ -289,7 +289,7 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
 def _resync_registered(
     bundle: ServiceBundle, *, project: str | None, force: bool
 ) -> RegisteredResyncResult:
-    """URL 기반 ApiDocument 를 순회하며 개별 resync 하고 결과를 집계한다.
+    """URL 기반 Document 를 순회하며 개별 resync 하고 결과를 집계한다.
 
     문서 하나가 실패해도 나머지는 계속 진행한다(부분 실패 허용). resync 는
     문서마다 자체 커밋하므로 한 문서의 실패가 다른 문서 결과를 롤백하지 않는다.
