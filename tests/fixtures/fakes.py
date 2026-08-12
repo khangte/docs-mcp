@@ -38,11 +38,13 @@ class CountingEmbeddingProvider:
         """위임 프로바이더의 is_semantic 값을 그대로 반환한다."""
         return self._delegate.is_semantic
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+    def embed_documents(
+        self, texts: list[str], labels: list[str] | None = None
+    ) -> list[list[float]]:
         """호출 횟수와 입력 텍스트를 기록한 뒤 위임 프로바이더로 문서를 임베딩한다."""
         self.embed_call_count += 1
         self.embedded_texts.append(list(texts))
-        return self._delegate.embed_documents(texts)
+        return self._delegate.embed_documents(texts, labels=labels)
 
     def embed_query(self, text: str) -> list[float]:
         """호출 횟수와 입력 텍스트를 기록한 뒤 위임 프로바이더로 질의를 임베딩한다."""
@@ -77,7 +79,9 @@ class ExplodingEmbeddingProvider:
         """호출되지 않아야 하는 경로용 페이크라 값 자체는 의미 없다."""
         return False
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+    def embed_documents(
+        self, texts: list[str], labels: list[str] | None = None
+    ) -> list[list[float]]:
         """호출되면 AssertionError 를 발생시킨다."""
         raise AssertionError(
             f"임베딩 프로바이더가 호출되면 안 되는 경로에서 호출됨 (texts={len(texts)}건)"

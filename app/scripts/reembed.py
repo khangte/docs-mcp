@@ -45,7 +45,10 @@ def reembed_all(state: AppState, batch_size: int = _DEFAULT_BATCH_SIZE) -> int:
                     select(ApiChunk).where(ApiChunk.id.in_(batch_ids)).order_by(ApiChunk.id)
                 ).scalars()
             )
-            vectors = provider.embed_documents([chunk.text for chunk in chunks])
+            vectors = provider.embed_documents(
+                [chunk.text for chunk in chunks],
+                labels=[chunk.id for chunk in chunks],
+            )
             for chunk, vector in zip(chunks, vectors, strict=True):
                 chunk.embedding = vector
             session.commit()

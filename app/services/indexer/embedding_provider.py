@@ -17,6 +17,7 @@ from typing import Protocol
 
 from sentence_transformers import SentenceTransformer
 
+from app.core.logging import get_logger
 from app.services.search.tokenize import tokenize
 
 #: E5 계열 모델의 학습 규약: 색인 대상 문서엔 "passage: ", 질의엔 "query: "
@@ -27,6 +28,15 @@ _QUERY_PREFIX = "query: "
 
 #: LocalEmbeddingProvider.embed_query 결과 캐시 크기(질의 문자열 기준).
 _QUERY_CACHE_SIZE = 256
+
+#: `docs/16-long-section-chunking-blindspot.md` §1-2·§2-4: SentenceTransformer
+#: 는 max_seq_length(intfloat/multilingual-e5-small 실측 512) 초과 입력을
+#: 조용히 truncation 한다(에러·경고 없음). 안전마진을 둔 이 상수를 넘는
+#: 입력은 embed_documents 가 경고 로그를 남긴다(벡터 arm 발견성만 손실 —
+#: stored text/FTS 는 이 임계값과 무관하게 온전하다).
+_TOKEN_WARNING_THRESHOLD = 480
+
+_LOG = get_logger("docs_mcp.indexer.embedding")
 
 
 class _SentenceEncoder(Protocol):
@@ -45,8 +55,15 @@ class EmbeddingProvider(Protocol):
     색인(문서)과 질의는 비대칭 접두사 처리가 필요할 수 있어 메서드를 분리한다.
     """
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """색인 대상 문서 텍스트들을 임베딩 벡터 리스트로 변환한다."""
+    def embed_documents(
+        self, texts: list[str], labels: Sequence[str] | None = None
+    ) -> list[list[float]]:
+        """색인 대상 문서 텍스트들을 임베딩 벡터 리스트로 변환한다.
+
+        `labels` 는 텍스트별 식별자(예: "{document_id}:{chunk_type}:{ref_id}")로,
+        길이 초과 경고 로그에서 어느 청크인지 남기는 용도일 뿐 임베딩 결과에는
+        영향을 주지 않는다(선택적).
+        """
         ...
 
     def embed_query(self, text: str) -> list[float]:
@@ -87,8 +104,14 @@ class HashEmbeddingProvider:
         """해시 임베딩은 의미 유사도가 없다."""
         return False
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """입력 문서 텍스트 각각을 결정적으로 임베딩한 벡터들을 반환한다."""
+    def embed_documents(
+        self, texts: list[str], labels: Sequence[str] | None = None
+    ) -> list[list[float]]:
+        """입력 문서 텍스트 각각을 결정적으로 임베딩한 벡터들을 반환한다.
+
+        해시 임베딩은 길이 상한이 없어(버킷 누적 방식) `labels` 는 사용하지
+        않는다 — 시그니처만 `EmbeddingProvider` 계약과 맞춘다.
+        """
         return [self._embed_one(text) for text in texts]
 
     def embed_query(self, text: str) -> list[float]:
@@ -142,13 +165,40 @@ class LocalEmbeddingProvider:
         """로컬 모델 임베딩은 실제 의미 유사도를 갖는다."""
         return True
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        """문서 텍스트들에 "passage: " 접두사를 붙여 인코딩한다. 빈 입력은 그대로 빈 리스트."""
+    def embed_documents(
+        self, texts: list[str], labels: Sequence[str] | None = None
+    ) -> list[list[float]]:
+        """문서 텍스트들에 "passage: " 접두사를 붙여 인코딩한다. 빈 입력은 그대로 빈 리스트.
+
+        인코딩 전, 텍스트별 토큰수가 안전 상한(`_TOKEN_WARNING_THRESHOLD`)을
+        넘으면 `SentenceTransformer.encode` 가 조용히 truncation 하기 전에
+        경고 로그를 남긴다(docs/16 Phase 1).
+        """
         if not texts:
             return []
+        self._warn_if_exceeds_threshold(texts, labels)
         prefixed = [_PASSAGE_PREFIX + text for text in texts]
         vectors = self._encoder.encode(prefixed, normalize_embeddings=True)
         return [list(vector) for vector in vectors]
+
+    def _warn_if_exceeds_threshold(
+        self, texts: list[str], labels: Sequence[str] | None
+    ) -> None:
+        """토크나이저를 노출하는 인코더에 한해, 초과 텍스트를 경고 로그로 남긴다."""
+        tokenizer = getattr(self._encoder, "tokenizer", None)
+        if tokenizer is None:
+            return
+        label_list: Sequence[str | None] = labels if labels is not None else [None] * len(texts)
+        for text, label in zip(texts, label_list, strict=True):
+            token_count = len(tokenizer.encode(text, add_special_tokens=True))
+            if token_count > _TOKEN_WARNING_THRESHOLD:
+                _LOG.warning(
+                    "임베딩 입력이 안전 상한(%d토큰) 초과 — 뒷부분이 벡터 검색에서 조용히 "
+                    "누락될 수 있음(docs/16): label=%s tokens=%d",
+                    _TOKEN_WARNING_THRESHOLD,
+                    label,
+                    token_count,
+                )
 
     def embed_query(self, text: str) -> list[float]:
         """질의 텍스트에 "query: " 접두사를 붙여 인코딩한다(원본 질의 기준 LRU 캐시 적용)."""

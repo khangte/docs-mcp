@@ -274,11 +274,13 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
         def is_semantic(self) -> bool:
             return self._delegate.is_semantic
 
-        def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        def embed_documents(
+            self, texts: list[str], labels: list[str] | None = None
+        ) -> list[list[float]]:
             self._calls += 1
             if self._calls == 1:
                 raise IntegrationError("embedding provider unavailable")
-            return self._delegate.embed_documents(texts)
+            return self._delegate.embed_documents(texts, labels=labels)
 
         def embed_query(self, text: str) -> list[float]:
             return self._delegate.embed_query(text)

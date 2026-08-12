@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
 import pytest
@@ -15,12 +16,24 @@ from app.models.openapi import EMBEDDING_DIM
 from app.services.indexer.embedding_provider import LocalEmbeddingProvider
 
 
+class _FakeTokenizer:
+    """`SentenceTransformer.tokenizer` 를 대신하는 페이크. 고정 토큰수를 돌려준다."""
+
+    def __init__(self, token_count: int) -> None:
+        self._token_count = token_count
+
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        return [0] * self._token_count
+
+
 class _FakeEncoder:
     """SentenceTransformer 를 대신하는 페이크. 인코딩 요청 인자를 그대로 기록한다."""
 
-    def __init__(self, dim: int = EMBEDDING_DIM) -> None:
+    def __init__(self, dim: int = EMBEDDING_DIM, tokenizer: _FakeTokenizer | None = None) -> None:
         self._dim = dim
         self.encode_calls: list[list[str]] = []
+        if tokenizer is not None:
+            self.tokenizer = tokenizer
 
     def get_sentence_embedding_dimension(self) -> int:
         return self._dim
@@ -130,6 +143,55 @@ def test_embed_query_returns_defensive_copy_not_shared_with_cache() -> None:
     # Assert
     assert second[0] != 999.0
     assert encoder.encode_calls == [["query: 로그인"]]
+
+
+def test_embed_documents_warns_when_token_count_exceeds_threshold(caplog: pytest.LogCaptureFixture) -> None:
+    """docs/16 Phase 1: 안전 상한(480토큰) 초과 시 경고 로그가 남는다."""
+    encoder = _FakeEncoder(tokenizer=_FakeTokenizer(token_count=600))
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    with caplog.at_level(logging.WARNING):
+        provider.embed_documents(["긴 섹션 텍스트"], labels=["doc1:section:0"])
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "doc1:section:0" in warnings[0].message
+    assert "600" in warnings[0].message
+
+
+def test_embed_documents_no_warning_when_within_threshold(caplog: pytest.LogCaptureFixture) -> None:
+    encoder = _FakeEncoder(tokenizer=_FakeTokenizer(token_count=100))
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    with caplog.at_level(logging.WARNING):
+        provider.embed_documents(["짧은 텍스트"], labels=["doc1:section:0"])
+
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_embed_documents_no_warning_when_encoder_lacks_tokenizer(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """토크나이저를 노출하지 않는 페이크(기존 테스트들)는 경고 없이 그대로 동작한다."""
+    encoder = _FakeEncoder()  # tokenizer 속성 없음
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    with caplog.at_level(logging.WARNING):
+        result = provider.embed_documents(["아무 텍스트"], labels=["doc1:section:0"])
+
+    assert len(result) == 1
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_embed_documents_without_labels_still_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """labels 를 안 넘겨도(레거시 호출부) 경고 자체는 그대로 동작한다."""
+    encoder = _FakeEncoder(tokenizer=_FakeTokenizer(token_count=600))
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    with caplog.at_level(logging.WARNING):
+        provider.embed_documents(["긴 텍스트"])
+
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
 
 
 @pytest.mark.slow
