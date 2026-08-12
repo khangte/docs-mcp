@@ -103,8 +103,8 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _sync() -> RegisterDriveSourceResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> RegisterDriveSourceResult:
-                row, status = bundle.drive_source_service.register(project, folder_id)
-                return {"project": row.project, "folder_id": row.folder_id, "status": status}
+                row, status = bundle.project_source_service.register(project, "drive", folder_id)
+                return {"project": row.project, "folder_id": row.location, "status": status}
             try:
                 return _run_bundle(app_state, _inner)
             except (DomainError, IntegrationError) as e:
@@ -127,10 +127,10 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         def _sync() -> DriveSourceListResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> DriveSourceListResult:
                 if project is not None:
-                    row = bundle.drive_source_service.get(project)
+                    row = bundle.project_source_service.get(project, "drive")
                     rows = [row] if row is not None else []
                 else:
-                    rows = list(bundle.drive_source_service.list_all())
+                    rows = list(bundle.project_source_service.list_by_type("drive"))
                 return {"items": [_to_drive_source_item(r) for r in rows]}
             try:
                 return _run_bundle(app_state, _inner)
@@ -153,7 +153,9 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _sync() -> RemoveDriveSourceResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> RemoveDriveSourceResult:
-                normalized_project, removed = bundle.drive_source_service.remove(project)
+                normalized_project, removed = bundle.project_source_service.remove(
+                    project, "drive"
+                )
                 return {"project": normalized_project, "removed": removed}
             try:
                 return _run_bundle(app_state, _inner)
@@ -180,10 +182,12 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _sync() -> RegisterNotionSourceResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> RegisterNotionSourceResult:
-                row, status = bundle.notion_source_service.register(project, database_id)
+                row, status = bundle.project_source_service.register(
+                    project, "notion", database_id, kind="database"
+                )
                 return {
                     "project": row.project,
-                    "database_id": row.database_id,
+                    "database_id": row.location,
                     "status": status,
                 }
             try:
@@ -215,10 +219,10 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _sync() -> RegisterNotionPageResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> RegisterNotionPageResult:
-                row, status = bundle.notion_source_service.register_page(project, page_id)
+                row, status = bundle.project_source_service.register_page(project, page_id)
                 return {
                     "project": row.project,
-                    "page_id": row.database_id,
+                    "page_id": row.location,
                     "status": status,
                 }
             try:
@@ -245,10 +249,10 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         def _sync() -> NotionSourceListResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> NotionSourceListResult:
                 if project is not None:
-                    row = bundle.notion_source_service.get(project)
+                    row = bundle.project_source_service.get(project, "notion")
                     rows = [row] if row is not None else []
                 else:
-                    rows = list(bundle.notion_source_service.list_all())
+                    rows = list(bundle.project_source_service.list_by_type("notion"))
                 return {"items": [_to_notion_source_item(r) for r in rows]}
             try:
                 return _run_bundle(app_state, _inner)
@@ -271,7 +275,9 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _sync() -> RemoveNotionSourceResult | ErrorPayload:
             def _inner(bundle: ServiceBundle) -> RemoveNotionSourceResult:
-                normalized_project, removed = bundle.notion_source_service.remove(project)
+                normalized_project, removed = bundle.project_source_service.remove(
+                    project, "notion"
+                )
                 return {"project": normalized_project, "removed": removed}
             try:
                 return _run_bundle(app_state, _inner)

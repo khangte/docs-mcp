@@ -140,7 +140,6 @@ class ApiEndpoint(Base):
     document_id: Mapped[str] = mapped_column(ForeignKey("api_document.id", ondelete="CASCADE"))
     method: Mapped[str] = mapped_column(String(16), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
-    operation_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     summary: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
@@ -246,7 +245,6 @@ class ApiResponse(Base):
     schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     schema_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    example_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     endpoint: Mapped[ApiEndpoint] = relationship(back_populates="responses")
 
@@ -259,16 +257,6 @@ class ApiResponse(Base):
     def schema(self, value: dict[str, Any]) -> None:
         """응답 스키마 dict 를 JSON 문자열로 저장한다."""
         self.schema_json = json.dumps(value)
-
-    @property
-    def example(self) -> Any:
-        """저장된 example_json 을 디코딩해 반환한다."""
-        return _decode_json_any(self.example_json)
-
-    @example.setter
-    def example(self, value: Any) -> None:
-        """예시 값을 JSON 문자열로 직렬화해 저장한다."""
-        self.example_json = None if value is None else json.dumps(value)
 
 
 class ApiSchema(Base):
@@ -370,8 +358,7 @@ def create_all(engine: Any) -> None:
     from sqlalchemy import text
 
     import app.models.document_meta  # noqa: F401  (Base.metadata 등록 목적)
-    import app.models.project_drive_source  # noqa: F401  (Base.metadata 등록 목적)
-    import app.models.project_notion_source  # noqa: F401  (Base.metadata 등록 목적)
+    import app.models.project_source  # noqa: F401  (Base.metadata 등록 목적)
 
     with engine.begin() as conn:
         conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))

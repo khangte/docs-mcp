@@ -15,10 +15,7 @@ from app.composition import AppState
 from app.core.db import create_db_engine, create_session_factory
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import DEFAULT_PROJECT, EMBEDDING_DIM, create_all
-from app.repositories.project_source_repository import (
-    ProjectDriveSourceRepository,
-    ProjectNotionSourceRepository,
-)
+from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from tests.fixtures.samples import openapi_3_json, swagger_2_json
@@ -152,10 +149,7 @@ def make_project_resolver(db_session):
     folder_id/database_id → DocumentSource 매핑을 딕셔너리로 받는다.
     """
     from app.core.config import Settings
-    from app.repositories.project_source_repository import (
-        ProjectDriveSourceRepository,
-        ProjectNotionSourceRepository,
-    )
+    from app.repositories.project_source_repository import ProjectSourceRepository
     from app.services.documents.project_source_resolver import ProjectSourceResolver
 
     def _make(
@@ -174,11 +168,10 @@ def make_project_resolver(db_session):
         속성(리스트)이 붙어, 빌더가 어떤 folder_id/(notion_id, kind) 로 몇 번
         호출됐는지(캐싱 검증) 테스트가 직접 확인할 수 있다.
         """
-        drive_repo = ProjectDriveSourceRepository(db_session)
-        notion_repo = ProjectNotionSourceRepository(db_session)
+        source_repo = ProjectSourceRepository(db_session)
         drive_by_folder: dict[str, object] = {}
         for project, (folder_id, fake) in (drive_mapping or {}).items():
-            drive_repo.upsert(project, folder_id)
+            source_repo.upsert(project, "drive", folder_id)
             drive_by_folder[folder_id] = fake
         notion_by_id_kind: dict[tuple[str, str], object] = {}
         for project, entry in (notion_mapping or {}).items():
@@ -187,7 +180,7 @@ def make_project_resolver(db_session):
             else:
                 notion_id, fake = entry
                 kind = "database"
-            notion_repo.upsert_kind(project, notion_id, kind)
+            source_repo.upsert(project, "notion", notion_id, kind=kind)
             notion_by_id_kind[(notion_id, kind)] = fake
         db_session.commit()
 
@@ -205,8 +198,7 @@ def make_project_resolver(db_session):
         resolver = ProjectSourceResolver(
             settings=Settings(),
             drive_token_provider=None,
-            drive_repo=drive_repo,
-            notion_repo=notion_repo,
+            source_repo=source_repo,
             drive_source_builder=_drive_builder,
             notion_source_builder=_notion_builder,
         )
@@ -295,12 +287,11 @@ def two_project_services(session_factory, fake_drive_source_builder, fake_notion
     """
     session = session_factory()
     try:
-        drive_repo = ProjectDriveSourceRepository(session)
-        notion_repo = ProjectNotionSourceRepository(session)
-        drive_repo.upsert("A", "folder-a")
-        drive_repo.upsert("B", "folder-b")
-        notion_repo.upsert("A", "db-a")
-        notion_repo.upsert("B", "db-b")
+        source_repo = ProjectSourceRepository(session)
+        source_repo.upsert("A", "drive", "folder-a")
+        source_repo.upsert("B", "drive", "folder-b")
+        source_repo.upsert("A", "notion", "db-a")
+        source_repo.upsert("B", "notion", "db-b")
         session.commit()
     finally:
         session.close()
@@ -337,14 +328,15 @@ def seed_default_project_sources(pg_engine, session_factory):
 
     `app_state` 의 `drive_source_builder`/`notion_source_builder` 는 folder_id/
     database_id 와 무관하게 항상 페이크를 돌려주지만, `ProjectSourceResolver`
-    는 `project_drive_source`/`project_notion_source` 에 매핑 행이 있어야만
-    빌더를 호출한다. 대부분의 기존 테스트는 project 개념 없이 동작하므로,
-    DEFAULT_PROJECT 앞으로 더미 매핑을 미리 심어 페이크가 잡히게 한다.
+    는 `project_source` 에 매핑 행이 있어야만 빌더를 호출한다. 대부분의
+    기존 테스트는 project 개념 없이 동작하므로, DEFAULT_PROJECT 앞으로 더미
+    매핑을 미리 심어 페이크가 잡히게 한다.
     """
     session = session_factory()
     try:
-        ProjectDriveSourceRepository(session).upsert(DEFAULT_PROJECT, "fake-folder")
-        ProjectNotionSourceRepository(session).upsert(DEFAULT_PROJECT, "fake-database")
+        source_repo = ProjectSourceRepository(session)
+        source_repo.upsert(DEFAULT_PROJECT, "drive", "fake-folder")
+        source_repo.upsert(DEFAULT_PROJECT, "notion", "fake-database")
         session.commit()
     finally:
         session.close()

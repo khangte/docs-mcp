@@ -14,9 +14,9 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.models.openapi import DEFAULT_PROJECT
-from app.repositories.project_source_repository import ProjectNotionSourceRepository
+from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.documents.sources.notion_source import NotionSource
-from app.services.documents.project_source_service import NotionSourceService
+from app.services.documents.project_source_service import ProjectSourceService
 
 _API_BASE = "https://api.test"
 
@@ -312,41 +312,41 @@ def test_list_pages_without_page_id_still_uses_database_or_search(
     assert paths == ["/databases/db-1/query"]
 
 
-# --- NotionSourceService.register_page --------------------------------------
+# --- ProjectSourceService.register_page --------------------------------------
 
 
 def test_register_page_creates_row_with_kind_page(db_session) -> None:
     """register_page 는 kind='page' 로 행을 만든다."""
-    repo = ProjectNotionSourceRepository(db_session)
-    service = NotionSourceService(db_session, repo)
+    repo = ProjectSourceRepository(db_session)
+    service = ProjectSourceService(db_session, repo)
 
     row, status = service.register_page("A", "page-a")
 
     assert status == "created"
-    assert row.database_id == "page-a"
+    assert row.location == "page-a"
     assert row.kind == "page"
 
 
 def test_register_page_upsert_replaces_value_and_kind(db_session) -> None:
     """같은 project 로 register_page 를 다시 호출하면 값만 교체된다(행 증가 없음)."""
-    repo = ProjectNotionSourceRepository(db_session)
-    service = NotionSourceService(db_session, repo)
+    repo = ProjectSourceRepository(db_session)
+    service = ProjectSourceService(db_session, repo)
     service.register_page("A", "page-a")
 
     row, status = service.register_page("A", "page-a-v2")
 
     assert status == "updated"
-    assert len(repo.list_all()) == 1
-    assert row.database_id == "page-a-v2"
+    assert len(repo.list_by_type("notion")) == 1
+    assert row.location == "page-a-v2"
     assert row.kind == "page"
 
 
 def test_register_database_still_sets_kind_database(db_session) -> None:
     """기존 register()(데이터베이스 등록)는 kind='database' 로 저장된다(회귀)."""
-    repo = ProjectNotionSourceRepository(db_session)
-    service = NotionSourceService(db_session, repo)
+    repo = ProjectSourceRepository(db_session)
+    service = ProjectSourceService(db_session, repo)
 
-    row, status = service.register("A", "db-a")
+    row, status = service.register("A", "notion", "db-a", kind="database")
 
     assert status == "created"
     assert row.kind == "database"
@@ -354,21 +354,21 @@ def test_register_database_still_sets_kind_database(db_session) -> None:
 
 def test_register_page_then_register_database_switches_kind(db_session) -> None:
     """한 프로젝트에 page 로 등록했다가 database 로 재등록하면 kind 가 교체된다."""
-    repo = ProjectNotionSourceRepository(db_session)
-    service = NotionSourceService(db_session, repo)
+    repo = ProjectSourceRepository(db_session)
+    service = ProjectSourceService(db_session, repo)
     service.register_page("A", "page-a")
 
-    row, status = service.register("A", "db-a")
+    row, status = service.register("A", "notion", "db-a", kind="database")
 
     assert status == "updated"
     assert row.kind == "database"
-    assert row.database_id == "db-a"
+    assert row.location == "db-a"
 
 
 def test_register_page_empty_value_raises_validation_error(db_session) -> None:
     """register_page 도 기존 _normalize_value 검증을 재사용한다(빈 문자열 금지)."""
-    repo = ProjectNotionSourceRepository(db_session)
-    service = NotionSourceService(db_session, repo)
+    repo = ProjectSourceRepository(db_session)
+    service = ProjectSourceService(db_session, repo)
 
     with pytest.raises(ValidationError):
         service.register_page("A", "")
@@ -376,8 +376,8 @@ def test_register_page_empty_value_raises_validation_error(db_session) -> None:
 
 def test_register_page_empty_project_raises_validation_error(db_session) -> None:
     """register_page 도 project 필수 검증을 재사용한다."""
-    repo = ProjectNotionSourceRepository(db_session)
-    service = NotionSourceService(db_session, repo)
+    repo = ProjectSourceRepository(db_session)
+    service = ProjectSourceService(db_session, repo)
 
     with pytest.raises(ValidationError):
         service.register_page("", "page-a")
@@ -482,25 +482,25 @@ def test_build_notion_source_without_token_returns_none_regardless_of_kind() -> 
     assert build_notion_source(settings, "db-x") is None
 
 
-# --- ProjectNotionSourceRepository.upsert_kind -------------------------------
+# --- ProjectSourceRepository.upsert(kind=...) ---------------------------------
 
 
 def test_upsert_kind_sets_value_and_kind(db_session) -> None:
-    """upsert_kind 는 값 컬럼과 kind 를 함께 세팅한다."""
-    repo = ProjectNotionSourceRepository(db_session)
+    """upsert 는 값 컬럼과 kind 를 함께 세팅한다."""
+    repo = ProjectSourceRepository(db_session)
 
-    row = repo.upsert_kind("A", "page-a", "page")
+    row = repo.upsert("A", "notion", "page-a", kind="page")
     db_session.commit()
 
-    assert row.database_id == "page-a"
+    assert row.location == "page-a"
     assert row.kind == "page"
 
 
-def test_upsert_kind_default_value_is_database_via_repo(db_session) -> None:
-    """kind 를 명시하지 않고 기존 upsert() 로 만든 행은 모델 기본값 'database' 를 갖는다."""
-    repo = ProjectNotionSourceRepository(db_session)
+def test_upsert_kind_omitted_leaves_kind_none(db_session) -> None:
+    """kind 를 명시하지 않고 upsert() 로 만든 행은 kind 가 None 이다(호출부가 명시할 책임)."""
+    repo = ProjectSourceRepository(db_session)
 
-    row = repo.upsert(DEFAULT_PROJECT, "db-default")
+    row = repo.upsert(DEFAULT_PROJECT, "notion", "db-default")
     db_session.commit()
 
-    assert row.kind == "database"
+    assert row.kind is None

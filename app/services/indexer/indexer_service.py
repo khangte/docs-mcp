@@ -128,7 +128,6 @@ def _to_endpoint_entity(
         document_id=document_id,
         method=parsed.method,
         path=parsed.path,
-        operation_id=parsed.operation_id,
         summary=parsed.summary,
         description=parsed.description,
     )
@@ -176,7 +175,6 @@ def _to_response_entity(endpoint_id: str, parsed: object) -> ApiResponse:
         schema_ref=parsed.schema_ref,
     )
     entity.schema = parsed.schema
-    entity.example = parsed.example
     return entity
 
 

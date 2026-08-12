@@ -607,7 +607,7 @@ async def test_register_drive_source_change_is_reflected_without_restart(
 
     SPEC 377행 검증 기준. `AppState` 는 Drive/Notion 어댑터를 고정 dict 로
     들고 있지 않고, 매 MCP 도구 호출마다 `ProjectSourceResolver` 가
-    `project_drive_source` 를 그 요청의 세션으로 새로 조회해 어댑터를
+    `project_source` 를 그 요청의 세션으로 새로 조회해 어댑터를
     만든다. 그래서 같은 프로세스를 재시작하지 않아도 매핑을 바꾸면
     다음 refresh_index/search_documents 호출이 즉시 새 폴더를 본다.
     """

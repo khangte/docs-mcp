@@ -10,11 +10,9 @@ from sqlalchemy.engine import Engine
 from app.composition import AppState
 from app.core.config import Settings, get_settings
 from app.core.db import create_db_engine, create_session_factory, managed_session
+from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
 from app.models.openapi import DEFAULT_PROJECT, create_all
-from app.repositories.project_source_repository import (
-    ProjectDriveSourceRepository,
-    ProjectNotionSourceRepository,
-)
+from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.ingestor.openapi_fetcher import HttpOpenAPIFetcher
 
 
@@ -41,19 +39,18 @@ def seed_default_sources(engine: Engine, cfg: Settings) -> None:
     생성 이전인 이 지점(세션을 직접 열어 처리)을 두 경로가 공통으로 호출하는
     형태로 둔다.
 
-    `project_drive_source`/`project_notion_source` 에 `(DEFAULT_PROJECT, 값)`
-    이 이미 있으면 아무 것도 하지 않는다(재기동해도 중복 생성 없음).
+    `project_source` 에 `(DEFAULT_PROJECT, source_type)` 이 이미 있으면 아무
+    것도 하지 않는다(재기동해도 중복 생성 없음).
     """
     if not cfg.drive_folder_id and not cfg.notion_database_id:
         return
     session_factory = create_session_factory(engine)
     with managed_session(session_factory) as session:
+        repo = ProjectSourceRepository(session)
         if cfg.drive_folder_id:
-            drive_repo = ProjectDriveSourceRepository(session)
-            if drive_repo.get(DEFAULT_PROJECT) is None:
-                drive_repo.upsert(DEFAULT_PROJECT, cfg.drive_folder_id)
+            if repo.get(DEFAULT_PROJECT, SOURCE_DRIVE) is None:
+                repo.upsert(DEFAULT_PROJECT, SOURCE_DRIVE, cfg.drive_folder_id)
         if cfg.notion_database_id:
-            notion_repo = ProjectNotionSourceRepository(session)
-            if notion_repo.get(DEFAULT_PROJECT) is None:
-                notion_repo.upsert(DEFAULT_PROJECT, cfg.notion_database_id)
+            if repo.get(DEFAULT_PROJECT, SOURCE_NOTION) is None:
+                repo.upsert(DEFAULT_PROJECT, SOURCE_NOTION, cfg.notion_database_id)
         session.commit()

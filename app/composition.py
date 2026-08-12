@@ -19,20 +19,14 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
-from app.repositories.project_source_repository import (
-    ProjectDriveSourceRepository,
-    ProjectNotionSourceRepository,
-)
+from app.repositories.project_source_repository import ProjectSourceRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
 from app.services.documents.document_index_service import DocumentIndexService
 from app.services.documents.document_search_service import DocumentSearchService
 from app.services.documents.sources.document_source import DocumentSource
 from app.services.documents.sources.google_drive_source import ServiceAccountTokenProvider
 from app.services.documents.project_source_resolver import ProjectSourceResolver
-from app.services.documents.project_source_service import (
-    DriveSourceService,
-    NotionSourceService,
-)
+from app.services.documents.project_source_service import ProjectSourceService
 from app.services.documents.sources.source_factory import build_drive_token_provider
 from app.services.endpoints.endpoint_details_service import EndpointDetailsService
 from app.services.examples.request_example_service import RequestExampleService
@@ -95,8 +89,8 @@ class AppState:
         주입한다(env 오염 없는 dependency override).
 
         Drive/Notion 어댑터는 여기서 고정 dict 로 만들어 보관하지 않는다.
-        `project_drive_source`/`project_notion_source` 매핑은 요청/갱신마다
-        `ProjectSourceResolver` 가 새로 조회해 만들어내므로(SPEC 기능 5·6),
+        `project_source` 매핑은 요청/갱신마다 `ProjectSourceResolver` 가 새로
+        조회해 만들어내므로(SPEC 기능 5·6),
         `register_drive_source`/`register_notion_source` 로 매핑을 바꾸면
         서버 재시작 없이 다음 `search_documents`/`refresh_index` 호출부터
         바로 반영된다. `drive_source_builder`/`notion_source_builder` 는
@@ -170,10 +164,8 @@ class ServiceBundle:
     tag_catalog_service: TagCatalogService
     document_search_service: DocumentSearchService
     document_index_service: DocumentIndexService
-    project_drive_source_repo: ProjectDriveSourceRepository
-    project_notion_source_repo: ProjectNotionSourceRepository
-    drive_source_service: DriveSourceService
-    notion_source_service: NotionSourceService
+    project_source_repo: ProjectSourceRepository
+    project_source_service: ProjectSourceService
     project_source_resolver: ProjectSourceResolver
 
 
@@ -227,18 +219,15 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             endpoint_repo=endpoint_repo,
             document_repo=document_repo,
         )
-        project_drive_source_repo = ProjectDriveSourceRepository(session)
-        project_notion_source_repo = ProjectNotionSourceRepository(session)
-        drive_source_service = DriveSourceService(session, project_drive_source_repo)
-        notion_source_service = NotionSourceService(session, project_notion_source_repo)
-        # 매 요청마다 새로 만든다: project_drive_source/project_notion_source
-        # 매핑을 이 세션 기준으로 즉시 다시 읽으므로, register_drive_source 로
-        # 바꾼 값이 서버 재시작 없이 바로 다음 요청에 반영된다(SPEC 377행).
+        project_source_repo = ProjectSourceRepository(session)
+        project_source_service = ProjectSourceService(session, project_source_repo)
+        # 매 요청마다 새로 만든다: project_source 매핑을 이 세션 기준으로
+        # 즉시 다시 읽으므로, register_drive_source 로 바꾼 값이 서버 재시작
+        # 없이 바로 다음 요청에 반영된다(SPEC 377행).
         project_source_resolver = ProjectSourceResolver(
             settings=get_settings(),
             drive_token_provider=state.drive_token_provider,
-            drive_repo=project_drive_source_repo,
-            notion_repo=project_notion_source_repo,
+            source_repo=project_source_repo,
             drive_source_builder=state.drive_source_builder,
             notion_source_builder=state.notion_source_builder,
         )
@@ -266,10 +255,8 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             tag_catalog_service=tag_catalog_service,
             document_search_service=document_search_service,
             document_index_service=document_index_service,
-            project_drive_source_repo=project_drive_source_repo,
-            project_notion_source_repo=project_notion_source_repo,
-            drive_source_service=drive_source_service,
-            notion_source_service=notion_source_service,
+            project_source_repo=project_source_repo,
+            project_source_service=project_source_service,
             project_source_resolver=project_source_resolver,
         )
     finally:

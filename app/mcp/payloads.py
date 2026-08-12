@@ -21,8 +21,7 @@ from app.mcp.types import (
     TagItem,
     TagListResult,
 )
-from app.models.project_drive_source import ProjectDriveSource
-from app.models.project_notion_source import ProjectNotionSource
+from app.models.project_source import ProjectSource
 from app.services.documents.document_index_service import RefreshResult
 from app.services.documents.document_search_service import (
     DocumentContent,
@@ -157,21 +156,21 @@ def _to_refresh_payload(result: RefreshResult) -> RefreshIndexResult:
     }
 
 
-def _to_drive_source_item(row: ProjectDriveSource) -> DriveSourceItem:
-    """`ProjectDriveSource` 행을 MCP 응답 dict 로 변환한다."""
+def _to_drive_source_item(row: ProjectSource) -> DriveSourceItem:
+    """`ProjectSource`(drive) 행을 MCP 응답 dict 로 변환한다."""
     return {
         "project": row.project,
-        "folder_id": row.folder_id,
+        "folder_id": row.location,
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
 
 
-def _to_notion_source_item(row: ProjectNotionSource) -> NotionSourceItem:
-    """`ProjectNotionSource` 행을 MCP 응답 dict 로 변환한다."""
+def _to_notion_source_item(row: ProjectSource) -> NotionSourceItem:
+    """`ProjectSource`(notion) 행을 MCP 응답 dict 로 변환한다."""
     return {
         "project": row.project,
-        "database_id": row.database_id,
+        "database_id": row.location,
         "kind": cast(Literal["database", "page"], row.kind),
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),

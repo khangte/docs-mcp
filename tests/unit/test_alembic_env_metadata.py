@@ -1,10 +1,10 @@
 """alembic/env.py 가 모든 모델 모듈을 import 해 Base.metadata 에 등록하는지 확인한다.
 
 `document_meta` 는 이미 명시 import 돼 있었지만 `project_drive_source`/
-`project_notion_source` 는 누락돼 있었다(reviewer가 P1 리뷰 중 발견). 실제
-DB 에는 두 테이블이 있으므로(마이그레이션 2b4bb412644b/316f49510efc),
-`alembic revision --autogenerate` 를 돌리면 두 테이블이 "메타데이터엔 없는데
-DB 엔 있다"고 오판되어 잘못된 `DROP TABLE` 마이그레이션이 생성될 위험이 있었다.
+`project_notion_source`(현재는 병합된 `project_source`) 는 한때 누락돼
+있었다(reviewer가 P1 리뷰 중 발견). env.py 가 모델 모듈을 빠뜨리면 실제
+DB 에 있는 테이블이 "메타데이터엔 없다"고 오판되어 `alembic revision
+--autogenerate` 가 잘못된 `DROP TABLE` 마이그레이션을 생성할 위험이 있다.
 
 `alembic check`(1.9+)는 env.py 를 실제로 로드해 `compare_metadata` 비교를
 수행하므로, 이 회귀를 잡는 가장 직접적인 방법이다 — env.py 의 import 문을
@@ -38,10 +38,9 @@ def _run_alembic_check() -> subprocess.CompletedProcess[str]:
 def test_alembic_env_has_no_pending_autogenerate_diff() -> None:
     """`alembic check` 가 pending diff 없음(exit 0)을 보고한다.
 
-    특히 project_drive_source/project_notion_source 에 대한 remove_table
-    (=DROP TABLE) 오탐이 없어야 한다 — env.py 가 해당 모델을 import 하지
-    않으면 Base.metadata 에서 두 테이블이 빠져 autogenerate 가 삭제
-    마이그레이션을 만들려 한다.
+    특히 project_source 에 대한 remove_table(=DROP TABLE) 오탐이 없어야
+    한다 — env.py 가 해당 모델을 import 하지 않으면 Base.metadata 에서 그
+    테이블이 빠져 autogenerate 가 삭제 마이그레이션을 만들려 한다.
     """
     result = _run_alembic_check()
 
@@ -50,5 +49,4 @@ def test_alembic_env_has_no_pending_autogenerate_diff() -> None:
         "alembic/env.py 가 모든 모델 모듈을 import 하는지 확인할 것.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
-    assert "project_drive_source" not in result.stderr
-    assert "project_notion_source" not in result.stderr
+    assert "project_source" not in result.stderr

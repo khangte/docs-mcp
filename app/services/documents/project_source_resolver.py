@@ -1,10 +1,10 @@
 """project → Drive/Notion 어댑터 요청 시점 팩토리 (SPEC 기능 5).
 
-`project_drive_source`/`project_notion_source` 매핑 테이블을 조회해, 그
-project 가 실제로 쓸 수 있는 `DocumentSource` 어댑터를 그때그때 만들어낸다.
-서비스 계정 자격증명(Drive)과 Integration Token(Notion)은 서버 전역에서
-공유하는 `drive_token_provider`/`notion` 설정을 그대로 재사용하고, project
-마다 달라지는 것은 folder_id/database_id 뿐이다.
+`project_source` 매핑 테이블을 조회해, 그 project 가 실제로 쓸 수 있는
+`DocumentSource` 어댑터를 그때그때 만들어낸다. 서비스 계정 자격증명(Drive)과
+Integration Token(Notion)은 서버 전역에서 공유하는
+`drive_token_provider`/`notion` 설정을 그대로 재사용하고, project 마다
+달라지는 것은 location(folder_id/database_id) 뿐이다.
 
 resolver 인스턴스(=요청 1회) 안에서 같은 folder_id/database_id 에 대한
 어댑터를 캐싱해, 여러 project 가 같은 폴더/DB 를 공유하거나 `resolve_all()`
@@ -16,10 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from app.core.config import Settings
-from app.repositories.project_source_repository import (
-    ProjectDriveSourceRepository,
-    ProjectNotionSourceRepository,
-)
+from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
+from app.repositories.project_source_repository import ProjectSourceRepository
 from app.services.documents.sources.document_source import DocumentSource
 from app.services.documents.sources.google_drive_source import ServiceAccountTokenProvider
 from app.services.documents.sources.source_factory import build_drive_source, build_notion_source
@@ -32,8 +30,7 @@ class ProjectSourceResolver:
         self,
         settings: Settings,
         drive_token_provider: ServiceAccountTokenProvider | None,
-        drive_repo: ProjectDriveSourceRepository,
-        notion_repo: ProjectNotionSourceRepository,
+        source_repo: ProjectSourceRepository,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
     ) -> None:
@@ -47,8 +44,7 @@ class ProjectSourceResolver:
         """
         self._settings = settings
         self._drive_token_provider = drive_token_provider
-        self._drive_repo = drive_repo
-        self._notion_repo = notion_repo
+        self._source_repo = source_repo
         self._drive_source_builder = drive_source_builder
         self._notion_source_builder = notion_source_builder
         self._drive_cache: dict[str, DocumentSource | None] = {}
@@ -62,15 +58,17 @@ class ProjectSourceResolver:
         """
         sources: dict[str, DocumentSource] = {}
 
-        drive_row = self._drive_repo.get(project)
+        drive_row = self._source_repo.get(project, SOURCE_DRIVE)
         if drive_row is not None:
-            drive_source = self._drive_source_for(drive_row.folder_id)
+            drive_source = self._drive_source_for(drive_row.location)
             if drive_source is not None:
                 sources[drive_source.source_name] = drive_source
 
-        notion_row = self._notion_repo.get(project)
+        notion_row = self._source_repo.get(project, SOURCE_NOTION)
         if notion_row is not None:
-            notion_source = self._notion_source_for(notion_row.database_id, notion_row.kind)
+            notion_source = self._notion_source_for(
+                notion_row.location, notion_row.kind or "database"
+            )
             if notion_source is not None:
                 sources[notion_source.source_name] = notion_source
 
@@ -79,17 +77,19 @@ class ProjectSourceResolver:
     def resolve_all(self) -> list[tuple[str, DocumentSource]]:
         """등록된 모든 project 의 (project, source) 쌍을 반환한다.
 
-        Drive 는 `project_drive_source` 전 행에서, Notion 은
-        `project_notion_source` 전 행에서 각각 만든다. 자격증명이 없어
+        Drive 는 `source_type='drive'` 전 행에서, Notion 은
+        `source_type='notion'` 전 행에서 각각 만든다. 자격증명이 없어
         어댑터를 만들 수 없는 행은 조용히 제외된다.
         """
         pairs: list[tuple[str, DocumentSource]] = []
-        for drive_row in self._drive_repo.list_all():
-            drive_source = self._drive_source_for(drive_row.folder_id)
+        for drive_row in self._source_repo.list_by_type(SOURCE_DRIVE):
+            drive_source = self._drive_source_for(drive_row.location)
             if drive_source is not None:
                 pairs.append((drive_row.project, drive_source))
-        for notion_row in self._notion_repo.list_all():
-            notion_source = self._notion_source_for(notion_row.database_id, notion_row.kind)
+        for notion_row in self._source_repo.list_by_type(SOURCE_NOTION):
+            notion_source = self._notion_source_for(
+                notion_row.location, notion_row.kind or "database"
+            )
             if notion_source is not None:
                 pairs.append((notion_row.project, notion_source))
         return pairs

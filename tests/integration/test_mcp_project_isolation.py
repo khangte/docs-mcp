@@ -171,7 +171,7 @@ async def test_list_documents_without_filter_returns_both_projects(
     assert doc_b in ids
 
 
-# --- 검증 기준 3: A 삭제가 B 문서/B document_meta/project_drive_source 에 영향 없음 --
+# --- 검증 기준 3: A 삭제가 B 문서/B document_meta/project_source 에 영향 없음 --
 
 
 @pytest.mark.asyncio()
@@ -182,7 +182,7 @@ async def test_deleting_project_a_document_does_not_affect_project_b(
     sample_openapi_3: str,
 ) -> None:
     """프로젝트 A 의 문서를 삭제해도 B 문서와 B 의 document_meta 행,
-    project_drive_source 행이 영향받지 않는다.
+    project_source 행이 영향받지 않는다.
     """
     doc_a, doc_b = await _register_openapi_docs(isolated_mcp, sample_openapi_3)
     await _seed_collab_docs(isolated_mcp, two_project_services)
@@ -206,7 +206,7 @@ async def test_deleting_project_a_document_does_not_affect_project_b(
     assert "B 드라이브 문서" in titles
     assert "B 노션 문서" in titles
 
-    # B 의 project_drive_source/project_notion_source 매핑도 그대로 남는다.
+    # B 의 project_source(drive/notion) 매핑도 그대로 남는다.
     drive_list = _result(
         await isolated_mcp.call_tool("list_drive_sources", {"project": "B"})
     )
