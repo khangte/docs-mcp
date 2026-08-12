@@ -3,7 +3,7 @@
 - 상태: Quick win(Q1~Q3) **구현 완료** (6절 참조) · 구조적 개선(S1~S3)은 **분석/제안 only**(코드 미수정)
 - 일시: 2026-08-11
 - 작성: architect
-- 선행 문서: `docs/03-search-performance-improvements.md`(P1~P6·RRF 전부 구현완료), `docs/00-search-flow.md`(현재 흐름)
+- 선행 문서: `docs/architect-review/03-search-performance-improvements.md`(P1~P6·RRF 전부 구현완료), `docs/search-flow.md`(현재 흐름)
 - 대상 코드: `app/services/search/endpoint_candidate_search.py`, `app/services/documents/document_search_service.py`,
   `app/repositories/chunk_repository.py`, `app/repositories/document_meta_repository.py`,
   `app/repositories/endpoint_repository.py`, `app/services/search/vector_search.py`

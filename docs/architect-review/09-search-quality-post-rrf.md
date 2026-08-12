@@ -3,7 +3,7 @@
 - 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md` / P5: HNSW ef_search, 커밋 `aae5728`, 실행계획 `docs/exec_plans/search-p4-p5-p6-plan.md`). **P4 완료**(K 스윕 실험, 커밋 `434c35a`, 결론 `K=60` 유지 — 강한 null result, 아래 절 참조). **P2 보류**(조건부 재검토, 아래 절 참조), **P3 보류**(착수 검토 완료 2026-08-10 — 이 도구는 후보 피더라 구속 지표가 recall@k(이미 88~95%)지 top-1이 아님, 재검토 트리거는 아래 절 참조).
 - 일시: 2026-08-10
 - 작성: architect
-- 관련: `docs/07-search-rrf-reevaluation.md`(RRF 도입·실측), `docs/03-search-performance-improvements.md`(P1~P6), `docs/06-vector-store-qdrant-vs-pgvector.md`
+- 관련: `docs/architect-review/07-search-rrf-reevaluation.md`(RRF 도입·실측), `docs/architect-review/03-search-performance-improvements.md`(P1~P6), `docs/architect-review/06-vector-store-qdrant-vs-pgvector.md`
 - 대상 코드: `app/services/search/`, `app/models/openapi.py`(text_tsv 식), `app/repositories/chunk_repository.py`, `tests/fixtures/rrf_eval/`
 
 ## 출발점(현 상태)
@@ -71,7 +71,7 @@ P2(필드 가중 tsvector)는 "필드 희석" 카테고리가 이미 88~100%로 
 > **재검토 조건**: 실사용/평가셋에서 "질의 토큰이 파라미터·응답코드에만 매칭돼 무관 엔드포인트가
 > 상위에 오는" **구체적 필드희석 실패가 실측**되면 그때 위 비용을 감수하고 착수한다. 그 전까지는 보류.
 - **현 문제**: `text_tsv` 가 summary·path·description·params·responses 를 **동일 가중**으로 뭉친다.
-  → `docs/07-search-rrf-reevaluation.md` 1절이 지목한 **"필드 희석"**(질의 토큰이 파라미터 이름에 매칭돼 무관 엔드포인트 히트)의 직접 원인. `ts_rank` 가 요약/경로 매칭과 파라미터 매칭을 구분 못 한다.
+  → `docs/architect-review/07-search-rrf-reevaluation.md` 1절이 지목한 **"필드 희석"**(질의 토큰이 파라미터 이름에 매칭돼 무관 엔드포인트 히트)의 직접 원인. `ts_rank` 가 요약/경로 매칭과 파라미터 매칭을 구분 못 한다.
 - **개선**: `TEXT_TSV_EXPRESSION` 을 필드별 `setweight` 로 재구성 — A=summary+path, B=description, C=tags, D=params+responses. `ts_rank(weights, tsv, query)` 로 요약/경로 매칭을 상위로.
 - **효과**: 중~큼. 필드 희석 오탐 억제 → **키워드 arm 정밀도↑ = top-1 직접 개선 여지**(RRF가 못 움직인 지표).
 - **난이도**: 중(생성 컬럼식 변경 → text_tsv 재생성 마이그레이션, 모델·alembic 식 동기화, ts_rank 호출에 weights 전달). **리스크**: 중(순위 골든 기대값 갱신 필요, 회귀 재검증). Postgres 네이티브라 신규 의존성 0.

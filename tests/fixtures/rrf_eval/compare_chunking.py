@@ -1,6 +1,6 @@
 """청킹 전략(baseline vs tag전용) A/B 실측 스크립트.
 
-`docs/13-rag-context-chunking-experiment.md` 4절이 정의한 실험 하네스다.
+`docs/architect-review/13-rag-context-chunking-experiment.md` 4절이 정의한 실험 하네스다.
 `compare_strategies.py`의 임시 DB 생성/등록/지표 로직을 재사용하되, 전략은
 `rrf`로 고정하고 **청킹만** baseline vs 방향1 tag전용 변형으로 비교한다.
 

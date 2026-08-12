@@ -1,6 +1,6 @@
 """임베딩 모델(e5-small vs e5-base) A/B 실측 스크립트.
 
-`docs/15-embedding-model-swap-experiment.md` 3절이 정의한 실험 하네스다.
+`docs/architect-review/15-embedding-model-swap-experiment.md` 3절이 정의한 실험 하네스다.
 `compare_chunking.py`의 temp-DB 생성/등록/지표 로직을 재사용하되, 바꾸는
 변형 축은 "청킹"이 아니라 "임베딩 provider + 벡터 컬럼 dim"이다.
 

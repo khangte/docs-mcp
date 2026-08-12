@@ -2,7 +2,7 @@
 
 - 상태: **착수 승인**(lead, 2026-08-10). developer 구현 대상.
 - 작성: architect
-- 근거 설계: `docs/09-search-quality-post-rrf.md` P1
+- 근거 설계: `docs/architect-review/09-search-quality-post-rrf.md` P1
 - 대상 파일: `tests/fixtures/rrf_eval/queries.json`, `tests/fixtures/rrf_eval/compare_strategies.py`,
   (선택) `tests/fixtures/rrf_eval/openapi.json`
 - 원칙: 이 작업은 **계측 인프라 확장**이다. 검색 로직(`app/services/search/`)은 **건드리지 않는다.**
@@ -33,7 +33,7 @@ RRF 실측이 20질의로 top-1 80%·top-3 recall 95%를 냈으나, 20질의는 
   health, products GET, products/{productId}). **새 질의는 이 엔드포인트를 정답으로 라벨링**한다.
   openapi.json 확장은 이번 스코프 밖(1.5 참고).
 - **실패 taxonomy 균형 배분**(각 카테고리 최소 8~12질의). 카테고리는
-  `docs/07-search-rrf-reevaluation.md` 1절 손실 패턴에서 파생:
+  `docs/architect-review/07-search-rrf-reevaluation.md` 1절 손실 패턴에서 파생:
   1. `동의어/패러프레이즈-한글` (예: "회원 나가기", "계정 없애줘" → DELETE /users/{userId})
   2. `동의어/패러프레이즈-영문` (예: "register", "onboard a user" → POST /users)
   3. `한글질의 vs 영문문서` / `영문질의 vs 한글문서` (교차언어)
@@ -134,7 +134,7 @@ RRF 실측이 20질의로 top-1 80%·top-3 recall 95%를 냈으나, 20질의는 
    ```
    - 확장 질의셋(60+)에서 fallback vs rrf의 Recall@{1,3,5,10}·MRR·nDCG@10이 출력되고,
      **회귀(rrf < fallback) 목록이 명시**될 것.
-   - 이 실행 결과(지표 표)를 `docs/09-search-quality-post-rrf.md` P1 절 하단 또는 별도
+   - 이 실행 결과(지표 표)를 `docs/architect-review/09-search-quality-post-rrf.md` P1 절 하단 또는 별도
      "실측 결과" 절에 **기록**(RRF 재검토 문서 6절과 동일 포맷). 수치 해석은 architect가 검토.
 4. **기존 골든 회귀 테스트 불변**: `tests/unit/test_search_rrf_golden.py`,
    `tests/unit/test_rrf.py`가 그대로 통과(이 작업은 검색 로직 무변경이므로 반드시 green).

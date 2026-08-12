@@ -10,9 +10,9 @@
 >
 > 코드와 이 문서가 어긋나면 신규 참여자가 잘못된 그림을 갖게 된다. **코드가 진실, 문서는 그 요약**임을 전제로, 흐름·파일·함수 위치가 바뀌면 반드시 반영한다.
 
-- 최종 갱신: 2026-08-12 (developer: `query_variants`를 엔드포인트 키워드 arm에도 배선 — `docs/12-rag-depth-directions.md` 후보4)
+- 최종 갱신: 2026-08-12 (developer: `query_variants`를 엔드포인트 키워드 arm에도 배선 — `docs/architect-review/12-rag-depth-directions.md` 후보4)
 - 작성: architect
-- 관련 설계 근거: `docs/07-search-rrf-reevaluation.md`(RRF), `docs/04-search-p1-keyword-fts-design.md`(키워드 FTS), `docs/03-search-performance-improvements.md`(P1~P6), `docs/10-collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등), `docs/12-rag-depth-directions.md`(후보4: query_variants 확장)
+- 관련 설계 근거: `docs/architect-review/07-search-rrf-reevaluation.md`(RRF), `docs/architect-review/04-search-p1-keyword-fts-design.md`(키워드 FTS), `docs/architect-review/03-search-performance-improvements.md`(P1~P6), `docs/architect-review/10-collab-docs-search-fixes.md`(항목1~6: version 파싱, truncated 노출 등), `docs/architect-review/12-rag-depth-directions.md`(후보4: query_variants 확장)
 
 ---
 
@@ -53,7 +53,7 @@
 2. **endpoint 청크 존재 확인** — `chunk_repo.has_endpoint_chunks` (`chunk_repository.py:121`). 스코프에 endpoint 청크가 아예 없으면 검색·임베딩 없이 즉시 `[]`.
 3. **후보 폭 N 계산** — `width = max(top_k * 4, 50)` (`:169`, 상수 `_CANDIDATE_WIDTH_MULTIPLIER=4`, `_MIN_CANDIDATE_WIDTH=50`). 정답이 한쪽 arm 상위에만 있어도 융합에서 건지도록 top_k보다 넓게 조회한다.
 4. **키워드 arm(FTS)** — `KeywordSearch.search` (`keyword_search.py:38`)
-   - 질의를 `tokenize_terms`(`keyword_search.py:13`, 정규식 `[0-9A-Za-z_]+|[가-힣]+`, 소문자화)로 term 분해. 호출자(Claude)가 `CandidateSearchOptions.query_variants`로 동의어/유사 표현을 넘기면 같은 토크나이저로 분해해 필터 term 에 합류시킨다(**docs/12-rag-depth-directions.md** 후보4 — 협업문서 검색과 동일 규약: variant는 필터만 넓히고 점수엔 안 섞는다).
+   - 질의를 `tokenize_terms`(`keyword_search.py:13`, 정규식 `[0-9A-Za-z_]+|[가-힣]+`, 소문자화)로 term 분해. 호출자(Claude)가 `CandidateSearchOptions.query_variants`로 동의어/유사 표현을 넘기면 같은 토크나이저로 분해해 필터 term 에 합류시킨다(**docs/architect-review/12-rag-depth-directions.md** 후보4 — 협업문서 검색과 동일 규약: variant는 필터만 넓히고 점수엔 안 섞는다).
    - `chunk_repo.search_endpoint_by_text` (`chunk_repository.py:140`): 필터 term(원본+variant)들을 `|`(OR)로 결합해 `to_tsquery('simple', ...)`를 만들고, `api_chunk.text_tsv` **GIN 인덱스**(`ix_api_chunk_text_tsv`)에 `@@` 매칭. 각 term은 리터럴 lexeme으로 인용(`_quote_tsquery_lexeme`, tsquery 연산자 오인 방지). **`ts_rank` 점수는 별도 `score_terms`(원본 질의 term만, `query_variants` 생략 시 필터 term과 동일)로 계산**해, variant 매칭만 있는 후보가 원본 매칭 후보보다 부당하게 높은 순위를 받지 않게 한다. 정렬은 그 점수 내림차순, 동점이면 `id` 오름차순(결정적). 스코프(document_id/project)는 SQL WHERE + `ApiDocument` JOIN으로 필터.
    - `text_tsv`는 `TEXT_TSV_EXPRESSION`(`app/models/openapi.py:46`)으로 채워지는 STORED generated 컬럼 — ASCII↔한글 경계에 공백을 삽입한 뒤 `to_tsvector('simple', ...)`로 만든다(한글 단어·경로 세그먼트·혼합복합어 매칭).
    - 결과에서 `ref_id`(=endpoint_id) 순위 리스트를 뽑는다.
@@ -147,6 +147,6 @@ flowchart TD
 ## 4. 두 경로의 공통 원칙 (설계 메모)
 
 - **스코프 필터는 SQL로** — 두 경로 모두 document_id/project/source 범위를 Python이 아니라 SQL WHERE(+JOIN)로 좁힌다. 전체 행을 메모리에 적재하지 않는다.
-- **질의 확장은 호출측 LLM의 몫** — 서버는 동의어/약어 확장을 위해 별도 LLM을 호출하지 않는다. 두 경로 모두 호출자가 넘긴 `query_variants`를 **키워드 후보 필터(FTS OR / ILIKE)에만** 쓰고 점수는 원본 질의 토큰만으로 계산한다(`docs/12-rag-depth-directions.md` 후보4). 엔드포인트 검색의 벡터 arm은 `query_variants`를 받지 않는다 — 이미 의미 유사도로 동의어/유사 표현을 흡수하기 때문이다.
+- **질의 확장은 호출측 LLM의 몫** — 서버는 동의어/약어 확장을 위해 별도 LLM을 호출하지 않는다. 두 경로 모두 호출자가 넘긴 `query_variants`를 **키워드 후보 필터(FTS OR / ILIKE)에만** 쓰고 점수는 원본 질의 토큰만으로 계산한다(`docs/architect-review/12-rag-depth-directions.md` 후보4). 엔드포인트 검색의 벡터 arm은 `query_variants`를 받지 않는다 — 이미 의미 유사도로 동의어/유사 표현을 흡수하기 때문이다.
 - **결정성** — 두 경로 모두 동점 tie-break를 고정 키(ref_id / external_id / title)로 못박아 결과가 결정적이다(엔드포인트 검색은 골든 회귀 테스트 전제).
 - **"없음"의 구분** — 미등록 document_id·미구성 소스는 빈 결과가 아니라 명시적 오류로 구분해, 호출 LLM이 "문서 없음"과 "결과 없음"을 혼동하지 않게 한다.

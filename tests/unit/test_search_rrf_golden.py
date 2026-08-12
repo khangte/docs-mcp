@@ -1,4 +1,4 @@
-"""RRF 도입 순위 골든 회귀 테스트(`docs/07-search-rrf-reevaluation.md` 5절, 5.6).
+"""RRF 도입 순위 골든 회귀 테스트(`docs/architect-review/07-search-rrf-reevaluation.md` 5절, 5.6).
 
 `fallback`/`rrf` 두 전략 각각의 결정적 기대 순위를 스냅샷으로 고정해,
 회귀 발생 시 즉시 감지하고(골든 불일치) `DOCS_MCP_SEARCH_STRATEGY=fallback`
@@ -63,7 +63,7 @@ def test_rrf_strategy_golden_ranking(app_state, sample_openapi_3: str) -> None:
     동점(RRF 점수까지 동일)이라 최종 순위가 `ref_id`(등록마다 무작위 문서ID를
     해시 입력에 섞는 `_make_endpoint_id`) 오름차순으로 갈리는데, 이 값은
     실행마다 달라 1·2위 순서가 뒤바뀔 수 있다(엔진 tie-break 자체는
-    `docs/07-search-rrf-reevaluation.md` 5.4 명세대로 결정적이지만, 입력값이
+    `docs/architect-review/07-search-rrf-reevaluation.md` 5.4 명세대로 결정적이지만, 입력값이
     실행마다 다르다). 그래서 이 질의는 "동점 집합"만 검증하고, 동점이 없는
     다른 두 질의는 정확한 순서를 그대로 고정한다.
     """

@@ -5,7 +5,7 @@
 - 작성: architect
 - 요청 경위: 사용자 "b번 검토해" → lead 위임. `docs/12` 옵션 B(= 후보 3, 계층/문맥 청킹)의
   ① 청킹 전략 후보 구체화, ② 소규모 실측 가능성, ③ 겨냥 지표, ④ 비용 대비 기대효과 판단.
-- 선행: `docs/12-rag-depth-directions.md`(후보 3 조건부 권장), `docs/09-search-quality-post-rrf.md`
+- 선행: `docs/architect-review/12-rag-depth-directions.md`(후보 3 조건부 권장), `docs/architect-review/09-search-quality-post-rrf.md`
   (P1 실측 — 교차언어 Recall@3 50%, P2 재색인 비용으로 보류한 선례)
 - 대상 코드: `app/services/indexer/chunk_builder.py`(청크 텍스트 빌더), `indexer_service.py`(line 102~112),
   `tests/fixtures/rrf_eval/`(compare_strategies·queries·openapi·metrics)

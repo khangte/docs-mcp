@@ -29,7 +29,7 @@ _QUERY_PREFIX = "query: "
 #: LocalEmbeddingProvider.embed_query 결과 캐시 크기(질의 문자열 기준).
 _QUERY_CACHE_SIZE = 256
 
-#: `docs/16-long-section-chunking-blindspot.md` §1-2·§2-4: SentenceTransformer
+#: `docs/architect-review/16-long-section-chunking-blindspot.md` §1-2·§2-4: SentenceTransformer
 #: 는 max_seq_length(intfloat/multilingual-e5-small 실측 512) 초과 입력을
 #: 조용히 truncation 한다(에러·경고 없음). 안전마진을 둔 이 상수를 넘는
 #: 입력은 embed_documents 가 경고 로그를 남긴다(벡터 arm 발견성만 손실 —

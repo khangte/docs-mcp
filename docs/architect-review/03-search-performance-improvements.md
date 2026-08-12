@@ -14,7 +14,7 @@
   ⚠️ **이후 RRF가 기본 전략으로 전환돼 이 서술은 더 이상 현재 동작이 아니다** — 지금 기본값은
   **키워드·벡터 두 arm을 항상 병렬 실행해 RRF로 융합**(`search_strategy: str = "rrf"`,
   `endpoint_candidate_search.py:80`, 클래스 docstring `:69`)이며, 여기 서술된 "0건일 때만 벡터"는
-  롤백 스위치인 `fallback` 전략으로 격하됐다(아래 "RRF" 절 및 `docs/07-search-rrf-reevaluation.md` 참조).
+  롤백 스위치인 `fallback` 전략으로 격하됐다(아래 "RRF" 절 및 `docs/architect-review/07-search-rrf-reevaluation.md` 참조).
 - `list_endpoint_chunks()` 가 `select(ApiChunk)` 로 endpoint 청크 **전 행을 적재**(256차원 `embedding` 벡터 컬럼 포함) → `KeywordSearch` 가 Python 레벨에서 **매 질의마다 모든 청크 텍스트를 재토큰화**해 겹침 비율 점수 계산.
 - 벡터 검색: pgvector 코사인 거리(`<=>`). **HNSW 인덱스는 이미 존재**(`ix_api_chunk_embedding_hnsw`, `vector_cosine_ops`). `candidate_ids IN (...)` 로 후보를 제한.
 
@@ -43,7 +43,7 @@
   본문에서만 강하게 매칭되는 문서가 fetch 기회조차 못 받는 결함이 있었다. `_body_fetch_budget(top_k,
   candidate_count)`(`document_search_service.py:52-76`)가 top_k보다 넓은 **fetch 예산**
   (`overscan = min(top_k*3, 20)`, `budget = min(max(top_k, overscan), candidate_count)`)을 계산해
-  1단계 컷을 대신하고, 최종 top_k 컷은 본문 점수까지 반영한 2단계 뒤로 미뤄졌다(`docs/10-collab-docs-search-fixes.md`
+  1단계 컷을 대신하고, 최종 top_k 컷은 본문 점수까지 반영한 2단계 뒤로 미뤄졌다(`docs/architect-review/10-collab-docs-search-fixes.md`
   항목 2 참조). P3의 병렬화 자체(동시성 상한 5)는 그대로다.
 
 ### P4 — document_meta 1단계 ILIKE를 pg_trgm GIN 인덱스로 — ✅ 구현완료(커밋 `21522e8`, `ix_document_meta_title_trgm`·`ix_document_meta_url_trgm` `gin_trgm_ops`)
@@ -54,11 +54,11 @@
 - **현 문제**: 벡터 경로마다 `embed([query])` 외부 API 호출.
 - **효과**: 낮음~중(반복 질의에서 지연·비용 절감). 단 벡터는 fallback 경로라 호출 빈도 낮음. **난이도**: 낮음. **리스크**: 낮음.
 
-### P6 — HNSW `ef_search` 튜닝 / `candidate IN` 후처리 재검토 — ✅ 구현완료(커밋 `aae5728`, `search_by_vector`에 `SET LOCAL hnsw.ef_search = max(100, top_k)`; `docs/09-search-quality-post-rrf.md` P5와 동일 건)
+### P6 — HNSW `ef_search` 튜닝 / `candidate IN` 후처리 재검토 — ✅ 구현완료(커밋 `aae5728`, `search_by_vector`에 `SET LOCAL hnsw.ef_search = max(100, top_k)`; `docs/architect-review/09-search-quality-post-rrf.md` P5와 동일 건)
 - HNSW 인덱스는 존재하나 `hnsw.ef_search` 세션 파라미터 미설정(기본 recall). `candidate_ids IN (...)` 는 후보가 많으면 ANN 순회 후 post-filter 로 recall 저하 가능.
 - **효과**: 낮음(현재 벡터가 fallback 이라 영향 제한적). **난이도**: 낮음. **리스크**: recall↔속도 트레이드오프.
 
-## 상위(아키텍처) 제안 — 진짜 하이브리드(RRF) 통합 — ✅ 구현완료(커밋 `33d1dbe`, 실측은 `docs/07-search-rrf-reevaluation.md` 6절)
+## 상위(아키텍처) 제안 — 진짜 하이브리드(RRF) 통합 — ✅ 구현완료(커밋 `33d1dbe`, 실측은 `docs/architect-review/07-search-rrf-reevaluation.md` 6절)
 - 현 엔드포인트 검색은 "키워드 0건일 때만 벡터" = **OR-fallback** 이지, ADR-0002 가 말한 가중합/융합 하이브리드가 아니다. 키워드가 1건이라도 나오면 벡터를 아예 안 써서 **의미 검색 이점을 상실**한다.
 - Reciprocal Rank Fusion(RRF)으로 키워드·벡터 순위를 **항상 융합**하면 관련성(품질) 개선 여지.
 - **트레이드오프**: 매 질의 임베딩 비용 발생. 현 설계는 비용 절감을 위해 의도적으로 회피(SPEC 결정). **품질 vs 비용**은 제품 판단이라 lead 결정 필요.

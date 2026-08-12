@@ -1,7 +1,7 @@
 """엔드포인트 후보 검색 (키워드+벡터 RRF 순위 융합, 롤백용 배타 전략 병존).
 
 `search_endpoints` MCP 도구 전용 검색 경로다. 기존 `SearchService`(하이브리드
-가중합)와 달리 다음 원칙을 따른다(`docs/07-search-rrf-reevaluation.md` 5절).
+가중합)와 달리 다음 원칙을 따른다(`docs/architect-review/07-search-rrf-reevaluation.md` 5절).
 
 1. **`rrf`(기본) 전략**: 키워드/벡터 두 ranker를 항상 병렬로(더 넓게) 실행해
    RRF(Reciprocal Rank Fusion)로 순위를 융합한다.
@@ -40,7 +40,7 @@ __all__ = [
 MIN_TOP_K = 1
 MAX_TOP_K = 50
 
-#: RRF 융합 전 각 ranker 에서 가져올 후보 폭(`docs/07-search-rrf-reevaluation.md` 5.3).
+#: RRF 융합 전 각 ranker 에서 가져올 후보 폭(`docs/architect-review/07-search-rrf-reevaluation.md` 5.3).
 #: 정답이 한쪽 arm 의 상위에만 있어도 융합에서 건질 수 있도록 top_k 보다 넓게 본다.
 _MIN_CANDIDATE_WIDTH = 50
 _CANDIDATE_WIDTH_MULTIPLIER = 4
@@ -67,7 +67,7 @@ class CandidateSearchOptions:
     #: 호출자(Claude)가 원본 질의와 함께 넘기는 동의어/유사 표현. 키워드
     #: arm(FTS OR 후보 필터)만 넓히는 데 쓰고, 점수 계산에는 섞이지 않는다
     #: — 벡터 arm은 이미 의미 유사도로 흡수하므로 손대지 않는다
-    #: (`docs/12-rag-depth-directions.md` 후보4).
+    #: (`docs/architect-review/12-rag-depth-directions.md` 후보4).
     query_variants: list[str] | None = None
 
 

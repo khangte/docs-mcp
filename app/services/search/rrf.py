@@ -2,7 +2,7 @@
 
 키워드(ts_rank)와 벡터(코사인 유사도)는 스케일이 서로 달라 점수를 직접 더하면
 가중치가 왜곡된다. RRF 는 각 ranker 안에서의 **등수만** 사용하므로 스케일에
-무관하게 두 신호를 자연스럽게 합칠 수 있다(`docs/07-search-rrf-reevaluation.md` 3·5절).
+무관하게 두 신호를 자연스럽게 합칠 수 있다(`docs/architect-review/07-search-rrf-reevaluation.md` 3·5절).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Literal
 MatchType = Literal["keyword", "vector", "both"]
 
 #: 표준값(Cormack et al. 2009). 평가셋 없이 튜닝할 근거가 없어 상수로 고정하고
-#: env 로 노출하지 않는다(`docs/07-search-rrf-reevaluation.md` 5.2).
+#: env 로 노출하지 않는다(`docs/architect-review/07-search-rrf-reevaluation.md` 5.2).
 RRF_K = 60
 
 

@@ -4,7 +4,7 @@
 - 일시: 2026-08-08 (초판) / 2026-08-08 갱신 — 7절 "전제 완화 재검토" 추가(사용자가 "하이브리드 로직을 Qdrant 에 맞춰 바꿔도 된다" 전제를 열어 재판단). **초판 결론(pgvector 유지)은 유지되나 근거가 바뀜** — 상세는 7절.
 - 작성: architect
 - 지시: lead(로컬 CPU 임베딩 전환과 함께 벡터 DB 를 Qdrant 로 옮길지 판단)
-- 관련: `docs/05-embedding-provider-local-model-design.md`(로컬 임베딩 전환 설계), `docs/07-search-rrf-reevaluation.md`(RRF 융합), `docs/supabase-migration-review.md`(원격/추가 서비스 정당성 판단 선례)
+- 관련: `docs/architect-review/05-embedding-provider-local-model-design.md`(로컬 임베딩 전환 설계), `docs/architect-review/07-search-rrf-reevaluation.md`(RRF 융합), `docs/supabase-migration-review.md`(원격/추가 서비스 정당성 판단 선례)
 - 대상(전환 시): `app/services/search/vector_search.py`, `app/repositories/chunk_repository.py`, `app/models/openapi.py`, `app/services/indexer/indexer_service.py`, `app/services/sync/*`, `app/composition.py`, `docker-compose.yml`, `alembic/versions/`, `pyproject.toml`
 
 ## 요약(결정 사항)
