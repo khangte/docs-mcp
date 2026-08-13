@@ -6,6 +6,7 @@ from app.services.indexer.chunk_builder import build_chunks, build_endpoint_chun
 from app.services.parser.openapi_parser import (
     ParsedDocument,
     ParsedEndpoint,
+    ParsedParameter,
     ParsedRequestBody,
     ParsedSchema,
     ParsedSection,
@@ -51,6 +52,33 @@ def test_endpoint_chunk_text_includes_inline_request_body_field_names() -> None:
     )
     text = build_endpoint_chunk_text(endpoint)
     assert "Body: amount, currency" in text
+
+
+def test_endpoint_chunk_text_places_structured_fields_before_description() -> None:
+    """docs/architect-review/30 §11.2: overflow 시 꼬리 truncation에서 고신호
+    필드명(Params·Body)이 저신호 description보다 먼저 잘리지 않도록, header 다음
+    Params/Body를 description보다 앞에 배치한다."""
+    endpoint = ParsedEndpoint(
+        method="POST",
+        path="/v1/charges",
+        operation_id="createCharge",
+        summary="Create a charge",
+        description="장문 설명 텍스트",
+        tags=["payments"],
+        parameters=[ParsedParameter(name="idempotency_key", location="header", required=False)],
+        request_body=ParsedRequestBody(
+            content_type="application/x-www-form-urlencoded",
+            schema={"type": "object", "properties": {"currency": {"type": "string"}}},
+        ),
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    lines = text.splitlines()
+    assert lines[0].startswith("[POST]")
+    params_idx = next(i for i, line in enumerate(lines) if line.startswith("Params:"))
+    body_idx = next(i for i, line in enumerate(lines) if line.startswith("Body:"))
+    description_idx = next(i for i, line in enumerate(lines) if line == "장문 설명 텍스트")
+    responses_idx = len(lines)
+    assert 0 < params_idx < body_idx < description_idx < responses_idx
 
 
 def test_schema_chunk_created(sample_openapi_3: str) -> None:

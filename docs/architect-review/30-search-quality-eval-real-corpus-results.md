@@ -408,3 +408,71 @@ a charge`, q19→`set automatic payment methods on a payment intent`을 `queries
 합계 45/1809건(≈2.5%)이 480토큰을 넘는다. 512 임베딩 상한 자체를 넘는 것도
 다수(GitHub 최대 1394는 512의 2.7배) — §9.2 2차(엔드포인트 sub-chunking) 게이트
 판단의 입력 수치이며, 2차 실행 여부는 이 절 범위 밖(architect/lead 판단).
+
+## 11. 2차(엔드포인트 sub-chunking) 게이트 판정 (§9.2 · §10.3 후속)
+
+§9.2가 세운 게이트 — "480 초과 엔드포인트가 **유의미하게** 나올 때만 2차를 당긴다" —
+에 §10.3 실측(45/1809, 최대 1394)을 대입한 architect 판정이다.
+
+**판정: 게이트 미달. 2차(엔드포인트 sub-chunking)는 보류 유지.** 대신 불변을
+깨지 않는 저비용 하드닝(11.2)을 채택한다.
+
+### 11.1. 보류 근거
+
+1. **C7 플래그십 타겟은 1차 후 애초에 안 잘린다.** 프리즈 스펙에 `Body:` 배선을
+   반영해 토큰 실측: `POST /v1/charges` 172, `POST /v1/payment_intents`(38-필드 대형
+   body) **440**(+prefix 9 = 449 < 480). C7이 겨냥한 대형 body 엔드포인트 자체가
+   512 상한 아래다 — 이들의 잔여 실패(§10.2 q18 교차언어·q19 벡터 희석)는
+   truncation이 아니라 다른 축이며 sub-chunking으로 안 고쳐진다.
+2. **45건은 소수(2.5%)이고, overflow 집합에 귀속되는 recall 실패가 하나도 측정되지
+   않았다.** 실패 C7 질의의 타겟 엔드포인트는 전부 비-overflow다. 게이트 문구의
+   "유의미하게"는 건수가 아니라 실제 검색 손실을 요구하는데, 그 증거가 없다.
+3. **overflow 드라이버가 종종 body 필드가 아니라 free-text description이다.**
+   `POST /repos/{owner}/{repo}/pulls`는 body 8필드뿐인데 656토큰 — 장문 description이
+   상한을 넘긴다. body 필드 리스트를 쪼개는 sub-chunking은 description-driven
+   overflow에 **틀린 도구**다(45건의 driver 분포는 §10.3에서 분리 안 됨).
+4. **2차 비용이 실재한다.** 엔드포인트 청크 1:N은 `ref_id` = 정확히 청크 1개
+   불변(doc/28 §3.1, ground-truth 안정성 근거)을 깨고 색인 청크 수·검색 융합
+   복잡도를 늘린다. 측정된 이득 0인 상태에서 선지불 안 함(YAGNI).
+
+### 11.2. 채택 — 저비용 하드닝: 청크 필드 순서 재배치
+
+SentenceTransformer는 **입력 꼬리**를 잘라낸다. 현재 `build_endpoint_chunk_text`
+순서는 `header / description / Tags / Params / Body / Responses`라, overflow 시
+질의가 정확히 겨냥하는 **고신호 토큰(Params·Body 필드명)이 먼저 잘린다.**
+
+`header`를 선두로 고정한 채 **구조 필드(Params·Body)를 free-text description보다
+앞에** 놓도록 재배치한다 — 예: `header / Params / Body / Tags / description /
+Responses`. overflow가 나면 꼬리의 저신호 산문(description)이 먼저 잘리고
+필드명은 보존된다. 비-overflow 97.5%엔 무영향, overflow 45건엔 정확히 C7-급
+필드 발견성을 지킨다. 단일 청크 내 재배치라 `ref_id` 1:1 불변을 **안 깬다**.
+
+### 11.3. 게이트 재무장(2차를 다시 검토할 조건)
+
+11.2 적용 후에도 **overflow 엔드포인트에서 recall 실패가 실제로 측정되면** 2차를
+재검토한다. 그때 §10.3에 빠진 **overflow 드라이버 분포(body-필드수 vs
+description-길이)**를 먼저 산출해 도구를 고른다:
+- body-필드-driven이 지배적 → 엔드포인트 sub-chunking(`build_section_chunks` 재사용).
+- description-driven이 지배적 → description 토큰 캡(재배치와 결합, 더 싼 단일-청크 수정).
+
+> §10.2 q19 벡터 희석("대형 body에서 단일 필드 타겟이 형제 토큰에 유사도를 나눠
+> 가짐")은 truncation과 **독립 축**이다 — payment_intents는 overflow도 아니다.
+> 이 게이트를 움직이지 않으며, 필요 시 별도 검토 대상(질의셋 확장 후).
+
+### 11.4. §11.2 배선 결과 (developer)
+
+`build_endpoint_chunk_text`(`chunk_builder.py`) 필드 순서를
+`header / description / Tags / Params / Body / Responses` →
+`header / Params / Body / Tags / description / Responses`로 재배치했다.
+docstring 예시·근거 설명도 순서에 맞게 갱신.
+
+- 단일 청크 내 필드 재배치라 `ref_id` 1:1 불변은 그대로 유지(§9.2·doc/28 §3.1).
+- 신규 단위 테스트(`test_endpoint_chunk_text_places_structured_fields_before_description`)로
+  header 다음 Params→Body가 description보다 먼저 오는지 확인 — RED 확인 후 구현, GREEN.
+- 기존 단위 테스트는 전부 `in text`(포함 여부) 방식이라 순서에 의존하지 않아 갱신 불필요했음.
+  `build_endpoint_chunk_text` 호출부(`compare_chunking.py`)도 텍스트 앞에 접두만
+  붙이는 래퍼라 순서 가정 없음 — 영향 없음.
+
+```
+tests/unit/test_chunk_builder.py -q → 9 passed (신규 1건 포함)
+```
