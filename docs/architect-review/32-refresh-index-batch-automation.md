@@ -76,6 +76,14 @@ Drive/Notion 쿼터에 무의미한 수준이며 15분 대비 API 호출량이 1
 Drive 어댑터는 하위 폴더를 `MAX_FOLDERS`까지 BFS로 순회하므로 **호출 수가 폴더 수에
 비례**한다 — 폴더 트리가 큰 프로젝트는 이보다 더 늘린다(T6 실측 후 조정값 기록).
 
+**T6 실측(완료)**: 실 소스 1틱 = **47초**, 1시간 주기 예산 3600초의 **1.3%**. 주기 대비
+여유가 커 1시간을 조정 없이 확정한다. 폴더 수에 비례하는 특성은 그대로이므로 폴더 트리가
+훨씬 큰 배포에서는 자기 환경 재측정이 필요하다는 단서만 README에 남긴다. 함께 systemd
+user timer 를 실제 등록하고 1회 수동 실행해 스케줄 경로(cwd/PATH/자격증명/로그)를
+검증했다. 이 과정에서 `requests` 미선언 결함이 드러나 pyproject 에 추가했다 —
+`google.auth.transport.requests.Request` 가 하드 의존하는데 선언이 빠져 drive 축이 매 틱
+즉시 실패하고 있었다(커밋 `809bdea`).
+
 ### 2.2 축 B — URL 기반 Document 재색인 (부수, 드물게)
 
 `include_registered=True` 경로(`_resync_registered` → `sync_service.resync`): `source_url`이 있는
@@ -245,7 +253,7 @@ cron (대안):
 | T3  | advisory lock 가드(축 A/B 별도 키)                                                                  | 두 프로세스 동시 실행 시 뒤엣것이 INFO + exit 0            |
 | T4  | 단위 테스트 — 가짜 서비스로 4.1의 4분기 종료코드 검증(DB·외부 API 없이)                             | `uv run pytest` green                                      |
 | T5  | 운영 문서: README에 "자동 동기화" 절 — systemd 유닛 2종 + cron 2줄 + 3.4 함정 목록 + 주기 조정 기준 | —                                                          |
-| T6  | (선택) 실 소스 1틱 소요 실측 → 1시간 주기 적정성 확인, 대형 Drive 폴더면 조정값 기록                 | —                                                          |
+| T6  | (완료) 실 소스 1틱 소요 실측 → 1시간 주기 적정성 확인, 대형 Drive 폴더면 조정값 기록                 | 1틱 47초(예산 1.3%), 1시간 유지 확정 — §2.1                |
 
 **커밋 분할**
 

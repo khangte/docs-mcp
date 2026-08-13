@@ -11,31 +11,34 @@
 ## 2. 시스템 구조
 
 ```
-                      [Claude / MCP 클라이언트]
-                                |
-                (자연어 질의, 도구 호출, 문서 등록/재색인)
-                                |
-                                v
-                      +-----------------------+
-                      |      MCP 서버         |
-                      |  (tools / adapters)   |
-                      +-----------+-----------+
-                                |
-                                v
-                      +-------------------+
-                      |  내부 서비스 계층 |
-                      | (수집/파싱/색인/  |
-                      |   검색/예시)      |
-                      +---------+---------+
-                                |
-                    +-----------+-----------+
-                    v                       v
-           +-----------------+      +------------------+
-           | PostgreSQL +    |      | OpenAPI 원본 /   |
-           | pgvector        |      | Drive / Notion   |
-           | (저장/검색/이력,|      | (수집·조회 시점에|
-           |  project 태깅)  |      |  만 접근)        |
-           +-----------------+      +------------------+
+          [Claude / MCP 클라이언트]                [OS 스케줄러]
+                      |                     (systemd timer / cron)
+   (자연어 질의, 도구 호출, 등록/재색인)                |
+                      |                                |
+                      v                                v
+          +-----------------------+     +---------------------------+
+          |      MCP 서버         |     |  동기화 배치 (원샷 CLI)   |
+          |  (tools / adapters)   |     | app/scripts/              |
+          |                       |     |   refresh_documents.py    |
+          +-----------+-----------+     +-------------+-------------+
+                      |                               |
+                      +--------------+----------------+
+                                     |
+                                     v
+                           +-------------------+
+                           |  내부 서비스 계층 |
+                           | (수집/파싱/색인/  |
+                           |   검색/예시)      |
+                           +---------+---------+
+                                     |
+                         +-----------+-----------+
+                         v                       v
+                +-----------------+      +------------------+
+                | PostgreSQL +    |      | OpenAPI 원본 /   |
+                | pgvector        |      | Drive / Notion   |
+                | (저장/검색/이력,|      | (수집·조회 시점에|
+                |  project 태깅)  |      |  만 접근)        |
+                +-----------------+      +------------------+
 ```
 
 ## 3. 프로젝트 구조
@@ -53,7 +56,9 @@ app/
 ├── models/          # SQLAlchemy ORM 모델 (Base, ApiDocument 등)
 ├── repositories/    # 데이터베이스 액세스 레이어 (CRUD)
 ├── schemas/         # Pydantic DTO (요청/응답 모델)
-├── scripts/         # 운영 배치 스크립트 (예: reembed.py — 임베딩 모델/차원 교체 후 재임베딩)
+├── scripts/         # 운영 배치 스크립트 (원샷 CLI)
+│   ├── reembed.py            # 임베딩 모델/차원 교체 후 재임베딩
+│   └── refresh_documents.py  # 문서 소스 주기 동기화(OS 스케줄러가 주기 소유)
 └── services/        # 비즈니스 로직
     ├── project_scope.py  # project 필터 범위 해석 (documents/ 밖 공용 위치)
     ├── documents/   # Drive/Notion 협업 문서 소스 어댑터(sources/)·메타 캐시·검색
@@ -71,7 +76,7 @@ app/
 
 ### 4-1. 레이어 역할
 
-- `entry points`: `app/mcp/server.py` (MCP Server)
+- `entry points`: `app/mcp/server.py` (MCP Server), `app/scripts/` (운영 배치 CLI)
 - `services`: 도메인 로직 (수집, 파싱, 색인, 검색, 예시 생성)
 - `repositories`: DB 접근 (SQLAlchemy)
 - `models/schemas`: 데이터 모델 및 DTO (Pydantic)
@@ -80,7 +85,9 @@ app/
 ### 4-2. 의존 방향
 
 `app.mcp.server` → `services` → `repositories` → `models`
-_(단방향 유지, 역참조 및 순환 참조 금지)_
+`app.scripts.*` → `services` → `repositories` → `models`
+_(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 거치지 않고 서비스 계층을 직접 호출한다 —
+그래서 도구에서만 쓰이던 로직도 서비스 계층에 있어야 한다: `registered_resync.py`)_
 
 ## 5. 핵심 데이터 흐름
 
@@ -113,6 +120,22 @@ _(단방향 유지, 역참조 및 순환 참조 금지)_
   파서(`app/services/parser/`)로 라우팅해 텍스트를 추출한다. 매핑에 없는
   바이너리는 다운로드 자체를 하지 않고 즉시 실패시키며, `max_download_bytes`
   로 파싱 진입 전 과대 파일을 차단한다.
+
+### 5-4. 주기 동기화 (배치)
+
+- 협업 문서 메타 캐시는 `refresh_index` 도구로 즉시 갱신할 수도 있고, 같은 서비스 함수를
+  호출하는 원샷 CLI(`app/scripts/refresh_documents.py`)를 OS 스케줄러가 주기적으로 돌려
+  갱신할 수도 있다. **앱은 스케줄을 모른다** — MCP stdio 서버가 클라이언트 세션마다 뜨고
+  지는 단명 프로세스라 서버 안에 스케줄러를 둘 수 없기 때문이다. 두 경로가 같은 서비스
+  함수(`document_index_service.refresh`, `resync_registered_documents`)를 쓰므로 동작이
+  갈리지 않는다.
+- 두 축을 주기·비용이 달라 분리한다. **축 A(메타 캐시 동기화, 1시간)** 는 목록·제목·수정일만
+  갱신하고 본문을 조회하지 않는다. **축 B(등록 문서 재색인, `--include-registered`, 1일 1회)**
+  는 `source_url` 이 있는 문서마다 원본을 재fetch·재파싱·재임베딩한다.
+- 틱이 주기보다 길어져 겹치는 것은 Postgres advisory lock 으로 막는다(새 의존성 0, 프로세스
+  종료 시 자동 해제). 락 키는 두 축이 다르다 — 같은 키면 무거운 축 B 가 가벼운 축 A 를 굶긴다.
+- 설계·실측 근거: `docs/architect-review/32-refresh-index-batch-automation.md`,
+  운영 방법(타이머 유닛·cron·종료코드)은 `README.md` "자동 동기화" 절.
 
 ## 6. MCP 도구 계약 (Interface)
 
