@@ -1,0 +1,22 @@
+[
+  {"id": "q01", "query": "POST /v1/customers", "category": "C1-직접키워드", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/customers"}]},
+  {"id": "q02", "query": "GET /repos/{owner}/{repo}", "category": "C1-직접키워드", "accepted": [{"doc": "github", "method": "GET", "path": "/repos/{owner}/{repo}"}]},
+  {"id": "q03", "query": "create a checkout session", "category": "C1-직접키워드", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/checkout/sessions"}]},
+  {"id": "q04", "query": "고객 새로 등록하고 싶어", "category": "C2-한글패러프레이즈", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/customers"}]},
+  {"id": "q05", "query": "결제 환불 처리해줘", "category": "C2-한글패러프레이즈", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/refunds"}]},
+  {"id": "q06", "query": "이슈 새로 만들기", "category": "C2-한글패러프레이즈", "accepted": [{"doc": "github", "method": "POST", "path": "/repos/{owner}/{repo}/issues"}]},
+  {"id": "q07", "query": "저장소 삭제해줘", "category": "C2-한글패러프레이즈", "accepted": [{"doc": "github", "method": "DELETE", "path": "/repos/{owner}/{repo}"}]},
+  {"id": "q08", "query": "cancel my recurring payment", "category": "C3-영문의역", "accepted": [{"doc": "stripe", "method": "DELETE", "path": "/v1/subscriptions/{subscription_exposed_id}"}]},
+  {"id": "q09", "query": "shut down a repository", "category": "C3-영문의역", "accepted": [{"doc": "github", "method": "DELETE", "path": "/repos/{owner}/{repo}"}]},
+  {"id": "q10", "query": "show my billing history", "category": "C3-영문의역", "accepted": [{"doc": "stripe", "method": "GET", "path": "/v1/invoices"}]},
+  {"id": "q11", "query": "customer", "category": "C4-흔한토큰범람", "accepted": [{"doc": "stripe", "method": "GET", "path": "/v1/customers"}]},
+  {"id": "q12", "query": "pull request", "category": "C4-흔한토큰범람", "accepted": [{"doc": "github", "method": "GET", "path": "/repos/{owner}/{repo}/pulls"}]},
+  {"id": "q13", "query": "delete a subscription", "category": "C5-decoy구분", "accepted": [{"doc": "stripe", "method": "DELETE", "path": "/v1/subscriptions/{subscription_exposed_id}"}]},
+  {"id": "q14", "query": "get user information", "category": "C5-decoy구분", "accepted": [{"doc": "github", "method": "GET", "path": "/users/{username}"}]},
+  {"id": "q15", "query": "list commits of a repo", "category": "C5-decoy구분", "accepted": [{"doc": "github", "method": "GET", "path": "/repos/{owner}/{repo}/commits"}]},
+  {"id": "q16", "query": "구독 취소하고 환불까지", "category": "C6-다개념(복수정답)", "accepted": [{"doc": "stripe", "method": "DELETE", "path": "/v1/subscriptions/{subscription_exposed_id}"}, {"doc": "stripe", "method": "POST", "path": "/v1/refunds"}]},
+  {"id": "q17", "query": "이슈 목록 조회하고 새 이슈 생성", "category": "C6-다개념(복수정답)", "accepted": [{"doc": "github", "method": "GET", "path": "/repos/{owner}/{repo}/issues"}, {"doc": "github", "method": "POST", "path": "/repos/{owner}/{repo}/issues"}]},
+  {"id": "q18", "query": "결제 생성 시 통화 단위 지정", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/charges"}]},
+  {"id": "q19", "query": "결제 인텐트에 자동 결제수단 설정", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/payment_intents"}]},
+  {"id": "q20", "query": "풀리퀘스트를 draft로 생성", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "github", "method": "POST", "path": "/repos/{owner}/{repo}/pulls"}]}
+]

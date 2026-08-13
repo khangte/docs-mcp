@@ -1,0 +1,18 @@
+[
+  {
+    "source_key": "stripe",
+    "doc_type": "openapi",
+    "frozen_url": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+    "commit_sha": "2688d26db7e4c8a83067028ea380ae944d8f533b",
+    "file": "stripe_spec3.json",
+    "content_sha256": "3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5"
+  },
+  {
+    "source_key": "github",
+    "doc_type": "openapi",
+    "frozen_url": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
+    "commit_sha": "b26c240ded1c8b79cb0fb09dee4a21239061fa23",
+    "file": "github_api.json",
+    "content_sha256": "80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d"
+  }
+]
