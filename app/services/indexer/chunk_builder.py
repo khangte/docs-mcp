@@ -26,7 +26,7 @@ class BuiltChunk:
     """청크 텍스트 빌드 결과(타입/참조ID/텍스트)."""
 
     chunk_type: str  # "endpoint" | "schema" | "section"
-    ref_id: str  # endpoint_id, schema_name 또는 section_id
+    ref_id: str  # endpoint_id, schema_id 또는 section_id
     text: str
 
 
@@ -88,6 +88,7 @@ def build_chunks(
     document: ParsedDocument,
     endpoint_ids: dict[tuple[str, str], str],
     section_ids: dict[int, str] | None = None,
+    schema_ids: dict[int, str] | None = None,
     count_tokens: CountTokens | None = None,
     token_limit: int = DEFAULT_SECTION_TOKEN_LIMIT,
 ) -> list[BuiltChunk]:
@@ -95,6 +96,7 @@ def build_chunks(
 
     `endpoint_ids` 는 (method, path) → endpoint_id 매핑.
     `section_ids` 는 섹션 순서 인덱스 → section_id 매핑.
+    `schema_ids` 는 스키마 순서 인덱스 → schema_id 매핑(`ApiSchema.id`와 동일값).
     `count_tokens` 가 주어지면 상한(`token_limit`) 초과 섹션을 `section_splitter`
     로 sub-chunk N개로 분할한다(docs/23). `None`이면 섹션당 청크 1개(기존 동작).
     """
@@ -111,11 +113,14 @@ def build_chunks(
                 text=build_endpoint_chunk_text(endpoint),
             )
         )
-    for schema in document.schemas:
+    for idx, schema in enumerate(document.schemas):
+        sid = (schema_ids or {}).get(idx)
+        if not sid:
+            continue
         chunks.append(
             BuiltChunk(
                 chunk_type="schema",
-                ref_id=schema.name,
+                ref_id=sid,
                 text=build_schema_chunk_text(schema),
             )
         )

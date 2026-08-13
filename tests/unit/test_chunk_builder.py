@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from app.services.indexer.chunk_builder import build_chunks
-from app.services.parser.openapi_parser import ParsedDocument, ParsedSection, parse_document
+from app.services.parser.openapi_parser import (
+    ParsedDocument,
+    ParsedSchema,
+    ParsedSection,
+    parse_document,
+)
 
 
 def _count_words(text: str) -> int:
@@ -28,9 +33,36 @@ def test_endpoint_chunk_text_contains_essentials(sample_openapi_3: str) -> None:
 
 def test_schema_chunk_created(sample_openapi_3: str) -> None:
     parsed = parse_document(sample_openapi_3)
+    schema_ids = {i: f"doc:schema:{i}" for i in range(len(parsed.schemas))}
+    chunks = build_chunks(parsed, endpoint_ids={}, schema_ids=schema_ids)
+    schema_chunks = [c for c in chunks if c.chunk_type == "schema"]
+    assert {c.ref_id for c in schema_chunks} == set(schema_ids.values())
+    names = {c.text.splitlines()[0] for c in schema_chunks}
+    assert names == {"Schema: Pet", "Schema: User"}
+
+
+def test_schema_chunk_without_schema_ids_is_skipped(sample_openapi_3: str) -> None:
+    """schema_ids 미주입(맵에 없음)이면 endpoint/section과 동일하게 건너뛴다."""
+    parsed = parse_document(sample_openapi_3)
     chunks = build_chunks(parsed, endpoint_ids={})
     schema_chunks = [c for c in chunks if c.chunk_type == "schema"]
-    assert {c.ref_id for c in schema_chunks} == {"Pet", "User"}
+    assert schema_chunks == []
+
+
+def test_schema_chunk_ref_id_bound_even_for_long_schema_name() -> None:
+    """docs/architect-review/29: schema.name이 64자를 넘어도 ref_id는 바운드 id라 영향 없다."""
+    long_name = "x" * 135
+    parsed = ParsedDocument(
+        title="doc",
+        version="unknown",
+        schemas=[ParsedSchema(name=long_name)],
+    )
+    chunks = build_chunks(parsed, endpoint_ids={}, schema_ids={0: "doc:schema:0"})
+    schema_chunks = [c for c in chunks if c.chunk_type == "schema"]
+    assert len(schema_chunks) == 1
+    assert schema_chunks[0].ref_id == "doc:schema:0"
+    assert len(schema_chunks[0].ref_id) <= 64
+    assert long_name in schema_chunks[0].text
 
 
 def test_empty_endpoint_ids_skips_endpoint_chunks(sample_openapi_3: str) -> None:

@@ -76,9 +76,12 @@ class IndexerService:
                 self._endpoint_repo.add(
                     _to_response_entity(endpoint_id, response)
                 )
+        schema_ids: dict[int, str] = {}
         for idx, parsed_schema in enumerate(parsed.schemas):
+            schema_id = f"{document.id}:schema:{idx}"
+            schema_ids[idx] = schema_id
             schema_entity = ApiSchema(
-                id=f"{document.id}:schema:{idx}",
+                id=schema_id,
                 document_id=document.id,
                 name=parsed_schema.name,
                 json_schema=_json_dumps_safe(parsed_schema.json_schema),
@@ -104,6 +107,7 @@ class IndexerService:
             parsed,
             endpoint_ids,
             section_ids,
+            schema_ids,
             count_tokens=count_tokens,
             token_limit=TOKEN_WARNING_THRESHOLD,
         )

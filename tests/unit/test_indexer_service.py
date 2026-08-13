@@ -21,6 +21,32 @@ def test_index_document_creates_endpoints_and_chunks(
     assert len(endpoints) == result.endpoints_count
 
 
+def test_index_document_with_schema_name_over_64_chars_does_not_crash(
+    services_factory, sample_openapi_3: str
+) -> None:
+    """docs/architect-review/29: schema 컴포넌트명이 chunk.ref_id 컬럼(64자)을 넘어도
+    register()가 크래시하지 않고, 청크 ref_id는 schema.name이 아닌 바운드 schema id를 쓴다."""
+    services = services_factory()
+    doc = json.loads(sample_openapi_3)
+    long_name = "x" * 100
+    doc["components"]["schemas"][long_name] = {
+        "type": "object",
+        "properties": {"id": {"type": "string"}},
+    }
+    raw = json.dumps(doc)
+
+    result = services.sync_service.register(project="default", source_url=None, raw_document=raw)
+
+    schema = services.endpoint_repo.get_schema_by_name(result.document.id, long_name)
+    assert schema is not None
+    assert len(schema.id) <= 64
+
+    chunks = services.chunk_repo.list_by_document(result.document.id)
+    schema_chunk = next(c for c in chunks if c.chunk_type == "schema" and c.ref_id == schema.id)
+    assert schema_chunk.ref_id == schema.id
+    assert long_name in schema_chunk.text
+
+
 def test_reindex_replaces_chunks(services_factory, sample_openapi_3: str) -> None:
     services = services_factory()
     first = services.sync_service.register(
