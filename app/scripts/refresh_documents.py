@@ -14,7 +14,13 @@ MCP stdio 서버 프로세스는 클라이언트가 세션마다 띄우는 단�
 
 종료코드(§4.1):
     1 -- 전 대상 실패(`document_index_service.refresh` 가 IntegrationError)
-    0 -- 부분 실패/정상
+    0 -- 부분 실패/정상/락 미획득(이미 실행 중)
+
+중복 실행 방지는 Postgres advisory lock 을 쓴다(§3.3). 새 의존성 없이 이미
+있는 DB 인프라로 해결되고, 세션 종료(프로세스 종료) 시 자동 해제되므로
+명시적 unlock 이 필요 없다. 축 A(메타 동기화)와 축 B(등록 문서 재색인)는
+비용·주기가 달라(1시간 vs 1일) 같은 락 키를 쓰면 무거운 축 B 가 가벼운 축
+A 의 주기를 막는다 — `--include-registered` 여부로 락 키를 가른다.
 """
 
 from __future__ import annotations
@@ -22,10 +28,13 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from app.bootstrap import bootstrap_app_state
-from app.composition import build_services
+from app.composition import ServiceBundle, build_services
 from app.core.errors import IntegrationError
 from app.services.documents.registered_resync import resync_registered_documents
 
@@ -33,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 EXIT_OK = 0
 EXIT_FAILED = 1
+
+# 임의 고정값. 이 저장소 다른 곳에서 advisory lock 키로 쓰지 않는다.
+_LOCK_KEY_META_SYNC = 733100501
+_LOCK_KEY_REGISTERED_RESYNC = 733100502
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -47,48 +60,72 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _select_lock_key(include_registered: bool) -> int:
+    """`--include-registered` 여부로 축 A/B 락 키를 가른다(§3.3)."""
+    return _LOCK_KEY_REGISTERED_RESYNC if include_registered else _LOCK_KEY_META_SYNC
+
+
+def _try_advisory_lock(session: Session, lock_key: int) -> bool:
+    """세션 단위 advisory lock 획득을 시도한다. 세션(프로세스) 종료 시 자동 해제된다."""
+    return bool(
+        session.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}).scalar()
+    )
+
+
+def _execute(
+    bundle: ServiceBundle, args: argparse.Namespace, *, lock_acquire: Callable[[], bool]
+) -> int:
+    """advisory lock 을 시도한 뒤 동기화를 수행하고 종료코드를 반환한다(§4.1)."""
+    if not lock_acquire():
+        logger.info("배치가 이미 실행 중이라 건너뜀(advisory lock 획득 실패)")
+        return EXIT_OK
+
+    try:
+        refresh_result = bundle.document_index_service.refresh(
+            source=args.source, project=args.project
+        )
+    except IntegrationError as exc:
+        logger.error("문서 소스 갱신 전체 실패: %s", exc)
+        return EXIT_FAILED
+
+    registered_result = None
+    if args.include_registered:
+        registered_result = resync_registered_documents(
+            bundle, project=args.project, force=args.force
+        )
+
+    if refresh_result.failed_sources:
+        logger.warning("일부 소스 갱신 실패: %s", ", ".join(refresh_result.failed_sources))
+
+    registered_summary = ""
+    if registered_result is not None:
+        registered_summary = (
+            f" registered(total={registered_result['total']}, "
+            f"reindexed={registered_result['reindexed']}, "
+            f"skipped={registered_result['skipped']}, "
+            f"failed={len(registered_result['failed'])})"
+        )
+    logger.info(
+        "동기화 완료: synced=%d added=%d updated=%d removed=%d%s",
+        refresh_result.synced,
+        refresh_result.added,
+        refresh_result.updated,
+        refresh_result.removed,
+        registered_summary,
+    )
+    return EXIT_OK
+
+
 def run(args: argparse.Namespace) -> int:
     """1회 배치를 실행하고 종료코드를 반환한다."""
     state = bootstrap_app_state()
     bundle_iter = build_services(state)
     bundle = next(bundle_iter)
     try:
-        try:
-            refresh_result = bundle.document_index_service.refresh(
-                source=args.source, project=args.project
-            )
-        except IntegrationError as exc:
-            logger.error("문서 소스 갱신 전체 실패: %s", exc)
-            return EXIT_FAILED
-
-        registered_result = None
-        if args.include_registered:
-            registered_result = resync_registered_documents(
-                bundle, project=args.project, force=args.force
-            )
-
-        if refresh_result.failed_sources:
-            logger.warning(
-                "일부 소스 갱신 실패: %s", ", ".join(refresh_result.failed_sources)
-            )
-
-        registered_summary = ""
-        if registered_result is not None:
-            registered_summary = (
-                f" registered(total={registered_result['total']}, "
-                f"reindexed={registered_result['reindexed']}, "
-                f"skipped={registered_result['skipped']}, "
-                f"failed={len(registered_result['failed'])})"
-            )
-        logger.info(
-            "동기화 완료: synced=%d added=%d updated=%d removed=%d%s",
-            refresh_result.synced,
-            refresh_result.added,
-            refresh_result.updated,
-            refresh_result.removed,
-            registered_summary,
+        lock_key = _select_lock_key(args.include_registered)
+        return _execute(
+            bundle, args, lock_acquire=lambda: _try_advisory_lock(bundle.session, lock_key)
         )
-        return EXIT_OK
     finally:
         try:
             next(bundle_iter)
