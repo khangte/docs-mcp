@@ -89,7 +89,7 @@ document → split into parents (페이지/헤딩/윈도우 등 큰 단위)
 | ----------------- | ----------------------------------------------- | ---------------------------------------------- |
 | parent(반환 본문) | `DocumentSection.content` = full 본문           | document.py:71                                 |
 | child(검색 청크)  | `Chunk`(embedding+text+text_tsv)                | chunk.py:58-67                                 |
-| child→parent 매핑 | `Chunk.ref_id` = `section_id` (**문자열 규약**) | chunk_builder.py:20, indexer_service.py:91·104 |
+| child→parent 매핑 | `Chunk.ref_id` = `section_id` (**문자열 규약**) | chunk_builder.py:29·133, indexer_service.py:91·104 |
 | parent 접기       | RRF `_dedupe_first`가 ref_id 중복 병합          | rrf.py:30                                      |
 
 → ref_id를 parent_id처럼 쓰는 **암묵적 parent-child**.
@@ -109,6 +109,17 @@ document → split into parents (페이지/헤딩/윈도우 등 큰 단위)
 
 지금 섹션은 child=parent 텍스트가 사실상 같다(1:1). doc/23을 적용하면 한 섹션이 sub-chunk N개가 되고 각 sub가 `ref_id=section_id`를 공유 → **비로소 child(작은 sub) N개 : parent(DocumentSection) 1개** 가 성립. 즉 doc/23은 섹션 갈래를 진짜 parent-child(N:1)로 밀어 올리는 조각이다.
 
+### B-4. 스키마 갈래 (세 번째 갈래, 섹션과 동형)
+
+| 역할         | 이 코드                                                          |
+| ------------ | ---------------------------------------------------------------- |
+| child(검색)  | `Chunk`(chunk_type=schema, embedding)                           |
+| parent(반환) | `ApiSchema`(openapi.py:165, `api_schema` 테이블) full 스키마    |
+| 매핑         | `Chunk.ref_id` = `schema_name` (**id 아닌 이름 문자열** — 섹션·엔드포인트보다 더 약한 규약) |
+| 접기         | RRF `_dedupe_first`                                              |
+
+→ 구조는 섹션 갈래와 **동형**: parent 저장소(`ApiSchema`)는 있으나 검색 경로에 미배선(위 두 하드필터가 `endpoint`만 통과시켜 벡터·키워드 둘 다 안 탐). 섹션과 같은 상태라 아래 C-2 판단(재색인 게이트 대상, 실이득 없이는 YAGNI)이 그대로 적용된다.
+
 ---
 
 ## Part C. 차이 정리 (그린필드 A vs 현행 B)
@@ -118,7 +129,7 @@ document → split into parents (페이지/헤딩/윈도우 등 큰 단위)
 | **매핑 방식**      | `child.parent_id` **FK**               | `Chunk.ref_id` **문자열 규약**(FK 아님, 타입도 endpoint/schema/section 혼용)                                                                   | 스키마상 무결성 제약·CASCADE 보장이 ref_id엔 없음. 정합은 코드 규약에 의존 |
 | **child 크기**     | parent보다 작음(N:1)                   | **섹션 갈래는 1:1**(child.text ≈ parent.content) — child가 안 작음. 엔드포인트 갈래는 N=1이지만 요약이라 작음                                  | 섹션 정밀도 이득 미실현. doc/23 적용 시 해소                               |
 | **텍스트 중복**    | child=슬라이스만, parent=full 1회      | 섹션 갈래는 `Chunk.text`(full) + `DocumentSection.content`(full) **이중 저장**                                                                 | 저장 중복. doc/23이 sub로 쪼개면 child.text는 슬라이스라 완화              |
-| **반환 경로 배선** | child 매칭 → parent 조회·반환          | **엔드포인트만 배선**. `search_by_vector`가 `chunk_type=="endpoint"`로 하드 제한(chunk_repository.py:291) → **섹션 child는 벡터 검색에 안 탐** | 섹션 parent-child는 반환 단계가 미배선(설계상 준비만 됨)                   |
+| **반환 경로 배선** | child 매칭 → parent 조회·반환          | **엔드포인트만 배선**. `search_by_vector`(chunk_repository.py:291)·`search_endpoint_by_text`(chunk_repository.py:184) 둘 다 `chunk_type=="endpoint"` 하드 제한 → **섹션·스키마 child는 벡터·키워드 검색 둘 다 안 탐** | 섹션·스키마 parent-child는 반환 단계가 미배선(설계상 준비만 됨)                   |
 | **dedupe 지점**    | 검색 후 parent 접기(child 최고점 승계) | RRF **랭킹 전** `_dedupe_first`로 ref_id 접기                                                                                                  | 결과는 유사(첫 등장=최고 순위 승계). 위치만 다름                           |
 | **parent 임베딩**  | parent 임베딩 안 함(순수 반환)         | `DocumentSection` 임베딩 없음 ✅ 일치 / 단 `Chunk`(child)가 full이라 parent를 임베딩하는 셈(섹션 1:1일 때)                                     | 1:1인 동안은 "parent를 임베딩"에 가까움. sub 분할 시 정상화                |
 | **overlap**        | child 간 관례적 overlap                | 없음(doc/23도 비권장 유지)                                                                                                                     | 의도적 선택. 이 구조(발견=벡터/반환=별도저장)에선 이득 얇음(doc/16 §2-3)   |
@@ -133,4 +144,4 @@ document → split into parents (페이지/헤딩/윈도우 등 큰 단위)
 ### C-2. 판단 (참고용, 착수 아님)
 
 - 현행은 **그린필드로 갈아엎을 대상이 아니다.** 엔드포인트 갈래는 이미 표준형이고, 섹션 갈래도 ref_id 규약 = de-facto parent_id로 동작한다. FK로 승격(`Chunk.parent_section_id`)은 무결성 이점은 있으나 **재색인 동반 스키마 변경**이라 docs/09·15 게이트 대상 — 실이득(고아 청크가 실제 문제로 나타남) 없이는 YAGNI.
-- 섹션 벡터 검색 미배선(C 표 4행)은 별개 결정 사안: "섹션을 벡터로도 찾게 할 것인가"는 검색 스코프 정책 문제라 doc/23(색인측)과 분리해 판단해야 한다.
+- 섹션·스키마 검색 미배선(C 표 4행)은 별개 결정 사안: 두 갈래는 벡터·키워드 **둘 다** 안 탄다(`endpoint` 하드필터). "섹션·스키마를 검색으로도 찾게 할 것인가"는 검색 스코프 정책 문제라 doc/23(색인측)과 분리해 판단해야 한다.

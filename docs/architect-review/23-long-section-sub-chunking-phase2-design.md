@@ -94,7 +94,7 @@ split_by_sentence(para, budget, count_tokens):
 - sub `BuiltChunk`들은 **모두 `chunk_type="section"`, `ref_id=section_id`** 로 동일.
 - `Chunk.id`: `indexer_service`의 `f"{document.id}:chunk:{idx}"` (전역 enumerate) → sub가 늘어도 유일. 스키마 변경 0.
 - **검색측 무변경 근거**:
-  - 벡터 arm: `search_by_vector`는 `chunk_type=="endpoint"`만 조회(chunk_repository.py:291) → **section sub-chunk는 현재 벡터 검색 경로에 아예 안 탄다**. 즉 이 설계는 섹션 벡터 검색이 배선될 때를 대비한 **색인측 준비**다. 배선 시 여러 sub가 같은 ref_id로 잡혀도 RRF `_dedupe_first`가 첫 등장만 남겨 섹션 단위로 접힌다.
+  - 벡터 arm: `search_by_vector`는 `chunk_type=="endpoint"`만 조회(chunk_repository.py:291) → **section sub-chunk는 현재 벡터 검색 경로에 아예 안 탄다**. (키워드 arm `search_endpoint_by_text`(chunk_repository.py:184)도 동일하게 `endpoint`만 통과시켜 섹션은 키워드 검색에도 안 탄다 — 즉 섹션은 벡터·키워드 둘 다 미배선이며, 이는 "무변경" 근거를 오히려 강화한다.) 즉 이 설계는 섹션 검색이 배선될 때를 대비한 **색인측 준비**다. 배선 시 여러 sub가 같은 ref_id로 잡혀도 RRF `_dedupe_first`가 첫 등장만 남겨 섹션 단위로 접힌다.
   - dedupe: `rrf.py:30 _dedupe_first`가 ref_id 기준 → 같은 섹션의 sub 중복은 자동 1건화. **추가 dedupe 코드 불필요.**
 - 반환·정체성: 후보는 섹션(=`DocumentSection`) 단위 그대로. docs/12 축2(후보 피더 정체성 유지)와 정합.
 
