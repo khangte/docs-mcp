@@ -123,6 +123,13 @@ def test_token_provider_with_invalid_json_raises_integration_error() -> None:
         provider.token()
 
 
+def test_google_auth_requests_transport_is_importable() -> None:
+    """`_refresh` 가 쓰는 `google.auth.transport.requests` 는 `requests` 패키지가
+    설치돼 있어야 import 된다. 이 패키지가 의존성에서 빠지면 토큰 갱신이 매번
+    ImportError 로 실패한다(pyproject.toml 에 `requests` 명시 필요)."""
+    import google.auth.transport.requests  # noqa: F401
+
+
 # --- Drive: list_files ----------------------------------------------------------
 
 

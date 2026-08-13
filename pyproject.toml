@@ -15,6 +15,8 @@ dependencies = [
     # Drive 서비스 계정 JWT 서명/토큰 발급 전용. Drive REST 호출 자체는 httpx 로 직접 수행하므로
     # google-api-python-client 는 도입하지 않는다.
     "google-auth>=2.30",
+    # google.auth.transport.requests.Request(토큰 갱신 전송)가 하드 의존한다.
+    "requests>=2.31",
     "alembic>=1.13",
     "pgvector>=0.3",
     "psycopg[binary]>=3.1",
