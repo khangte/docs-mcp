@@ -65,9 +65,12 @@ class CandidateSearchOptions:
     document_id: str | None = None
     project: str | None = None
     #: 호출자(Claude)가 원본 질의와 함께 넘기는 동의어/유사 표현. 키워드
-    #: arm(FTS OR 후보 필터)만 넓히는 데 쓰고, 점수 계산에는 섞이지 않는다
-    #: — 벡터 arm은 이미 의미 유사도로 흡수하므로 손대지 않는다
-    #: (`docs/architect-review/12-rag-depth-directions.md` 후보4).
+    #: arm(FTS OR 후보 필터)을 넓히는 동시에 벡터 arm에도 라우팅된다 — 각
+    #: 변형을 원본과 별도로 임베딩해 히트를 등수 기준으로 병합한다
+    #: (`docs/architect-review/30-search-quality-eval-real-corpus-results.md`
+    #: §7.2. 교차언어 질의에서 벡터 arm이 유일 신호가 되는 사례가 실측돼,
+    #: `docs/architect-review/12-rag-depth-directions.md` 후보4의 "벡터 arm은
+    #: 손대지 않는다" 결정을 뒤집었다).
     query_variants: list[str] | None = None
 
 
@@ -184,13 +187,37 @@ class EndpointCandidateSearch:
                 if document_id is not None or project is not None
                 else None
             )
-            vector_hits = self._vector_search.search(query, top_k=width, candidates=candidate_ids)
-            vector_ref_ids = [h.ref_id for h in vector_hits if h.score > 0.0]
+            vector_ref_ids = self._search_vector_with_variants(
+                query, query_variants, width, candidate_ids
+            )
         else:
             _LOG.debug("벡터 arm 생략(rrf 전략, 키워드 단독 degrade): 임베딩 백엔드 비의미론적")
 
         fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=top_k)
         return self._to_candidates_from_fused(fused)
+
+    def _search_vector_with_variants(
+        self,
+        query: str,
+        query_variants: list[str] | None,
+        width: int,
+        candidate_ids: set[str] | None,
+    ) -> list[str]:
+        """원본 질의 + `query_variants` 를 각각 벡터 검색해 등수 최솟값으로 병합한다.
+
+        교차언어(예: 한글 원본 + 영문 변형) 질의에서 벡터 arm이 원본만으로는
+        약하고 변형(동일언어 비교)에서 강해지는 사례를 놓치지 않기 위해,
+        어느 한 질의에서든 상위였던 후보를 살린다(§7.2).
+        """
+        best_rank: dict[str, int] = {}
+        for candidate_query in [query, *(query_variants or [])]:
+            hits = self._vector_search.search(candidate_query, top_k=width, candidates=candidate_ids)
+            for rank, hit in enumerate(hits, start=1):
+                if hit.score <= 0.0:
+                    continue
+                if hit.ref_id not in best_rank or rank < best_rank[hit.ref_id]:
+                    best_rank[hit.ref_id] = rank
+        return [ref_id for ref_id, _ in sorted(best_rank.items(), key=lambda item: (item[1], item[0]))]
 
     def _validate(
         self, query: str, options: CandidateSearchOptions

@@ -47,11 +47,14 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             project: 특정 프로젝트로 검색 범위를 제한하고 싶을 때 지정.
                 document_id 와 함께 오면 document_id 가 우선하되, 그 문서가
                 해당 project 소속이 아니면 document_not_found 오류가 된다.
-            query_variants: query 와 같은 의미의 동의어·영한 혼용·유사 표현
-                목록. 키워드 arm(FTS) 후보 필터만 넓히고 점수·순위 계산에는
-                영향을 주지 않는다 — 벡터 arm은 이미 의미 유사도로 이를
-                흡수하므로 손대지 않는다. 결과 0건 또는 부족 시 재질의할
-                때 사용.
+            query_variants: query 와 같은 의미의 동의어·유사 표현 목록.
+                query 가 영어가 아니면(한국어 등 비영문 질의) 영문 표현을
+                반드시 변형으로 함께 제공한다 — 엔드포인트 문서는 전량
+                영문이라 비영문 원본만으로는 키워드 arm(FTS)이 후보를 아예
+                못 만들고 벡터 arm도 교차언어 비교라 약해진다. 키워드 arm
+                후보 필터를 넓히는 동시에 벡터 arm에도 라우팅돼(원본과
+                변형을 각각 임베딩해 히트 병합) 순위 계산에 반영된다. 결과
+                0건 또는 부족 시 재질의할 때도 사용.
 
         Returns:
             items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,

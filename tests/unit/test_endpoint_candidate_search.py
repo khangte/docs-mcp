@@ -15,7 +15,11 @@ from app.services.search.endpoint_candidate_search import (
 )
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
-from tests.fixtures.fakes import ExplodingEmbeddingProvider, StubVectorSearch
+from tests.fixtures.fakes import (
+    ExplodingEmbeddingProvider,
+    QueryAwareStubVectorSearch,
+    StubVectorSearch,
+)
 
 NO_MATCH_QUERY = "zzzzz_nothing_matches_here_xxx"
 
@@ -382,6 +386,38 @@ def test_query_variants_widen_keyword_arm_candidate_pool(app_state) -> None:
 
     assert [c.path for c in with_variants] == ["/animals"]
     assert all(c.match_type == "keyword" for c in with_variants)
+
+
+def test_query_variants_widen_vector_arm_too(app_state, sample_openapi_3: str) -> None:
+    """query_variants 는 벡터 arm 에도 라우팅된다(doc/30 §7.2, doc/12 후보4 뒤집음).
+
+    원본 질의로는 안 잡히는 엔드포인트가 영문 변형으로는 벡터 arm에서
+    잡혀야 한다 — 원본과 변형을 각각 임베딩해 히트를 병합하는지 검증.
+    """
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_endpoint_chunks()]
+    assert endpoint_chunks
+
+    original_query = "고객 새로 등록"
+    variant_query = "create customer"
+    target_chunk = endpoint_chunks[0]
+    stub = QueryAwareStubVectorSearch({variant_query: [target_chunk]})
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=KeywordSearch(bundle.chunk_repo),
+        vector_search=stub,
+        document_repo=bundle.document_repo,
+    )
+
+    candidates = search.search(
+        original_query,
+        CandidateSearchOptions(top_k=5, query_variants=[variant_query]),
+    )
+
+    assert stub.queries_seen == [original_query, variant_query]
+    assert any(c.endpoint_id == target_chunk[1] for c in candidates)
 
 
 # --- RRF 융합: match_type="both" --------------------------------------------

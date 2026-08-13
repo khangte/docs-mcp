@@ -51,6 +51,8 @@ class EvalQuery:
     query: str
     category: str
     accepted: list[tuple[str, str]]  # (method, path) — doc은 §3.3 검증에만 쓰고 채점에는 무관
+    #: 클라 LLM이 함께 제공했을 영문 변형(query_variants). --with-variants 일 때만 사용.
+    variants: list[str]
 
 
 def _load_manifest() -> list[dict]:
@@ -102,6 +104,7 @@ def _load_and_validate_queries(valid_by_doc: dict[str, set[tuple[str, str]]]) ->
             query=item["query"],
             category=item["category"],
             accepted=[(acc["method"], acc["path"]) for acc in item["accepted"]],
+            variants=item.get("variants", []),
         )
         for item in raw_items
     ]
@@ -111,13 +114,26 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--strategy", choices=("rrf", "fallback", "both"), default="both")
     parser.add_argument("--top-k", type=int, default=TOP_K)
+    parser.add_argument(
+        "--with-variants",
+        action="store_true",
+        help="queries.json의 variants(클라 LLM이 제공했을 영문 변형)를 query_variants로 함께 넘겨 재측정한다(doc/30 §7.3).",
+    )
     return parser.parse_args()
 
 
-def _run_strategy(bundle, queries: list[EvalQuery], top_k: int) -> list[int | None]:
+def _run_strategy(
+    bundle, queries: list[EvalQuery], top_k: int, with_variants: bool
+) -> list[int | None]:
     return [
         _rank_of_answer(
-            bundle.candidate_search.search(eq.query, CandidateSearchOptions(top_k=top_k)),
+            bundle.candidate_search.search(
+                eq.query,
+                CandidateSearchOptions(
+                    top_k=top_k,
+                    query_variants=eq.variants if with_variants and eq.variants else None,
+                ),
+            ),
             eq.accepted,
         )
         for eq in queries
@@ -156,6 +172,7 @@ def main() -> None:
         create_all(engine)
         state = AppState.from_engine(engine=engine, fetcher=InMemoryFetcher())
         print("is_semantic:", state.embedding_provider.is_semantic)
+        print("with_variants:", args.with_variants)
         bundle = next(build_services(state))
         for source_key, raw in texts.items():
             result = bundle.sync_service.register(
@@ -170,7 +187,7 @@ def main() -> None:
         for strategy in strategies:
             state.search_strategy = strategy
             b = next(build_services(state))
-            ranks_by_strategy[strategy] = _run_strategy(b, queries, args.top_k)
+            ranks_by_strategy[strategy] = _run_strategy(b, queries, args.top_k, args.with_variants)
 
         print(f"\n| # | 질의 | 카테고리 | 정답 | " + " | ".join(f"{s} 순위" for s in strategies) + " |")
         print("|---|---|---|---|" + "---|" * len(strategies))
