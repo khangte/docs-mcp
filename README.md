@@ -292,6 +292,91 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 > 시점에 원본을 실시간 조회합니다. 새로 만든 문서가 검색되지 않으면
 > `refresh_index` 를 먼저 실행하세요(자세한 내용은 위 도구 표 아래 설명 참고).
 
+## 자동 동기화 (배치)
+
+`refresh_index` 를 매번 수동으로 호출하지 않도록, 메타 캐시(+선택적 등록
+문서 재색인)를 주기적으로 갱신하는 원샷 CLI 진입점을 제공합니다. MCP
+stdio 서버는 클라이언트가 세션마다 띄우는 단명 프로세스라 그 안에
+스케줄러를 둘 수 없으므로, 이 스크립트는 **한 번 돌고 종료**하고 주기는
+OS 스케줄러(systemd timer 또는 cron)가 소유합니다
+(설계: [`docs/architect-review/32-refresh-index-batch-automation.md`](docs/architect-review/32-refresh-index-batch-automation.md)).
+
+```bash
+uv run python -m app.scripts.refresh_documents \
+  [--source drive|notion] [--project PROJECT] [--include-registered] [--force]
+```
+
+인자는 `refresh_index` 도구와 동일한 의미입니다. 두 축을 다른 주기로
+돌립니다:
+
+- **축 A(메타 캐시 동기화)** — 문서 목록·제목·수정일만 갱신(본문 미조회).
+  **1시간마다** 실행 권장. Drive 하위 폴더 BFS 순회 때문에 폴더 트리가 큰
+  프로젝트는 이보다 늘리세요(실측 후 조정).
+- **축 B(등록 문서 재색인, `--include-registered`)** — `source_url` 이
+  있는 등록 문서마다 원본을 재fetch·재파싱·재임베딩합니다. 변경 없어도
+  문서마다 네트워크 fetch가 발생해 비용이 크므로 **1일 1회(야간)** 만
+  돌립니다. `--force` 는 배치에서 쓰지 않습니다(해시 동일 시 skip이 정상
+  경로).
+
+중복 실행은 Postgres advisory lock 으로 막습니다(새 의존성 0). 두 축은
+락 키가 달라 무거운 축 B 실행 중에도 축 A 틱이 굶지 않습니다.
+
+### systemd user timer (권장)
+
+```ini
+# ~/.config/systemd/user/docs-refresh.service
+[Service]
+Type=oneshot
+WorkingDirectory=/home/<user>/projects/docs-mcp
+ExecStart=/home/<user>/.local/bin/uv run python -m app.scripts.refresh_documents
+
+# ~/.config/systemd/user/docs-refresh.timer
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+축 B는 같은 형태로 `docs-resync.service`(`ExecStart=... --include-registered`)
++ `OnCalendar=daily` 타이머를 하나 더 둡니다.
+
+```bash
+systemctl --user enable --now docs-refresh.timer docs-resync.timer
+```
+
+### cron (systemd 미가용 환경, 예: WSL2)
+
+```cron
+0 * * * * cd /home/<user>/projects/docs-mcp && /home/<user>/.local/bin/uv run python -m app.scripts.refresh_documents >> output/logs/refresh.log 2>&1
+30 3 * * * cd /home/<user>/projects/docs-mcp && /home/<user>/.local/bin/uv run python -m app.scripts.refresh_documents --include-registered >> output/logs/resync.log 2>&1
+```
+
+### 실행 환경 함정 (크론/타이머가 손으로 돌릴 때와 다르게 깨지는 지점)
+
+- **cwd** — 설정 로딩이 `.env` 를 cwd 기준 상향 탐색으로 찾습니다. cron의
+  기본 cwd(홈)에서는 `.env` 를 못 찾고, Drive 서비스계정 파일 상대경로도
+  같이 깨집니다. → `WorkingDirectory=`(systemd) / `cd <repo> &&`(cron)
+  **필수**.
+- **PATH** — cron 의 PATH 에는 `uv` 가 없습니다. **절대경로**로 씁니다.
+- **자격증명** — `DOCS_MCP_NOTION_TOKEN`, Drive 서비스계정 파일이 배치를
+  실행하는 사용자 권한으로 읽혀야 합니다(`secrets/` 권한 확인). 누락되면
+  소스 전량이 실패해 exit code 1 로 드러납니다.
+- **로그** — stderr에 JSON 한 줄을 남깁니다. systemd 면 journal이 받고,
+  cron 이면 `output/logs/` 로 리다이렉트하세요(이미 `.gitignore` 대상).
+
+### 종료코드
+
+| 상황                                     | 종료코드 |
+| ---------------------------------------- | -------- |
+| 전 대상 실패(모든 소스 갱신 실패)        | 1        |
+| 부분 실패/락 미획득(이미 실행 중)/정상   | 0        |
+
+부분 실패를 1로 올리지 않는 이유는 실패한 항목이 다음 갱신에서 자동
+재시도되기 때문입니다(WARN 로그에 실패한 `<project>/<source>` 가 남으므로
+지속 실패는 로그로 추적됩니다).
+
 ## 검색 아키텍처 (요약)
 
 엔드포인트 검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM이 반환된 후보(top_k) 중에서 선택합니다 — 즉 서버는 **후보 피더**이며 품질 지표는 recall@k입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
