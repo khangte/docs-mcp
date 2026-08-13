@@ -194,6 +194,22 @@ def test_embed_documents_without_labels_still_warns(caplog: pytest.LogCaptureFix
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
 
 
+def test_count_tokens_uses_encoder_tokenizer() -> None:
+    encoder = _FakeEncoder(tokenizer=_FakeTokenizer(token_count=42))
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    assert provider.count_tokens("아무 텍스트") == 42
+
+
+def test_count_tokens_returns_zero_when_encoder_lacks_tokenizer() -> None:
+    """docs/23 §3: 토크나이저 없는 인코더는 죽지 않고 예산 이내(0)로 간주한다."""
+    encoder = _FakeEncoder()  # tokenizer 속성 없음
+
+    provider = LocalEmbeddingProvider("fake-model", encoder=encoder)
+
+    assert provider.count_tokens("아무 텍스트") == 0
+
+
 @pytest.mark.slow
 def test_semantic_similarity_ranks_related_pair_higher() -> None:
     """실제 모델(다국어 E5)을 로드해 의미 유사도가 실제로 동작하는지 확인한다.

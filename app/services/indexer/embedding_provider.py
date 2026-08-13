@@ -34,7 +34,9 @@ _QUERY_CACHE_SIZE = 256
 #: 조용히 truncation 한다(에러·경고 없음). 안전마진을 둔 이 상수를 넘는
 #: 입력은 embed_documents 가 경고 로그를 남긴다(벡터 arm 발견성만 손실 —
 #: stored text/FTS 는 이 임계값과 무관하게 온전하다).
-_TOKEN_WARNING_THRESHOLD = 480
+#: `docs/architect-review/23-long-section-sub-chunking-phase2-design.md` §5:
+#: chunk_builder 의 섹션 분할 상한으로도 재사용한다(공개 상수).
+TOKEN_WARNING_THRESHOLD = 480
 
 _LOG = get_logger("docs_mcp.indexer.embedding")
 
@@ -170,7 +172,7 @@ class LocalEmbeddingProvider:
     ) -> list[list[float]]:
         """문서 텍스트들에 "passage: " 접두사를 붙여 인코딩한다. 빈 입력은 그대로 빈 리스트.
 
-        인코딩 전, 텍스트별 토큰수가 안전 상한(`_TOKEN_WARNING_THRESHOLD`)을
+        인코딩 전, 텍스트별 토큰수가 안전 상한(`TOKEN_WARNING_THRESHOLD`)을
         넘으면 `SentenceTransformer.encode` 가 조용히 truncation 하기 전에
         경고 로그를 남긴다(docs/16 Phase 1).
         """
@@ -181,21 +183,31 @@ class LocalEmbeddingProvider:
         vectors = self._encoder.encode(prefixed, normalize_embeddings=True)
         return [list(vector) for vector in vectors]
 
+    def count_tokens(self, text: str) -> int:
+        """실제 임베딩 토크나이저 기준 텍스트의 토큰수를 센다(docs/23 §3, 분할용 콜러블).
+
+        토크나이저를 노출하지 않는 인코더(일부 페이크)는 죽지 않고 0을 반환한다 —
+        호출자(section_splitter)가 예산 이내로 간주해 분할을 건너뛴다.
+        """
+        tokenizer = getattr(self._encoder, "tokenizer", None)
+        if tokenizer is None:
+            return 0
+        return len(tokenizer.encode(text, add_special_tokens=True))
+
     def _warn_if_exceeds_threshold(
         self, texts: list[str], labels: Sequence[str] | None
     ) -> None:
         """토크나이저를 노출하는 인코더에 한해, 초과 텍스트를 경고 로그로 남긴다."""
-        tokenizer = getattr(self._encoder, "tokenizer", None)
-        if tokenizer is None:
+        if getattr(self._encoder, "tokenizer", None) is None:
             return
         label_list: Sequence[str | None] = labels if labels is not None else [None] * len(texts)
         for text, label in zip(texts, label_list, strict=True):
-            token_count = len(tokenizer.encode(text, add_special_tokens=True))
-            if token_count > _TOKEN_WARNING_THRESHOLD:
+            token_count = self.count_tokens(text)
+            if token_count > TOKEN_WARNING_THRESHOLD:
                 _LOG.warning(
                     "임베딩 입력이 안전 상한(%d토큰) 초과 — 뒷부분이 벡터 검색에서 조용히 "
                     "누락될 수 있음(docs/16): label=%s tokens=%d",
-                    _TOKEN_WARNING_THRESHOLD,
+                    TOKEN_WARNING_THRESHOLD,
                     label,
                     token_count,
                 )

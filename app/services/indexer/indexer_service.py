@@ -26,7 +26,7 @@ from app.models import (
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.indexer.chunk_builder import build_chunks
-from app.services.indexer.embedding_provider import EmbeddingProvider
+from app.services.indexer.embedding_provider import EmbeddingProvider, TOKEN_WARNING_THRESHOLD
 from app.services.parser.openapi_parser import (
     ParsedDocument,
     ParsedEndpoint,
@@ -99,7 +99,14 @@ class IndexerService:
             )
             self._endpoint_repo.add_section(section_entity)
 
-        built_chunks = build_chunks(parsed, endpoint_ids, section_ids)
+        count_tokens = getattr(self._embedding_provider, "count_tokens", None)
+        built_chunks = build_chunks(
+            parsed,
+            endpoint_ids,
+            section_ids,
+            count_tokens=count_tokens,
+            token_limit=TOKEN_WARNING_THRESHOLD,
+        )
         texts = [c.text for c in built_chunks]
         labels = [f"{document.id}:{c.chunk_type}:{c.ref_id}" for c in built_chunks]
         embeddings = (

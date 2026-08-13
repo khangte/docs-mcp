@@ -4,8 +4,11 @@
 그리디 분할(문단 → 문장/줄 → 토큰 하드컷, overlap 없음)의 구현. 토큰 카운터는
 임베딩 프로바이더에서 콜러블로 주입받아 이 모듈은 모델에 의존하지 않는다.
 
-Phase 2 게이트 B: 이 모듈은 순수 로직 + 단위테스트만 병합한다. `chunk_builder`
-실배선(build_chunks에서 호출)과 재색인 트리거는 별도 게이트(실사례 발생 시).
+`docs/architect-review/26-pdf-docx-deterministic-catchall-gate-recheck.md`:
+pdf/docx는 헤딩이 원리적으로 없어(파서가 서식 없는 순수 텍스트만 추출)
+section_count=1 로 결정론적으로 묶이고, 실측(다중페이지 PDF 1건, 10335토큰)으로
+480토큰 초과가 확인되어 게이트가 실배선 착수로 상향되었다. `chunk_builder.build_chunks`
+가 이 모듈을 호출한다.
 """
 
 from __future__ import annotations
@@ -13,7 +16,6 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
-from app.services.indexer.chunk_builder import build_section_chunk_text
 from app.services.parser.openapi_parser import ParsedSection
 
 #: 문장/줄 경계: 종결부호(.!?。) 뒤 공백, 또는 줄바꿈.
@@ -29,11 +31,11 @@ def build_section_chunks(
 
     각 sub는 `# {title}` 을 머리에 달아 문맥 앵커를 유지한다(제목 있을 때만).
     """
-    full = build_section_chunk_text(section)
+    title_prefix = f"# {section.title}\n" if section.title else ""
+    full = title_prefix + section.content
     if count_tokens(full) <= token_limit:
         return [full]
 
-    title_prefix = f"# {section.title}\n" if section.title else ""
     budget = max(1, token_limit - count_tokens(title_prefix))
     parts = _split_by_paragraph(section.content, budget, count_tokens)
     return [title_prefix + p for p in parts]
