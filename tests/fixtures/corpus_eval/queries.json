@@ -16,7 +16,7 @@
   {"id": "q15", "query": "list commits of a repo", "category": "C5-decoy구분", "accepted": [{"doc": "github", "method": "GET", "path": "/repos/{owner}/{repo}/commits"}]},
   {"id": "q16", "query": "구독 취소하고 환불까지", "category": "C6-다개념(복수정답)", "accepted": [{"doc": "stripe", "method": "DELETE", "path": "/v1/subscriptions/{subscription_exposed_id}"}, {"doc": "stripe", "method": "POST", "path": "/v1/refunds"}]},
   {"id": "q17", "query": "이슈 목록 조회하고 새 이슈 생성", "category": "C6-다개념(복수정답)", "accepted": [{"doc": "github", "method": "GET", "path": "/repos/{owner}/{repo}/issues"}, {"doc": "github", "method": "POST", "path": "/repos/{owner}/{repo}/issues"}]},
-  {"id": "q18", "query": "결제 생성 시 통화 단위 지정", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/charges"}]},
-  {"id": "q19", "query": "결제 인텐트에 자동 결제수단 설정", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/payment_intents"}]},
+  {"id": "q18", "query": "결제 생성 시 통화 단위 지정", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/charges"}], "variants": ["specify currency when creating a charge"]},
+  {"id": "q19", "query": "결제 인텐트에 자동 결제수단 설정", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "stripe", "method": "POST", "path": "/v1/payment_intents"}], "variants": ["set automatic payment methods on a payment intent"]},
   {"id": "q20", "query": "풀리퀘스트를 draft로 생성", "category": "C7-대형엔드포인트세부", "accepted": [{"doc": "github", "method": "POST", "path": "/repos/{owner}/{repo}/pulls"}]}
 ]

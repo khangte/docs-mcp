@@ -38,7 +38,13 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
         DESCRIPTION
         Tags: t1, t2
         Params: name(in,required), ...
+        Body: field1, field2, ...
         Responses: 200, 404
+
+    docs/architect-review/30 §9.2: request body는 필드명만 나열한다(설명 텍스트
+    미포함 — 대형 body가 480/512 토큰 상한을 넘기지 않게). $ref만 있고 인라인
+    `properties`가 없는 body(스키마 참조만 있는 경우)는 이름을 뽑을 수 없어
+    `Body:` 줄 자체를 생략한다 — 이 케이스의 $ref 해소는 범위 밖(YAGNI).
     """
 
     summary = endpoint.summary or ""
@@ -49,6 +55,11 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
         f"{p.name}({p.location},{'required' if p.required else 'optional'})"
         for p in endpoint.parameters
     )
+    body_desc = ""
+    if endpoint.request_body is not None:
+        properties = endpoint.request_body.schema.get("properties")
+        if isinstance(properties, dict) and properties:
+            body_desc = ", ".join(sorted(str(k) for k in properties.keys()))
     responses_desc = ", ".join(r.status_code for r in endpoint.responses)
     lines = [header]
     if description:
@@ -57,6 +68,8 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
         lines.append(f"Tags: {tags}")
     if params_desc:
         lines.append(f"Params: {params_desc}")
+    if body_desc:
+        lines.append(f"Body: {body_desc}")
     if responses_desc:
         lines.append(f"Responses: {responses_desc}")
     return "\n".join(lines)

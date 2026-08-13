@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from app.services.indexer.chunk_builder import build_chunks
+from app.services.indexer.chunk_builder import build_chunks, build_endpoint_chunk_text
 from app.services.parser.openapi_parser import (
     ParsedDocument,
+    ParsedEndpoint,
+    ParsedRequestBody,
     ParsedSchema,
     ParsedSection,
     parse_document,
@@ -29,6 +31,26 @@ def test_endpoint_chunk_text_contains_essentials(sample_openapi_3: str) -> None:
     assert "/pet/{petId}" in text
     assert "find pet by id" in text.lower()
     assert "petId" in text
+
+
+def test_endpoint_chunk_text_includes_inline_request_body_field_names() -> None:
+    """docs/architect-review/30 §9.3-1: request body 인라인 프로퍼티가 Body: 줄로 실린다."""
+    endpoint = ParsedEndpoint(
+        method="POST",
+        path="/v1/charges",
+        operation_id="createCharge",
+        summary="Create a charge",
+        description="",
+        request_body=ParsedRequestBody(
+            content_type="application/x-www-form-urlencoded",
+            schema={
+                "type": "object",
+                "properties": {"currency": {"type": "string"}, "amount": {"type": "integer"}},
+            },
+        ),
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    assert "Body: amount, currency" in text
 
 
 def test_schema_chunk_created(sample_openapi_3: str) -> None:

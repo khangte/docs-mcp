@@ -214,3 +214,197 @@ C2 카테고리만 보면:
   카테고리 실패 패턴을 더 확인한 뒤 2차 여부를 재판단하는 편이 이 표본 크기에서는
   근거 있는 다음 스텝이다(YAGNI — 원인 불명 상태에서 마이그레이션 비용을
   선지불하지 않는다).
+
+## 9. C7 대형 엔드포인트 세부 미검출 — 원인 재판정 및 대응 설계 (§5-2 판단)
+
+§5-2(C7 대형 엔드포인트 세부 top-10 미검출)에 대한 architect 판정이다. 대상 질의:
+`결제 생성 시 통화 단위 지정`(q18, → POST /v1/charges) / `결제 인텐트에 자동
+결제수단 설정`(q19, → POST /v1/payment_intents) / `풀리퀘스트를 draft로 생성`
+(q20, → POST /repos/{owner}/{repo}/pulls). 두 전략 모두 R@3 0%, rrf가 q20만 순위 5 회수.
+
+### 9.1. 원인 — §2/§5-2의 "truncation" 진단은 틀렸다. 실제 병목은 request body 누락이다
+
+§2·§5-2는 C7 실패를 "임베딩 512토큰 상한 truncation"(doc/26 논지의 엔드포인트
+적용)으로 귀속했다. 프리즈 코퍼스를 직접 측정한 결과 **이 귀속은 반증된다.**
+
+1. **문제 엔드포인트의 청크는 512에 근처도 못 간다.**
+   프리즈 스펙 실측:
+   - `POST /v1/charges`: `parameters` **0개**, `currency` 는 `requestBody` 프로퍼티(총 20개).
+   - `POST /v1/payment_intents`: `parameters` **0개**, `automatic_payment_methods`·
+     `currency` 는 `requestBody` 프로퍼티(총 38개).
+   - `POST /repos/{owner}/{repo}/pulls`: `parameters` 2개(owner/repo 경로), `draft` 는
+     `requestBody` 프로퍼티(총 8개).
+
+   세 건 모두 검색 타겟 세부(통화·자동결제수단·draft)가 **request body 필드**다.
+
+2. **`build_endpoint_chunk_text`(`chunk_builder.py:33`)는 `request_body`를 전혀 읽지 않는다.**
+   청크 텍스트는 `header / description / Tags / Params(=endpoint.parameters) / Responses`
+   로만 구성된다. `endpoint.request_body`(파서는 `ParsedRequestBody`로 정상 파싱)는
+   포맷에서 누락. → charges/payment_intents는 파라미터가 0개라 `Params:` 줄조차 없고,
+   청크는 헤더+요약+태그+응답코드 수준의 **수십 토큰짜리 소형 청크**다. 512 상한에
+   걸릴 여지가 없다.
+
+3. **따라서 currency/automatic_payment_methods/draft는 truncation된 게 아니라 애초에
+   색인되지 않았다.** 질의가 겨냥한 필드명이 벡터·FTS 어느 텍스트에도 존재하지 않으니
+   두 arm 모두 신호를 못 만든다. q20이 rrf에서 순위 5로 잡힌 것도 `draft` 때문이 아니라
+   경로·요약(`pulls` / "Create a pull request")의 잔여 신호일 뿐이다 — `draft`는 이 청크에 없다.
+
+4. **교차언어(C2) 오염 주의**: q18·q19·q20 질의문은 모두 한글이다. 즉 C7의 관측
+   실패는 request body 누락과 §7의 KO→EN 교차언어 붕괴가 **곱해진** 값이다. 설계
+   의도(doc/28 §6)는 C7로 "엔드포인트 청크 truncation"을 노출하려 했으나, 실제 질의가
+   한글이라 truncation을 격리 측정하지 못했고 — 그리고 위 1~3으로 truncation은
+   애초에 병목이 아니었다. doc/26 truncation 테마가 엔드포인트에 실측 확인됐다는
+   §5-2 문장은 이 절로 정정한다.
+
+### 9.2. 대응 설계 — 판정
+
+네 대응 후보를 검토했다. 결론은 **1차(request body 필드명 방출) 즉시 채택,
+2차(엔드포인트 sub-chunking) 재측정 게이트 보류, 3차(임베딩 컨텍스트 확장)·
+4차(request body 전용 보조청크) 기각**이다.
+
+#### 채택 — 1차: `build_endpoint_chunk_text`에 request body 필드명 방출 (근본 수정·최소 diff)
+
+`build_endpoint_chunk_text`에 `Params:`와 동형의 `Body:` 줄을 추가한다 —
+`endpoint.request_body.schema["properties"].keys()`를 읽어 `Body: currency, amount,
+customer, ...`. `build_schema_chunk_text`(`chunk_builder.py:70-73`)가 이미 쓰는
+프로퍼티 추출 패턴 그대로다.
+
+- **누락된 신호 복구**: currency/automatic_payment_methods/draft가 청크에 실려
+  FTS(영문 변형·영문 질의)와 벡터 양쪽에서 후보를 만든다. C7의 진짜 병목(색인 자체
+  누락)을 없앤다.
+- **필드명만, 설명은 넣지 않는다**: 기존 `Params:` 포맷과 동형으로 **이름만**
+  나열한다. Stripe request body 프로퍼티 설명은 장문이라 이걸 넣으면 38-필드
+  엔드포인트가 즉시 480/512를 넘겨 §9.1이 반증한 truncation 문제를 **이번엔 진짜로**
+  만든다. 이름만이면 38필드도 ~수백 토큰 이내로 유계.
+- **$ref-only body 한계**: 인라인 `properties`가 없고 `$ref`만 있는 body는 이름을
+  못 뽑는다(빈 줄). Stripe(form-urlencoded 인라인)·GitHub pulls(application/json 인라인)는
+  프로퍼티가 인라인이라 커버되므로 1차 범위에서 $ref 해소는 하지 않는다(YAGNI —
+  필요 시 후속). 이 천장은 구현 시 주석으로 명시.
+
+이 방향은 청크당 1개(=엔드포인트 ref_id 1개) 불변(doc/28 §3.1 ground-truth 안정성
+근거)을 **깨지 않는다** — 기존 단일 청크 텍스트를 늘릴 뿐이다.
+
+#### 조건부 보류 — 2차: 엔드포인트도 sub-chunking 대상으로 확장 (전제 뒤집기)
+
+doc/28 §3.1·§6은 "엔드포인트는 sub-chunking 대상이 아니다(=정확히 청크 1개)"를
+ground-truth 불변의 근거로 삼았다. **이 전제는 지금 뒤집지 않고, 1차 재측정 뒤로
+게이트한다.** 근거:
+
+- 1차 이전에는 뒤집을 이유가 없다 — 현재 문제 청크는 소형이라 분할할 것이 없다.
+- 1차 적용 후에야 전제가 압박받는다: `Body:` 필드명을 실으면 payment_intents(38필드)
+  급 대형 body 엔드포인트가 480 상한을 **처음으로** 넘길 수 있다. 그때 비로소
+  "엔드포인트 청크도 480 초과 시 `build_section_chunks` 기계로 분할" 확장이
+  정당해진다(섹션 sub-chunking 배선 재사용).
+- 단 이 확장은 ref_id 1:N 청크가 되어 doc/28 §3.1 불변을 깬다. 채점은 `(method,path)`
+  단위라 여전히 안전하나(ref_id 최초 일치), 그 트레이드오프를 지불할지는 실측
+  overflow 건수를 본 뒤 결정한다.
+
+**판정: 1차 적용 후 프리즈 코퍼스에서 엔드포인트 청크 토큰 분포를 측정
+(`diagnose_long_sections.py`의 엔드포인트판 or 임시 카운트)하고, 480 초과 엔드포인트가
+유의미하게 나올 때만 2차를 당긴다.** 안 나오면 청크당 1개 불변을 유지한다.
+
+#### 기각 — 3차: 임베딩 모델 컨텍스트(512) 확장
+
+병목이 truncation이 아니라 텍스트 미방출이므로(§9.1) 컨텍스트를 키워도 없는 필드가
+생기지 않는다. 게다가 FTS(키워드 arm)는 stored text 기반이라 애초에 512 컨텍스트와
+무관하다. 마이그레이션 비용만 크고 C7을 못 고친다. 기각.
+
+#### 기각 — 4차: request body 전용 보조 청크 분리
+
+body 필드를 별도 `chunk_type`으로 쪼개 색인하는 안. 1차(단일 청크에 인라인)가 같은
+발견성을 더 싸게 달성한다:
+- 청크 수·색인 비용 증가, 그리고 엔드포인트 ref_id 1:N → doc/28 §3.1 불변 파손을
+  1차 없이도 즉시 유발.
+- body 필드가 별도 청크로 분리되면 검색 필터(`chunk_type=="endpoint"`, doc/28 §1.3)에
+  새 타입 추가 배선까지 파생 — 레버리지 대비 표면적이 크다.
+
+인라인이 overflow할 만큼 커지는 경우는 2차(sub-chunking)로 흡수되므로 4차의 고유
+효용이 없다. 기각.
+
+### 9.3. 후속 조치 (developer 배정 대상)
+
+1. `build_endpoint_chunk_text`(`chunk_builder.py`)에 `Body:` 줄 추가 —
+   `request_body.schema["properties"]` 키를 `Params:`와 동형으로 이름만 나열.
+   $ref-only body는 빈 줄(주석으로 천장 명시). 단위 테스트: request body 있는
+   엔드포인트 청크에 필드명이 실리는지 assert 1개.
+2. 재색인 후 C7 재측정 — q18·q19는 한글이므로 §8의 `--with-variants`(영문 변형)
+   조건과 함께 측정해야 request body 복구 효과가 교차언어 붕괴에 가려지지 않는다.
+   (q18→`specify currency when creating a charge`, q19→`set automatic payment methods
+   on a payment intent` 급 영문 변형 부여.)
+3. 재측정 시 엔드포인트 청크 토큰 분포도 함께 산출 — 480 초과 엔드포인트 건수가
+   2차(sub-chunking 확장) 게이트의 입력이다.
+
+> C2(교차언어)·C7(request body 누락)은 독립 축이나, C7 질의가 한글이라 2번 재측정은
+> 반드시 §8 변형 배선과 겹쳐 수행한다. 그래야 두 축의 효과가 분리 관측된다.
+
+## 10. §9.3 배선 결과 및 C7 재측정 (developer)
+
+§9.2 판정(1차 채택)에 따라 세 가지를 배선했다.
+
+### 10.1. `Body:` 줄 배선
+
+`build_endpoint_chunk_text`(`chunk_builder.py`)에 `Params:`와 동형인 `Body:` 줄을
+추가했다 — `endpoint.request_body.schema["properties"]` 키를 `build_schema_chunk_text`가
+쓰는 것과 같은 패턴(`sorted(...)`)으로 이름만 나열한다. 인라인 `properties`가 없는
+$ref-only body는 `Body:` 줄 자체를 생략한다(구현 docstring에 이 천장을 명시).
+단위 테스트(`test_endpoint_chunk_text_includes_inline_request_body_field_names`)로
+인라인 request body 필드명이 청크 텍스트에 실리는지 확인 — RED 확인 후 구현, GREEN.
+
+```
+tests/unit/test_chunk_builder.py -q → 8 passed (신규 1건 포함)
+```
+
+### 10.2. C7 재측정
+
+프리즈 코퍼스(`run_corpus_eval.py --strategy both`, n=20)로 세 조건을 비교했다.
+"수정 전"은 §1/§9.1 원 측정값, "수정 후·변형 없음"/"수정 후·변형 포함"은 이번
+`Body:` 배선 반영 후 재실행 값이다(변형 포함은 q18→`specify currency when creating
+a charge`, q19→`set automatic payment methods on a payment intent`을 `queries.json`에
+추가하고 `--with-variants`로 실행).
+
+| 조건 | fallback R@3 | fallback MRR | rrf R@3 | rrf MRR |
+|---|---|---|---|---|
+| 수정 전(§1) | 0% | 0.000 | 0% | 0.067 |
+| 수정 후·변형 없음 | 0% | 0.167 | 33% | 0.194 |
+| 수정 후·변형 포함 | 0% | 0.083 | 33% | 0.228 |
+
+질의별 순위(fallback / rrf):
+
+| # | 질의 | 정답 | 수정 전 | 수정 후·변형 없음 | 수정 후·변형 포함 |
+|---|---|---|---|---|---|
+| q18 | 결제 생성 시 통화 단위 지정 | POST /v1/charges | 미검출/미검출 | 미검출/미검출 | 미검출/**4** |
+| q19 | 결제 인텐트에 자동 결제수단 설정 | POST /v1/payment_intents | 미검출/미검출 | **4/4** | 미검출/10 |
+| q20 | 풀리퀘스트를 draft로 생성 | POST /repos/{owner}/{repo}/pulls | 미검출/5 | 4/3 | 4/3 |
+
+**해석**:
+
+- **`Body:` 줄 자체가 주 효과다.** 변형 없이(한글 질의 그대로) q19가 미검출 →
+  rrf/fallback 모두 4위로 올라섰다 — request body 필드명 색인 복구가 C7의 진짜
+  원인이었다는 §9.1 진단이 실측으로 확인된다. q20(GitHub, `draft`가 인라인
+  프로퍼티)도 5위 → 3위로 개선.
+- **q18은 한글 상태로는 여전히 미검출**이다 — 영문 변형을 줘야 rrf 4위로
+  진입한다. `currency`가 20개 프로퍼티 중 하나로 묻히는 데다 C2(교차언어)
+  붕괴가 겹쳐(§7) 한글 질의 단독으로는 신호가 약함.
+- **q19는 변형을 주면 오히려 악화**된다(4/4 → 미검출/10). `automatic_payment_methods`
+  변형 질의가 동일 엔드포인트(payment_intents, 38-필드 대형 body)의 다른 프로퍼티
+  토큰과 벡터 유사도를 나눠 가지는 것으로 추정 — 원인 분리는 안 됐고 표본 1건이라
+  결론 보류(§8.2와 같은 종류의 "완전 회복은 아님" 신호). 필드가 많은 대형 body일수록
+  단일 필드 타겟 질의가 다른 필드 토큰에 흡수될 여지가 크다는 가설.
+- **종합**: rrf MRR 기준 0.067 → 0.194(변형 없음) → 0.228(변형 포함)로 단조 개선,
+  R@3는 0% → 33%(q20 진입) → 33%(정체, q18 진입이 q19 퇴보로 상쇄). C7은 truncation이
+  아니라 색인 누락이었다는 §9.1 판정이 재측정으로 뒷받침된다.
+
+### 10.3. 엔드포인트 청크 토큰 분포 (2차 sub-chunking 게이트 입력)
+
+`Body:` 배선 반영 후 프리즈 코퍼스 전체 엔드포인트 청크를 임베딩 토크나이저
+(`intfloat/multilingual-e5-small`)로 실측(DB 적재 없이 파서+`build_endpoint_chunk_text`
+직결, 1회성 측정 — 커밋된 스크립트 아님).
+
+| 코퍼스 | 엔드포인트 수 | 480토큰 초과 | 최대 토큰 |
+|---|---|---|---|
+| Stripe | 589 | 5건 | 1087 |
+| GitHub | 1220 | 40건 | 1394 |
+
+합계 45/1809건(≈2.5%)이 480토큰을 넘는다. 512 임베딩 상한 자체를 넘는 것도
+다수(GitHub 최대 1394는 512의 2.7배) — §9.2 2차(엔드포인트 sub-chunking) 게이트
+판단의 입력 수치이며, 2차 실행 여부는 이 절 범위 밖(architect/lead 판단).
