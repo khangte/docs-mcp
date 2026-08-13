@@ -7,8 +7,6 @@ from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
 from app.core.errors import DomainError, IntegrationError
-from app.core.logging import get_logger
-from app.core.config import get_settings
 from app.mcp.payloads import _to_drive_source_item, _to_notion_source_item, _to_refresh_payload
 from app.mcp.tools._common import _run_bundle, to_error_payload
 from app.mcp.types import (
@@ -16,15 +14,13 @@ from app.mcp.types import (
     ErrorPayload,
     NotionSourceListResult,
     RefreshIndexResult,
-    RegisteredResyncResult,
     RegisterDriveSourceResult,
     RegisterNotionPageResult,
     RegisterNotionSourceResult,
     RemoveDriveSourceResult,
     RemoveNotionSourceResult,
 )
-
-_LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
+from app.services.documents.registered_resync import resync_registered_documents
 
 
 def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
@@ -76,7 +72,9 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
                     bundle.document_index_service.refresh(source=source, project=project)
                 )
                 if include_registered:
-                    payload["registered"] = _resync_registered(bundle, project=project, force=force)
+                    payload["registered"] = resync_registered_documents(
+                        bundle, project=project, force=force
+                    )
                 return payload
             try:
                 return _run_bundle(app_state, _inner)
@@ -284,35 +282,3 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             except (DomainError, IntegrationError) as e:
                 return to_error_payload(e)
         return await anyio.to_thread.run_sync(_sync)
-
-
-def _resync_registered(
-    bundle: ServiceBundle, *, project: str | None, force: bool
-) -> RegisteredResyncResult:
-    """URL 기반 Document 를 순회하며 개별 resync 하고 결과를 집계한다.
-
-    문서 하나가 실패해도 나머지는 계속 진행한다(부분 실패 허용). resync 는
-    문서마다 자체 커밋하므로 한 문서의 실패가 다른 문서 결과를 롤백하지 않는다.
-    """
-    documents = bundle.document_repo.list_resyncable(project)
-    reindexed = 0
-    skipped = 0
-    failed: list[str] = []
-    for document in documents:
-        try:
-            result = bundle.sync_service.resync(document.id, force=force)
-        except (DomainError, IntegrationError) as e:
-            _LOG.error("registered resync failed: document_id=%s", document.id, exc_info=e)
-            bundle.session.rollback()
-            failed.append(document.id)
-            continue
-        if result.status == "reindexed":
-            reindexed += 1
-        else:
-            skipped += 1
-    return {
-        "total": len(documents),
-        "reindexed": reindexed,
-        "skipped": skipped,
-        "failed": failed,
-    }
