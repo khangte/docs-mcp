@@ -150,7 +150,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 
 **협업 문서 (Google Drive / Notion)** 7. `search_documents`: Drive/Notion 문서 검색 (`project` 필터, 결과 부족 시 `query_variants` 로 후보 필터 확장 가능) 8. `get_document`: 협업 문서 원문 실시간 조회 9. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터, `include_registered`+`force` 로 URL 기반 ApiDocument 재동기화 가능)
 
-**프로젝트→소스 매핑 (Drive 3종, Notion 4종)** 10. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록 11. `register_notion_page`: 프로젝트에 Notion 허브 페이지 매핑 등록(지정 페이지 바로 하위 1단계 페이지들을 검색 대상으로 삼음, Drive 에는 대응 도구 없음) 12. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회 13. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
+**프로젝트→소스 매핑 (Drive 3종, Notion 4종)** 10. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록 11. `register_notion_page`: 프로젝트에 Notion 허브 페이지 매핑 등록(지정 페이지 하위 페이지·데이터베이스를 재귀 탐색(최대 4단계)해 검색 대상으로 삼음, Drive 에는 대응 도구 없음) 12. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회 13. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
 
 **리소스** 14. `document://{document_id}/raw`: 등록된 OpenAPI 문서의 원문(JSON/YAML) 조회
 

@@ -78,7 +78,7 @@ uv run alembic upgrade head
 | ------------------------------ | --------------------------------------------------------------------- | ------ |
 | `DOCS_MCP_DRIVE_FOLDER_ID`     | 기본 프로젝트용 Google Drive 폴더 ID(하위 폴더 재귀 포함)              | (없음) |
 | `DOCS_MCP_NOTION_DATABASE_ID`  | 기본 프로젝트용 Notion 데이터베이스 ID. 비우면 워크스페이스 전체가 대상 | (없음) |
-| `DOCS_MCP_NOTION_PAGE_ID`      | 기본 프로젝트용 Notion 허브 페이지 ID. 바로 아래 1단계 하위 페이지가 대상 | (없음) |
+| `DOCS_MCP_NOTION_PAGE_ID`      | 기본 프로젝트용 Notion 허브 페이지 ID. 하위 페이지/데이터베이스를 재귀 탐색(최대 4단계)한 결과가 대상 | (없음) |
 
 > `DOCS_MCP_NOTION_DATABASE_ID` 와 `DOCS_MCP_NOTION_PAGE_ID` 를 함께 설정하면 page 가 우선하고 database 는 무시됩니다.
 
@@ -206,7 +206,7 @@ claude mcp remove docs-mcp   # 등록 해제
 | `list_drive_sources`     | 등록된 프로젝트→Drive 폴더 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다                                                                            | items[{project, folder_id, created_at, updated_at}]                                                                     |
 | `remove_drive_source`    | 프로젝트의 Drive 폴더 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님)                                                                                                        | project, removed                                                                                                        |
 | `register_notion_source` | 프로젝트에 Notion 데이터베이스를 매핑한다(upsert, 같은 project 재호출 시 DB 교체). 한 project 는 database 매핑과 page 매핑을 동시에 가질 수 없다(나중 호출이 이전 매핑을 덮어씀) | project, database_id, status                                                                                            |
-| `register_notion_page`   | 프로젝트에 Notion 허브 페이지를 매핑한다(upsert). 지정한 페이지 바로 아래(1단계, 재귀 없음)의 하위 페이지들이 검색 대상이 된다                                                   | project, page_id, status                                                                                                |
+| `register_notion_page`   | 프로젝트에 Notion 허브 페이지를 매핑한다(upsert). 지정한 페이지 하위의 페이지·데이터베이스(그 안의 행 포함)를 재귀 탐색(최대 4단계)한 결과가 검색 대상이 된다                    | project, page_id, status                                                                                                |
 | `list_notion_sources`    | 등록된 프로젝트→Notion 데이터베이스/페이지 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다                                                            | items[{project, database_id, kind, created_at, updated_at}]                                                             |
 | `remove_notion_source`   | 프로젝트의 Notion 데이터베이스/페이지 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님)                                                                                        | project, removed                                                                                                        |
 
@@ -283,7 +283,7 @@ Google 네이티브 문서(Docs/Sheets/Slides)는 물론, PDF/DOCX/XLSX/PPTX
 
 ```
 register_notion_source(project="my-api", database_id="<Notion DB ID>")
-# 또는: 특정 페이지 바로 아래(1단계, 재귀 없음) 하위 페이지들을 대상으로
+# 또는: 특정 페이지 하위의 페이지·데이터베이스(그 안의 행 포함)를 재귀 탐색해 대상으로
 register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 ```
 
