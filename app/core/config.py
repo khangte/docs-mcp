@@ -71,6 +71,11 @@ class Settings:
     notion_database_id: str | None = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_NOTION_DATABASE_ID") or None
     )
+    #: 기본 프로젝트용 Notion 허브 페이지 ID. notion_database_id 와 동시에
+    #: 있으면 이 값이 우선한다(seed_default_sources 참고).
+    notion_page_id: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_NOTION_PAGE_ID") or None
+    )
     notion_version: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_NOTION_VERSION", "2022-06-28")
     )

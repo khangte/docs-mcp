@@ -78,6 +78,9 @@ uv run alembic upgrade head
 | ------------------------------ | --------------------------------------------------------------------- | ------ |
 | `DOCS_MCP_DRIVE_FOLDER_ID`     | 기본 프로젝트용 Google Drive 폴더 ID(하위 폴더 재귀 포함)              | (없음) |
 | `DOCS_MCP_NOTION_DATABASE_ID`  | 기본 프로젝트용 Notion 데이터베이스 ID. 비우면 워크스페이스 전체가 대상 | (없음) |
+| `DOCS_MCP_NOTION_PAGE_ID`      | 기본 프로젝트용 Notion 허브 페이지 ID. 바로 아래 1단계 하위 페이지가 대상 | (없음) |
+
+> `DOCS_MCP_NOTION_DATABASE_ID` 와 `DOCS_MCP_NOTION_PAGE_ID` 를 함께 설정하면 page 가 우선하고 database 는 무시됩니다.
 
 **튜닝 — 기본값으로 두어도 정상 동작합니다.**
 
