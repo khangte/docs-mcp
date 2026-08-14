@@ -29,13 +29,21 @@ from sqlalchemy.orm import Session
 from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import DocumentMeta
+from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
+from app.repositories.document_repository import DocumentRepository
+from app.repositories.endpoint_repository import EndpointRepository
+from app.services.documents.document_body_indexer import (
+    deterministic_document_id,
+    index_document_body,
+)
 from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
     FileMeta,
 )
 from app.services.documents.project_source_resolver import ProjectSourceResolver
+from app.services.indexer.indexer_service import IndexerService
 
 _LOG = get_logger("docs_mcp.documents.index")
 
@@ -107,6 +115,10 @@ class DocumentIndexService:
         session: Session,
         meta_repo: DocumentMetaRepository,
         resolver: ProjectSourceResolver,
+        document_repo: DocumentRepository | None = None,
+        endpoint_repo: EndpointRepository | None = None,
+        chunk_repo: ChunkRepository | None = None,
+        indexer: IndexerService | None = None,
     ) -> None:
         """세션·저장소·프로젝트 소스 리졸버를 보관한다.
 
@@ -114,19 +126,35 @@ class DocumentIndexService:
             session: 커밋/롤백 경계를 소스 단위로 제어하기 위한 DB 세션.
             meta_repo: `document_meta` 저장소.
             resolver: project → Drive/Notion 어댑터 요청 시점 팩토리.
+            document_repo: `refresh(index_bodies=True)` 에 필요한 `document`
+                저장소(본문 색인 + 삭제 전파). 본문 색인을 쓰지 않으면 생략 가능.
+            endpoint_repo: 본문 색인 재색인 시 기존 엔드포인트를 지우기 위한 저장소.
+            chunk_repo: 본문 색인 시 청크 delete-and-insert 에 쓰는 저장소.
+            indexer: 파싱된 본문을 청크로 만들어 저장하는 인덱서.
         """
         self._session = session
         self._meta_repo = meta_repo
         self._resolver = resolver
+        self._document_repo = document_repo
+        self._endpoint_repo = endpoint_repo
+        self._chunk_repo = chunk_repo
+        self._indexer = indexer
 
     def refresh(
-        self, source: str | None = None, project: str | None = None
+        self,
+        source: str | None = None,
+        project: str | None = None,
+        index_bodies: bool = False,
     ) -> RefreshResult:
         """등록된 프로젝트들의 문서 목록을 조회해 메타 캐시를 갱신한다.
 
         Args:
             source: 특정 소스(`drive`/`notion`)만 갱신할 때 지정. 생략하면 전체.
             project: 특정 프로젝트만 갱신할 때 지정. 생략하면 등록된 전 프로젝트.
+            index_bodies: True 면 신규/변경된 문서의 본문을 fetch 해
+                `document`/`chunk` 에 색인한다(옵트인, 비용이 크다). 원본에서
+                삭제된 문서의 대응 `Document` 삭제(청크·벡터 CASCADE)는 이
+                플래그와 무관하게 항상 수행된다.
 
         Returns:
             added/updated/removed/synced 집계와 실패한 "<project>/<source>" 목록.
@@ -134,7 +162,18 @@ class DocumentIndexService:
         Raises:
             IntegrationError: 대상이 하나도 구성돼 있지 않거나, 갱신을 시도한
                 모든 대상이 실패한 경우.
+            ValueError: index_bodies=True 인데 필요한 저장소/인덱서가 주입되지
+                않은 경우.
         """
+        if index_bodies and (
+            self._document_repo is None
+            or self._endpoint_repo is None
+            or self._chunk_repo is None
+            or self._indexer is None
+        ):
+            raise ValueError(
+                "index_bodies=True requires document_repo/endpoint_repo/chunk_repo/indexer"
+            )
         targets = self._resolve_targets(source, project)
 
         totals = _SourceCounts()
@@ -142,7 +181,7 @@ class DocumentIndexService:
         for target_project, document_source in targets:
             label = f"{target_project}/{document_source.source_name}"
             try:
-                counts = self._refresh_source(target_project, document_source)
+                counts = self._refresh_source(target_project, document_source, index_bodies)
             except _PartialRefreshError as exc:
                 # 부분 실패 허용: 실패한 소스라도 이미 커밋된 배치는 집계에 넣는다.
                 # (`_refresh_source` 가 미커밋 배치만 롤백하고 확정분을 실어 보낸다)
@@ -196,7 +235,7 @@ class DocumentIndexService:
         return targets
 
     def _refresh_source(
-        self, project: str, document_source: DocumentSource
+        self, project: str, document_source: DocumentSource, index_bodies: bool
     ) -> _SourceCounts:
         """프로젝트 하나·소스 하나의 목록을 배치 단위로 커밋하며 반영한다.
 
@@ -232,13 +271,15 @@ class DocumentIndexService:
                 if not meta.external_id or meta.external_id in seen:
                     continue
                 seen.add(meta.external_id)
-                self._stage_upsert(project, source_name, meta, existing, now, pending)
+                self._stage_upsert(
+                    project, source_name, meta, existing, now, pending, document_source, index_bodies
+                )
                 if pending.total_changes >= BATCH_SIZE:
                     pending = self._commit_batch(committed, pending)
 
             for external_id, row in existing.items():
                 if external_id not in seen:
-                    self._meta_repo.delete(row)
+                    self._delete_removed(row)
                     pending.removed += 1
                     if pending.total_changes >= BATCH_SIZE:
                         pending = self._commit_batch(committed, pending)
@@ -276,14 +317,67 @@ class DocumentIndexService:
         existing: dict[str, DocumentMeta],
         now: datetime,
         pending: _SourceCounts,
+        document_source: DocumentSource,
+        index_bodies: bool,
     ) -> None:
         """문서 한 건의 신규 생성/갱신을 세션에 올리고 미커밋 집계에 반영한다."""
         current = existing.get(meta.external_id)
         if current is None:
-            self._meta_repo.add(_new_row(project, source_name, meta, now))
+            row = _new_row(project, source_name, meta, now)
+            self._meta_repo.add(row)
             pending.added += 1
-        elif _apply_changes(current, meta, now):
-            pending.updated += 1
+            needs_body_index = True
+        else:
+            row = current
+            needs_body_index = _apply_changes(current, meta, now)
+            if needs_body_index:
+                pending.updated += 1
+
+        # 문서 7번 게이트: modified_at/title/url 이 안 바뀌었으면(needs_body_index
+        # False) fetch 자체를 건너뛴다. content_hash 2차 게이트는 fetch 한
+        # 문서에 한해 index_document_body 내부에서 처리한다.
+        if index_bodies and needs_body_index:
+            self._index_body(project, source_name, meta, document_source, row)
+
+    def _index_body(
+        self,
+        project: str,
+        source_name: str,
+        meta: FileMeta,
+        document_source: DocumentSource,
+        row: DocumentMeta,
+    ) -> None:
+        """문서 한 건의 본문을 fetch 해 색인하고 메타 행에 document_id 를 기록한다."""
+        assert self._document_repo is not None
+        assert self._endpoint_repo is not None
+        assert self._chunk_repo is not None
+        assert self._indexer is not None
+        fetched = document_source.fetch(meta.external_id)
+        index_document_body(
+            self._session,
+            self._document_repo,
+            self._endpoint_repo,
+            self._chunk_repo,
+            self._indexer,
+            project=project,
+            source_name=source_name,
+            external_id=meta.external_id,
+            title=meta.title,
+            raw=fetched.text,
+        )
+        row.document_id = deterministic_document_id(project, source_name, meta.external_id)
+
+    def _delete_removed(self, row: DocumentMeta) -> None:
+        """원본에서 사라진 메타 행과, 본문이 색인돼 있었다면 대응 Document 도 지운다.
+
+        Document 삭제는 청크·벡터를 CASCADE 로 함께 지운다. `document_id` 가
+        NULL(본문 색인 전)이면 메타 행만 지운다.
+        """
+        if row.document_id is not None and self._document_repo is not None:
+            document = self._document_repo.get(row.document_id)
+            if document is not None:
+                self._document_repo.delete(document)
+        self._meta_repo.delete(row)
 
     def _commit_batch(
         self, committed: _SourceCounts, pending: _SourceCounts

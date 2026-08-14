@@ -236,6 +236,10 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             session=session,
             meta_repo=document_meta_repo,
             resolver=project_source_resolver,
+            document_repo=document_repo,
+            endpoint_repo=endpoint_repo,
+            chunk_repo=chunk_repo,
+            indexer=indexer,
         )
         yield ServiceBundle(
             session=session,

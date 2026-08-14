@@ -48,7 +48,11 @@
 3. **`chunk` 테이블: 변경 없음.** (위 §0 근거)
 4. **`Document` 재사용, 컬럼 2개만 손댄다.**
    - `doc_type` 에 `drive`/`notion` 값 추가(문자열 컬럼이라 DDL 불필요, 검증 상수만 추가).
-   - `Document.id` 를 결정적으로 고정: `f"{project}:{source}:{external_id}"`.
+   - `Document.id` 를 결정적으로 고정: ~~`f"{project}:{source}:{external_id}"`~~ →
+     **정정(doc/38)**: 원문 결합은 `String(64)` 파생 ID 예산(실효 상한 ~40자)을
+     넘겨 `StringDataRightTruncation` 을 유발한다. 실제 채택안은
+     `f"{source}:{sha256(project\x00source\x00external_id)[:16]}"`(최대 23자).
+     상세: `docs/architect-review/38_drive_notion_document_id_length_verdict.md`.
    - **`source_url` 은 NULL 로 둔다.** 이 컬럼은 `unique` 라, 같은 문서가 두 프로젝트에
      매핑된 경우(현행 `document_meta` 는 2행을 허용) URL 이 충돌해 삽입이 깨진다.
      URL 은 `document_meta.url` 에 이미 있으므로 중복 저장할 이유도 없다. — **이게

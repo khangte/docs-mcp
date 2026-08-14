@@ -602,3 +602,148 @@ def test_project_with_only_drive_configured_refreshes_drive_only(
 
     assert result.added == 1
     assert result.failed_sources == ()
+
+
+# --- index_bodies (설계 §1 Phase2, 문서 6·7·8·9번) -------------------------------
+
+
+@pytest.fixture()
+def body_index_deps(db_session):
+    """`index_bodies=True` 에 필요한 저장소·인덱서 묶음."""
+    from app.repositories.chunk_repository import ChunkRepository
+    from app.repositories.document_repository import DocumentRepository
+    from app.repositories.endpoint_repository import EndpointRepository
+    from app.services.indexer.embedding_provider import HashEmbeddingProvider
+    from app.services.indexer.indexer_service import IndexerService
+    from app.models import EMBEDDING_DIM
+
+    document_repo = DocumentRepository(db_session)
+    endpoint_repo = EndpointRepository(db_session)
+    chunk_repo = ChunkRepository(db_session)
+    indexer = IndexerService(
+        endpoint_repo=endpoint_repo,
+        chunk_repo=chunk_repo,
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
+    )
+    return {
+        "document_repo": document_repo,
+        "endpoint_repo": endpoint_repo,
+        "chunk_repo": chunk_repo,
+        "indexer": indexer,
+    }
+
+
+@pytest.fixture()
+def body_index_service(db_session, meta_repo, default_resolver, body_index_deps):
+    """`index_bodies=True` 를 쓸 수 있는 DocumentIndexService."""
+    return DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, resolver=default_resolver, **body_index_deps
+    )
+
+
+def test_index_bodies_false_does_not_fetch(body_index_service, fake_drive_source) -> None:
+    """index_bodies 기본값(False)이면 여전히 본문 fetch 를 하지 않는다."""
+    fake_drive_source.put("d1", "설계서", "# 설계서\n본문", modified_at=_T1)
+
+    body_index_service.refresh()
+
+    assert fake_drive_source.fetch_call_count == 0
+
+
+def test_index_bodies_true_fetches_new_document_and_indexes_chunks(
+    body_index_service, body_index_deps, fake_drive_source
+) -> None:
+    """index_bodies=True 면 신규 문서를 fetch 해 청크까지 색인한다."""
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+
+    body_index_service.refresh(index_bodies=True)
+
+    assert fake_drive_source.fetch_call_count == 1
+    document_id = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    document = body_index_deps["document_repo"].get(document_id)
+    assert document is not None
+    chunks = body_index_deps["chunk_repo"].list_by_document(document_id)
+    assert len(chunks) > 0
+
+
+def test_index_bodies_records_document_id_on_meta_row(
+    body_index_service, meta_repo, fake_drive_source
+) -> None:
+    """본문 색인에 성공하면 document_meta.document_id 가 채워진다."""
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+
+    body_index_service.refresh(index_bodies=True)
+
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row.document_id == deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+
+
+def test_index_bodies_skips_fetch_when_modified_at_unchanged(
+    body_index_service, fake_drive_source
+) -> None:
+    """modified_at 이 그대로면 fetch 자체를 스킵한다(문서 7번 게이트)."""
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=True)
+    fake_drive_source.reset_counts()
+
+    body_index_service.refresh(index_bodies=True)
+
+    assert fake_drive_source.fetch_call_count == 0
+
+
+def test_index_bodies_refetches_when_modified_at_changed(
+    body_index_service, body_index_deps, fake_drive_source
+) -> None:
+    """modified_at 이 바뀌면 다시 fetch 해 청크를 교체한다."""
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n원본 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=True)
+    document_id = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    old_hash = body_index_deps["document_repo"].get(document_id).content_hash
+    fake_drive_source.reset_counts()
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n완전히 달라진 내용.", modified_at=_T2)
+    body_index_service.refresh(index_bodies=True)
+
+    assert fake_drive_source.fetch_call_count == 1
+    new_hash = body_index_deps["document_repo"].get(document_id).content_hash
+    assert new_hash != old_hash
+
+
+def test_index_bodies_removed_file_deletes_document_and_chunks(
+    body_index_service, body_index_deps, meta_repo, fake_drive_source
+) -> None:
+    """원본에서 삭제된 문서는 document_meta 뿐 아니라 대응 Document/청크도 삭제된다(문서 9번)."""
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=True)
+    document_id = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert body_index_deps["document_repo"].get(document_id) is not None
+
+    fake_drive_source.remove("d1")
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.removed == 1
+    assert meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1") is None
+    assert body_index_deps["document_repo"].get(document_id) is None
+    assert body_index_deps["chunk_repo"].list_by_document(document_id) == []
+
+
+def test_index_bodies_removed_file_without_prior_body_index_is_safe(
+    body_index_service, meta_repo, fake_drive_source
+) -> None:
+    """본문 색인 전(document_id 없음)에 삭제되면 meta 행만 지우고 에러 없이 끝난다."""
+    fake_drive_source.put("d1", "설계서", "본문", modified_at=_T1)
+    body_index_service.refresh(index_bodies=False)
+
+    fake_drive_source.remove("d1")
+    result = body_index_service.refresh(index_bodies=False)
+
+    assert result.removed == 1
+    assert meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1") is None

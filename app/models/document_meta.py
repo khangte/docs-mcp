@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import PROJECT_MAX_LENGTH, Base
@@ -38,6 +38,10 @@ class DocumentMeta(Base):
         url: 사람이 열어볼 수 있는 원본 문서 URL.
         modified_at: 원본 시스템 기준 최종 수정 시각(변경 감지에 사용).
         last_synced_at: 이 행이 마지막으로 갱신된 서버 시각.
+        document_id: 본문이 색인됐을 때 대응하는 `document.id`(결정적 ID:
+            `deterministic_document_id` 가 만드는 `f"{source}:{sha256(...)[:16]}"`
+            해시, `document_body_indexer.py` 참조). 본문 색인 전이거나
+            원본 `Document` 가 삭제되면 NULL.
     """
 
     __tablename__ = "document_meta"
@@ -75,4 +79,7 @@ class DocumentMeta(Base):
     modified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_synced_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow, nullable=False
+    )
+    document_id: Mapped[str | None] = mapped_column(
+        ForeignKey("document.id", ondelete="SET NULL"), nullable=True
     )
