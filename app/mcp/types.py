@@ -54,7 +54,7 @@ class EndpointCandidateItem(TypedDict):
     method: str
     path: str
     summary: str
-    match_type: Literal["keyword", "vector", "both"]
+    match_type: Literal["keyword", "vector", "both", "exact"]
 
 
 class EndpointSearchResponse(TypedDict):

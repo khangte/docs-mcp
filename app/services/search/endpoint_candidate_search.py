@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.core.errors import ValidationError
@@ -44,6 +45,12 @@ MAX_TOP_K = 50
 #: 정답이 한쪽 arm 의 상위에만 있어도 융합에서 건질 수 있도록 top_k 보다 넓게 본다.
 _MIN_CANDIDATE_WIDTH = 50
 _CANDIDATE_WIDTH_MULTIPLIER = 4
+
+#: "GET /pet/{petId}" 형태의 method+path exact 질의를 잡아내는 패턴
+#: (`docs/architect-review/37_user_rag_proposal_vs_our_design_diff.md` 5b).
+_METHOD_PATH_RE = re.compile(
+    r"^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE)\s+(/\S+)$", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -136,13 +143,48 @@ class EndpointCandidateSearch:
         if not self._chunk_repo.has_endpoint_chunks(document_id=document_id, project=project):
             return []
 
+        exact_candidates = self._search_exact(normalized_query, document_id, project)
+        remaining_top_k = options.top_k - len(exact_candidates)
+        if remaining_top_k <= 0:
+            return exact_candidates[: options.top_k]
+
         if self._search_strategy == "fallback":
-            return self._search_fallback(
-                normalized_query, options.top_k, document_id, project, options.query_variants
+            rest = self._search_fallback(
+                normalized_query, remaining_top_k, document_id, project, options.query_variants
             )
-        return self._search_rrf(
-            normalized_query, options.top_k, document_id, project, options.query_variants
-        )
+        else:
+            rest = self._search_rrf(
+                normalized_query, remaining_top_k, document_id, project, options.query_variants
+            )
+        seen_ids = {c.endpoint_id for c in exact_candidates}
+        return exact_candidates + [c for c in rest if c.endpoint_id not in seen_ids]
+
+    def _search_exact(
+        self, query: str, document_id: str | None, project: str | None
+    ) -> list[EndpointCandidate]:
+        """method+path 또는 operationId 가 질의와 정확히 일치하는 엔드포인트를 우선 반환한다.
+
+        RRF는 등수 기반 융합이라 정확 일치라도 다른 신호와 섞여 확정적
+        1위를 보장하지 못한다(`docs/architect-review/37` 5b) — 이 단계가
+        그 결정적 lookup이다. `"GET /pet/{petId}"` 형태면 method+path로,
+        아니면 질의 전체를 operationId 정확일치로 조회한다.
+        """
+        method_path = _METHOD_PATH_RE.match(query)
+        if method_path:
+            method, path = method_path.group(1).upper(), method_path.group(2)
+            endpoints = self._endpoint_repo.list_by_method_path(method, path, document_id, project)
+        else:
+            endpoints = self._endpoint_repo.list_by_operation_id(query, document_id, project)
+        return [
+            EndpointCandidate(
+                endpoint_id=e.id,
+                method=e.method,
+                path=e.path,
+                summary=e.summary,
+                match_type="exact",
+            )
+            for e in endpoints
+        ]
 
     def _search_fallback(
         self,

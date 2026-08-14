@@ -34,6 +34,33 @@ def test_endpoint_chunk_text_contains_essentials(sample_openapi_3: str) -> None:
     assert "petId" in text
 
 
+def test_endpoint_chunk_text_includes_operation_id() -> None:
+    """docs/architect-review/37 5b: operationId 는 청크 헤더에 포함돼 검색 가능해야 한다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/pet/{petId}",
+        operation_id="getPetById",
+        summary="find pet by id",
+        description="",
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    assert "getPetById" in text
+    assert text.splitlines()[0].startswith("[GET]")
+
+
+def test_endpoint_chunk_text_omits_operation_id_line_when_absent() -> None:
+    """operation_id 가 없으면 OperationId 줄 자체를 생략한다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/pet/{petId}",
+        operation_id=None,
+        summary="find pet by id",
+        description="",
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    assert "OperationId" not in text
+
+
 def test_endpoint_chunk_text_includes_inline_request_body_field_names() -> None:
     """docs/architect-review/30 §9.3-1: request body 인라인 프로퍼티가 Body: 줄로 실린다."""
     endpoint = ParsedEndpoint(

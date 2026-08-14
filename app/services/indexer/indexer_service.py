@@ -139,6 +139,7 @@ def _to_endpoint_entity(
         document_id=document_id,
         method=parsed.method,
         path=parsed.path,
+        operation_id=parsed.operation_id,
         summary=parsed.summary,
         description=parsed.description,
     )

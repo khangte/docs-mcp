@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -37,12 +37,17 @@ class ApiEndpoint(Base):
     """API 엔드포인트(METHOD + PATH) 단위 ORM 모델."""
 
     __tablename__ = "api_endpoint"
-    __table_args__ = (UniqueConstraint("document_id", "method", "path", name="uq_endpoint_doc"),)
+    __table_args__ = (
+        UniqueConstraint("document_id", "method", "path", name="uq_endpoint_doc"),
+        Index("ix_api_endpoint_method_path", "method", "path"),
+        Index("ix_api_endpoint_operation_id", "operation_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     document_id: Mapped[str] = mapped_column(ForeignKey("document.id", ondelete="CASCADE"))
     method: Mapped[str] = mapped_column(String(16), nullable=False)
     path: Mapped[str] = mapped_column(String(512), nullable=False)
+    operation_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     summary: Mapped[str] = mapped_column(String(1024), nullable=False, default="")
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     tags_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

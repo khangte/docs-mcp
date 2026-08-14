@@ -98,6 +98,49 @@ class EndpointRepository:
         )
         return self._session.execute(stmt).scalars().all()
 
+    def list_by_method_path(
+        self,
+        method: str,
+        path: str,
+        document_id: str | None = None,
+        project: str | None = None,
+    ) -> Sequence[ApiEndpoint]:
+        """method+path 정확일치로 엔드포인트를 조회한다(exact match 우선 lookup).
+
+        `search_endpoints`의 RRF 융합 앞단에서 "GET /pet/{petId}" 같은
+        정확한 질의에 확정적 1위를 주기 위한 조회 경로다(같은 method+path가
+        여러 문서에 있으면 전부 반환 — 호출측이 순서를 정한다). method는
+        대소문자 무관 매칭되도록 대문자로 정규화한다.
+        """
+        stmt = select(ApiEndpoint).where(
+            ApiEndpoint.method == method.upper(), ApiEndpoint.path == path
+        )
+        if document_id is not None:
+            stmt = stmt.where(ApiEndpoint.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(Document, ApiEndpoint.document_id == Document.id).where(
+                Document.project == project
+            )
+        stmt = stmt.order_by(ApiEndpoint.id)
+        return self._session.execute(stmt).scalars().all()
+
+    def list_by_operation_id(
+        self,
+        operation_id: str,
+        document_id: str | None = None,
+        project: str | None = None,
+    ) -> Sequence[ApiEndpoint]:
+        """operationId 정확일치로 엔드포인트를 조회한다(exact match 우선 lookup)."""
+        stmt = select(ApiEndpoint).where(ApiEndpoint.operation_id == operation_id)
+        if document_id is not None:
+            stmt = stmt.where(ApiEndpoint.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(Document, ApiEndpoint.document_id == Document.id).where(
+                Document.project == project
+            )
+        stmt = stmt.order_by(ApiEndpoint.id)
+        return self._session.execute(stmt).scalars().all()
+
     def get_schema_by_name(self, document_id: str, name: str) -> ApiSchema | None:
         """문서 내 스키마 이름으로 컴포넌트 스키마를 조회한다."""
         stmt = select(ApiSchema).where(

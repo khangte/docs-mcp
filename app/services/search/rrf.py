@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-MatchType = Literal["keyword", "vector", "both"]
+MatchType = Literal["keyword", "vector", "both", "exact"]
 
 #: 표준값(Cormack et al. 2009). 평가셋 없이 튜닝할 근거가 없어 상수로 고정하고
 #: env 로 노출하지 않는다(`docs/architect-review/07-search-rrf-reevaluation.md` 5.2).

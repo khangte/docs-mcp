@@ -30,6 +30,7 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
 
     포맷:
         [METHOD] PATH — SUMMARY
+        OperationId: operationId
         Params: name(in,required), ...
         Body: field1, field2, ...
         Tags: t1, t2
@@ -49,6 +50,7 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
     summary = endpoint.summary or ""
     header = f"[{endpoint.method}] {endpoint.path} — {summary}".rstrip(" —")
     description = endpoint.description or ""
+    operation_id = endpoint.operation_id or ""
     tags = ", ".join(endpoint.tags) if endpoint.tags else ""
     params_desc = ", ".join(
         f"{p.name}({p.location},{'required' if p.required else 'optional'})"
@@ -61,6 +63,8 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
             body_desc = ", ".join(sorted(str(k) for k in properties.keys()))
     responses_desc = ", ".join(r.status_code for r in endpoint.responses)
     lines = [header]
+    if operation_id:
+        lines.append(f"OperationId: {operation_id}")
     if params_desc:
         lines.append(f"Params: {params_desc}")
     if body_desc:

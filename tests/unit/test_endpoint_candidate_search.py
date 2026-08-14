@@ -146,7 +146,11 @@ def test_keyword_hit_does_not_call_embedding_provider(
 def test_exact_path_query_does_not_call_embedding_provider(
     app_state, counting_embedding_provider, sample_openapi_3: str
 ) -> None:
-    """fallback 전략: "GET /pet/{petId}" 처럼 명확한 질의도 임베딩 호출이 0 이다."""
+    """fallback 전략: "GET /pet/{petId}" 처럼 명확한 질의도 임베딩 호출이 0 이다.
+
+    exact match 단계(5b)가 1위를 확정적으로 채우고, 나머지는 fallback
+    전략(키워드 우선)이 채운다 — 어느 쪽도 임베딩을 호출하지 않는다.
+    """
     _register(app_state, sample_openapi_3)
     app_state.search_strategy = "fallback"
     counting_embedding_provider.reset_counts()
@@ -156,7 +160,8 @@ def test_exact_path_query_does_not_call_embedding_provider(
     )
 
     assert candidates
-    assert all(c.match_type == "keyword" for c in candidates)
+    assert candidates[0].match_type == "exact"
+    assert all(c.match_type in ("exact", "keyword") for c in candidates)
     assert counting_embedding_provider.embed_call_count == 0
 
 
@@ -587,3 +592,86 @@ def test_missing_endpoint_row_is_skipped(app_state, sample_openapi_3: str) -> No
     # 공허 참 방지: 나머지 후보가 실제로 남아 있어야 "건너뛰기"가 검증된다.
     assert candidates
     assert all(c.endpoint_id != "missing-endpoint-id" for c in candidates)
+
+
+# --- 5b: exact match 우선 단계 (docs/architect-review/37) -------------------
+
+
+def test_method_path_exact_query_ranks_target_first(app_state, sample_openapi_3: str) -> None:
+    """"GET /pet/{petId}" 처럼 method+path 가 정확히 일치하는 질의는 확정적으로 1위다."""
+    _register(app_state, sample_openapi_3)
+    candidates = _bundle(app_state).candidate_search.search(
+        "GET /pet/{petId}", CandidateSearchOptions(top_k=5)
+    )
+
+    assert candidates
+    assert candidates[0].method == "GET"
+    assert candidates[0].path == "/pet/{petId}"
+    assert candidates[0].match_type == "exact"
+
+
+def test_method_path_exact_query_is_case_insensitive_on_method(
+    app_state, sample_openapi_3: str
+) -> None:
+    """method 소문자 질의("get /pet/{petId}")도 exact match 로 잡힌다."""
+    _register(app_state, sample_openapi_3)
+    candidates = _bundle(app_state).candidate_search.search(
+        "get /pet/{petId}", CandidateSearchOptions(top_k=5)
+    )
+
+    assert candidates[0].path == "/pet/{petId}"
+    assert candidates[0].match_type == "exact"
+
+
+def test_operation_id_exact_query_ranks_target_first(app_state, sample_openapi_3: str) -> None:
+    """operationId 그대로("getPetById")를 질의하면 확정적으로 1위다."""
+    _register(app_state, sample_openapi_3)
+    candidates = _bundle(app_state).candidate_search.search(
+        "getPetById", CandidateSearchOptions(top_k=5)
+    )
+
+    assert candidates
+    assert candidates[0].path == "/pet/{petId}"
+    assert candidates[0].method == "GET"
+    assert candidates[0].match_type == "exact"
+
+
+def test_exact_match_backfills_remaining_slots_with_rrf(app_state, sample_openapi_3: str) -> None:
+    """exact match 1건 + 나머지는 기존 RRF 결과로 top_k 를 채운다(중복 없이)."""
+    _register(app_state, sample_openapi_3)
+    candidates = _bundle(app_state).candidate_search.search(
+        "GET /pet/{petId}", CandidateSearchOptions(top_k=5)
+    )
+
+    assert candidates[0].match_type == "exact"
+    assert len(candidates) > 1
+    ids = [c.endpoint_id for c in candidates]
+    assert len(ids) == len(set(ids))
+
+
+def test_non_exact_query_has_no_exact_candidates(app_state, sample_openapi_3: str) -> None:
+    """일반 자연어 질의는 exact match 단계를 건너뛴다(match_type에 "exact" 없음)."""
+    _register(app_state, sample_openapi_3)
+    candidates = _bundle(app_state).candidate_search.search(
+        "find pet by id", CandidateSearchOptions(top_k=5)
+    )
+
+    assert all(c.match_type != "exact" for c in candidates)
+
+
+def test_exact_match_respects_document_scope(app_state, sample_openapi_3: str) -> None:
+    """document_id 로 범위를 좁히면 다른 문서의 동일 method+path는 exact 후보에 섞이지 않는다."""
+    document_id = _register(app_state, sample_openapi_3)
+    other_document_id = _register(app_state, sample_openapi_3)
+    assert document_id != other_document_id
+
+    bundle = _bundle(app_state)
+    candidates = bundle.candidate_search.search(
+        "GET /pet/{petId}", CandidateSearchOptions(top_k=5, document_id=document_id)
+    )
+
+    exact_candidates = [c for c in candidates if c.match_type == "exact"]
+    assert len(exact_candidates) == 1
+    matched_endpoint = bundle.endpoint_repo.get(exact_candidates[0].endpoint_id)
+    assert matched_endpoint is not None
+    assert matched_endpoint.document_id == document_id

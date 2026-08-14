@@ -13,13 +13,15 @@ def _seed_endpoint(
     method: str = "GET",
     path: str | None = None,
     tags: list[str] | None = None,
+    project: str = "default",
+    operation_id: str | None = None,
 ) -> None:
     """엔드포인트 한 건을 저장한다(문서가 없으면 함께 만든다)."""
     if session.get(Document, document_id) is None:
         session.add(
             Document(
                 id=document_id,
-                project="default",
+                project=project,
                 source_url=None,
                 title="샘플 문서",
                 content_hash="hash",
@@ -32,6 +34,7 @@ def _seed_endpoint(
         document_id=document_id,
         method=method,
         path=path or f"/{endpoint_id}",
+        operation_id=operation_id,
         summary=f"{endpoint_id} 조회",
     )
     if tags is not None:
@@ -185,3 +188,103 @@ def test_list_related_no_tags_or_prefix_returns_empty_without_query(db_session) 
     )
 
     assert result == []
+
+
+# --- 5b: method+path / operationId 정확일치 조회 ------------------------------
+
+
+def test_list_by_method_path_returns_exact_match(db_session) -> None:
+    """method+path 가 정확히 일치하는 엔드포인트를 반환한다."""
+    _seed_endpoint(db_session, "ep-1", method="GET", path="/pet/{petId}")
+    _seed_endpoint(db_session, "ep-2", method="POST", path="/pet")
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_method_path("GET", "/pet/{petId}")
+
+    assert [e.id for e in result] == ["ep-1"]
+
+
+def test_list_by_method_path_is_case_insensitive_on_method(db_session) -> None:
+    """method 는 대소문자 무관하게 매칭된다(내부적으로 upper 정규화)."""
+    _seed_endpoint(db_session, "ep-1", method="GET", path="/pet/{petId}")
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_method_path("get", "/pet/{petId}")
+
+    assert [e.id for e in result] == ["ep-1"]
+
+
+def test_list_by_method_path_no_match_returns_empty(db_session) -> None:
+    """일치하는 게 없으면 빈 시퀀스를 반환한다."""
+    _seed_endpoint(db_session, "ep-1", method="GET", path="/pet/{petId}")
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_method_path("GET", "/nope")
+
+    assert list(result) == []
+
+
+def test_list_by_method_path_scopes_to_document(db_session) -> None:
+    """document_id 를 주면 다른 문서의 동일 method+path는 제외된다."""
+    _seed_endpoint(db_session, "ep-1", document_id="doc-1", method="GET", path="/pet")
+    _seed_endpoint(db_session, "ep-2", document_id="doc-2", method="GET", path="/pet")
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_method_path("GET", "/pet", document_id="doc-1")
+
+    assert [e.id for e in result] == ["ep-1"]
+
+
+def test_list_by_method_path_scopes_to_project(db_session) -> None:
+    """project 를 주면 다른 프로젝트의 동일 method+path는 제외된다."""
+    _seed_endpoint(
+        db_session, "ep-1", document_id="doc-1", method="GET", path="/pet", project="proj-a"
+    )
+    _seed_endpoint(
+        db_session, "ep-2", document_id="doc-2", method="GET", path="/pet", project="proj-b"
+    )
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_method_path("GET", "/pet", project="proj-a")
+
+    assert [e.id for e in result] == ["ep-1"]
+
+
+def test_list_by_operation_id_returns_exact_match(db_session) -> None:
+    """operationId 가 정확히 일치하는 엔드포인트를 반환한다."""
+    _seed_endpoint(db_session, "ep-1", operation_id="getPetById")
+    _seed_endpoint(db_session, "ep-2", operation_id="deletePet")
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_operation_id("getPetById")
+
+    assert [e.id for e in result] == ["ep-1"]
+
+
+def test_list_by_operation_id_no_match_returns_empty(db_session) -> None:
+    """operationId 가 없는 엔드포인트도 매칭 대상에서 자연히 빠진다."""
+    _seed_endpoint(db_session, "ep-1", operation_id=None)
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_operation_id("getPetById")
+
+    assert list(result) == []
+
+
+def test_list_by_operation_id_scopes_to_document(db_session) -> None:
+    """document_id 를 주면 다른 문서의 동일 operationId는 제외된다."""
+    _seed_endpoint(db_session, "ep-1", document_id="doc-1", operation_id="getPetById")
+    _seed_endpoint(db_session, "ep-2", document_id="doc-2", operation_id="getPetById")
+    db_session.commit()
+    repo = EndpointRepository(db_session)
+
+    result = repo.list_by_operation_id("getPetById", document_id="doc-1")
+
+    assert [e.id for e in result] == ["ep-1"]

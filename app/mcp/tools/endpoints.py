@@ -58,11 +58,13 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Returns:
             items 키에 후보 리스트를 담은 dict. 각 후보는 endpoint_id, method,
-            path, summary, match_type("keyword", "vector" 또는 "both") 필드를
-            갖는다. "both"는 키워드·벡터 양쪽에서 모두 매칭된 후보다.
-            매칭이 없으면 items 는 빈 리스트다. document_id가 등록되지 않았거나
-            project 와 불일치하면(빈 결과와 구분해) code="document_not_found"
-            에러 페이로드를 반환한다.
+            path, summary, match_type("keyword", "vector", "both" 또는
+            "exact") 필드를 갖는다. "both"는 키워드·벡터 양쪽에서 모두
+            매칭된 후보다. "exact"는 query 가 "GET /pet/{petId}" 같은
+            method+path 또는 operationId 와 정확히 일치해 확정적으로 1위에
+            놓인 후보다. 매칭이 없으면 items 는 빈 리스트다. document_id가
+            등록되지 않았거나 project 와 불일치하면(빈 결과와 구분해)
+            code="document_not_found" 에러 페이로드를 반환한다.
         """
         def _inner(bundle: ServiceBundle) -> EndpointSearchResponse:
             options = CandidateSearchOptions(
