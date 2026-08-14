@@ -49,22 +49,47 @@ uv run alembic upgrade head
 <!-- AUTO-GENERATED: app/core/config.py 기준 -->
 
 `.env.example`을 참고해 `.env` 파일 또는 환경변수로 설정을 조절할 수 있습니다.
+모든 변수에 기본값이 있어 `.env` 없이도 기동하지만, DB 접속 정보가 기본값과
+다르면 `DOCS_MCP_DATABASE_URL` 은 반드시 지정해야 합니다.
 
-| 변수                                       | 필수 | 설명                                                                                   | 기본값                                                           |
-| ------------------------------------------ | ---- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `DOCS_MCP_DATABASE_URL`                    | No   | PostgreSQL(+pgvector) 연결 URL                                                         | `postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp` |
-| `DOCS_MCP_HYBRID_ALPHA`                    | No   | 하이브리드 검색 키워드 가중치 (0.0=벡터만, 1.0=키워드만)                               | `0.4`                                                            |
-| `DOCS_MCP_LOG_LEVEL`                       | No   | 로그 레벨                                                                              | `INFO`                                                           |
-| `DOCS_MCP_EMBEDDING_MODEL`                 | No   | 로컬 CPU 임베딩 모델(sentence-transformers). 384차원 고정                             | `intfloat/multilingual-e5-small`                                 |
-| `DOCS_MCP_EMBEDDING_BACKEND`               | No   | `local`(실제 의미 유사도) \| `hash`(결정적 해시, 모델 다운로드 없음)                   | `local`                                                          |
-| `DOCS_MCP_DRIVE_FOLDER_ID`                 | No   | 검색 범위로 고정할 Google Drive 폴더 ID(하위 폴더 재귀 포함). 비우면 Drive 소스 비활성 | (없음)                                                           |
-| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE`      | No   | 서비스 계정 키 파일 경로                                                               | (없음)                                                           |
-| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON`      | No   | 서비스 계정 키 JSON 문자열(파일 경로보다 우선)                                         | (없음)                                                           |
-| `DOCS_MCP_NOTION_TOKEN`                    | No   | Notion Integration Token. 비우면 Notion 소스 비활성                                    | (없음)                                                           |
-| `DOCS_MCP_NOTION_DATABASE_ID`              | No   | 검색 범위를 특정 Notion 데이터베이스 하위로 한정                                       | (없음)                                                           |
-| `DOCS_MCP_NOTION_VERSION`                  | No   | Notion REST API 버전(`Notion-Version` 헤더)                                            | `2022-06-28`                                                     |
-| `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | No   | Drive/Notion HTTP 타임아웃(초)                                                         | `15.0`                                                           |
-| `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS`        | No   | 문서 본문 fetch 시 잘라낼 최대 문자 수                                                 | `200000`                                                         |
+**필수 — 이 값 없이는 서버가 뜨지 않습니다.**
+
+| 변수                    | 설명                           | 기본값                                                           |
+| ----------------------- | ------------------------------ | ---------------------------------------------------------------- |
+| `DOCS_MCP_DATABASE_URL` | PostgreSQL(+pgvector) 연결 URL | `postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp` |
+
+**선택 — Google Drive / Notion 문서 검색을 쓸 때만.** 자격증명만 여기 두고,
+"어떤 폴더/페이지를 볼지"는 `register_drive_source`/`register_notion_source`/
+`register_notion_page` 도구로 등록하세요(project 별 다중 등록 가능, 재시작
+불필요 — 아래 [프로젝트 격리](#4-프로젝트-격리) 참고). 전부 비워두면 협업
+문서 도구만 비활성화되고, OpenAPI·Markdown 등 등록 문서 검색은 그대로 동작합니다.
+
+| 변수                                  | 설명                                                  | 기본값 |
+| ------------------------------------- | ------------------------------------------------------ | ------ |
+| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_FILE` | Drive 서비스 계정 키 파일 경로                          | (없음) |
+| `DOCS_MCP_DRIVE_SERVICE_ACCOUNT_JSON` | Drive 서비스 계정 키 JSON 문자열(파일 경로보다 우선)    | (없음) |
+| `DOCS_MCP_NOTION_TOKEN`               | Notion Integration Token. 비우면 Notion 소스 비활성     | (없음) |
+
+**레거시 — project 개념 도입 전 하위호환용, 새로 시작한다면 비워두세요.**
+`project="default"` 전용 슬롯 1개뿐이고 값을 바꾸면 서버 재시작이 필요합니다.
+위 도구로 등록하는 쪽을 권장합니다.
+
+| 변수                           | 설명                                                                | 기본값 |
+| ------------------------------ | --------------------------------------------------------------------- | ------ |
+| `DOCS_MCP_DRIVE_FOLDER_ID`     | 기본 프로젝트용 Google Drive 폴더 ID(하위 폴더 재귀 포함)              | (없음) |
+| `DOCS_MCP_NOTION_DATABASE_ID`  | 기본 프로젝트용 Notion 데이터베이스 ID. 비우면 워크스페이스 전체가 대상 | (없음) |
+
+**튜닝 — 기본값으로 두어도 정상 동작합니다.**
+
+| 변수                                       | 설명                                                                                     | 기본값                           |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------- |
+| `DOCS_MCP_EMBEDDING_MODEL`                 | 로컬 CPU 임베딩 모델(sentence-transformers). 384차원 고정                                | `intfloat/multilingual-e5-small` |
+| `DOCS_MCP_EMBEDDING_BACKEND`               | `local`(실제 의미 유사도) \| `hash`(결정적 해시, 모델 다운로드 없음)                     | `local`                          |
+| `DOCS_MCP_SEARCH_STRATEGY`                 | `search_endpoints` 검색 전략. `rrf`(키워드+벡터 순위 융합) \| `fallback`(롤백 스위치)    | `rrf`                            |
+| `DOCS_MCP_LOG_LEVEL`                       | 로그 레벨                                                                                | `INFO`                           |
+| `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | Drive/Notion HTTP 타임아웃(초)                                                           | `15.0`                           |
+| `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS`        | 문서 본문 fetch 시 잘라낼 최대 문자 수                                                   | `200000`                         |
+| `DOCS_MCP_NOTION_VERSION`                  | Notion REST API 버전(`Notion-Version` 헤더)                                              | `2022-06-28`                     |
 
 <!-- /AUTO-GENERATED -->
 
