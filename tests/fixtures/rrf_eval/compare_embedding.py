@@ -5,22 +5,20 @@
 변형 축은 "청킹"이 아니라 "임베딩 provider + 벡터 컬럼 dim"이다.
 
 **비자명한 마찰(docs/15 §3-1)**: `Chunk.embedding = mapped_column(Vector(EMBEDDING_DIM))`
-은 `app/models/chunk.py` **import 시점**에 dim이 고정된다. 런타임에 상수만
-바꿔도 이미 정의된 컬럼 타입은 안 바뀐다. 이 스크립트는 §3-1 권장안(모델별
-서브프로세스 격리)을 따른다 — 각 변형을 `--worker` 서브프로세스로 띄우고,
-그 프로세스가 `app.models.chunk`를 import하기 **전에** 소스 코드 레벨에서
-`EMBEDDING_DIM` 상수를 후보 dim으로 패치한 모듈을 `sys.modules`에 미리
-등록한다. 프로덕션 파일(`app/models/chunk.py`)은 디스크에서 전혀 수정되지
-않는다 — 패치는 이 스크립트가 메모리에서 읽어 exec하는 사본에만 적용된다.
+은 `app/models/chunk.py` **소스 레벨 상수**로 고정돼 있다. 하지만 pgvector의
+`Vector` 타입 객체는 `dim`을 인스턴스 속성으로 들고 있고, DDL을 렌더링하는
+`get_col_spec()`이 `create_all()` 호출 시점에 그 속성을 동적으로 읽는다 —
+즉 이미 정상적으로 import된 `Chunk.__table__.c.embedding.type.dim`을
+`create_all()` 전에 바꿔치기하면, 소스 재작성이나 `sys.modules` 대체 없이도
+그 프로세스에서 후보 dim으로 테이블이 만들어진다(§3-1이 우려한 "import 시점
+고정"은 소스 상수 얘기고, 런타임 타입 객체는 그 상수를 한 번 읽어 보관만 할
+뿐 재고정되지 않는다). 이 스크립트는 여전히 각 변형을 `--worker`
+서브프로세스로 격리해 실행한다(변형 간 DB/모델 상태를 완전히 분리하려는
+목적, §3-1 권장안). 프로덕션 파일(`app/models/chunk.py`)은 전혀 수정하지
+않는다 — 바꿔치기는 이미 메모리에 로드된 컬럼 타입 인스턴스에만 적용된다.
 
 사용법(로컬 postgres 필요, `docker compose up -d postgres`):
     uv run python tests/fixtures/rrf_eval/compare_embedding.py
-
-**`compare_strategies` 임포트는 항상 함수 안(지연 임포트)에서만 한다.** 그
-모듈의 최상단이 `app.composition`(→ `app.models.chunk`)을 즉시 임포트하므로,
-모듈 최상단에서 임포트하면 이 파일 어디서 실행되든(워커/부모 프로세스 모두)
-`_patch_embedding_dim()` 이전에 `app.models.chunk` 가 먼저 로드돼 패치가
-무의미해진다.
 """
 
 from __future__ import annotations
@@ -32,12 +30,26 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from metrics import recall_at, reciprocal_rank  # type: ignore[import-not-found]
 
-if TYPE_CHECKING:
-    from compare_strategies import EvalQuery
+from app.composition import AppState, build_services
+from app.core.db import create_db_engine
+from app.models import Chunk, create_all
+from app.services.indexer.embedding_provider import LocalEmbeddingProvider
+from app.services.ingestor.openapi_fetcher import InMemoryFetcher
+from app.services.search.endpoint_candidate_search import CandidateSearchOptions
+from compare_strategies import (  # type: ignore[import-not-found]
+    RECALL_KS,
+    _drop_temp_db,
+    _format_summary_line,
+    _load_queries,
+    _load_valid_endpoints,
+    _make_temp_db,
+    _rank_of_answer,
+    _summarize,
+    _validate_labels,
+)
 
 _DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _DIR.parent.parent.parent
@@ -50,62 +62,33 @@ VARIANTS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# 워커(서브프로세스) 전용 — 아래 함수들은 `_patch_embedding_dim` 호출 *이후*에만
-# app.* 를 import한다. 모듈 최상단에서 app.* 를 import하면 서브프로세스마다
-# dim을 다르게 패치하는 의미가 없어진다(첫 import 시점에 컬럼 dim이 박히므로).
-# ---------------------------------------------------------------------------
-
-
 def _patch_embedding_dim(candidate_dim: int) -> None:
-    """`app.models.chunk` 소스의 `EMBEDDING_DIM = 384`를 후보 dim으로 바꿔
-    `sys.modules`에 미리 등록한다. 디스크의 원본 파일은 건드리지 않는다.
+    """이미 로드된 pgvector 컬럼 타입과 `EMBEDDING_DIM` 바인딩을 후보 dim으로
+    바꿔치기한다.
 
-    이후 어디서든 `from app.models import ...`(또는 `app.models.chunk`)를
-    하면 import 기계가 `sys.modules["app.models.chunk"]`를 먼저 확인하므로,
-    이 패치된 모듈을 그대로 재사용한다(원본 재실행 없음) — `Chunk.embedding`
-    컬럼이 후보 dim으로 정의된다.
+    - `Chunk.__table__.c.embedding.type.dim`: `create_all()`이 호출하는 DDL
+      렌더링(`Vector.get_col_spec()`)이 이 속성을 그 시점에 동적으로 읽으므로,
+      바꿔두면 실제 컬럼이 후보 dim으로 생성된다.
+    - `app.models.EMBEDDING_DIM`과 `app.composition.EMBEDDING_DIM`: `from X
+      import Y`는 값을 복사해 새 이름으로 바인딩하므로, `app.models` 쪽만
+      바꾸면 이미 `from app.models import EMBEDDING_DIM`으로 자기 네임스페이스에
+      옛 값을 박아둔 `app.composition`은 그대로 384를 본다.
+      `AppState.from_engine()`이 `provider.dim == EMBEDDING_DIM`을 단언하므로
+      (모델 교체 시 컬럼 dim 불일치를 막는 프로덕션 안전장치) 두 곳 다 바꿔야
+      후보 dim으로 정상 부트스트랩된다.
+
+    소스 재작성이나 `sys.modules` 대체는 필요 없다(모듈 상단 docstring 참고).
     """
-    import importlib.util
+    import app.composition
+    import app.models
 
-    spec = importlib.util.find_spec("app.models.chunk")
-    assert spec is not None and spec.loader is not None
-    source = spec.loader.get_source("app.models.chunk")
-    assert source is not None
-    marker = "EMBEDDING_DIM = 384"
-    hit_count = source.count(marker)
-    if hit_count != 1:
-        raise RuntimeError(
-            f"EMBEDDING_DIM 패치 지점을 못박지 못함(marker {marker!r} 매칭 {hit_count}건, 기대값 1) "
-            "— app/models/chunk.py가 바뀌어 이 스크립트의 패치 가정이 깨졌을 수 있다."
-        )
-    patched_source = source.replace(marker, f"EMBEDDING_DIM = {candidate_dim}", 1)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["app.models.chunk"] = module
-    exec(compile(patched_source, spec.origin, "exec"), module.__dict__)
+    Chunk.__table__.c.embedding.type.dim = candidate_dim
+    app.models.EMBEDDING_DIM = candidate_dim
+    app.composition.EMBEDDING_DIM = candidate_dim
 
 
 def _run_worker(model_name: str, candidate_dim: int) -> dict:
     """서브프로세스 본체: dim 패치 → 임베딩·색인·84+질의 평가 → 지연 측정."""
-    _patch_embedding_dim(candidate_dim)
-
-    # compare_strategies 임포트는 패치 *이후*에만 한다(모듈 상단 docstring 참고).
-    from compare_strategies import (  # type: ignore[import-not-found]
-        _drop_temp_db,
-        _load_queries,
-        _load_valid_endpoints,
-        _make_temp_db,
-        _rank_of_answer,
-        _validate_labels,
-    )
-
-    from app.composition import AppState, build_services
-    from app.core.db import create_db_engine
-    from app.models import Chunk, EMBEDDING_DIM, create_all
-    from app.services.indexer.embedding_provider import LocalEmbeddingProvider
-    from app.services.ingestor.openapi_fetcher import InMemoryFetcher
-    from app.services.search.endpoint_candidate_search import CandidateSearchOptions
-
     queries = _load_queries()
     openapi_doc = (_DIR / "openapi.json").read_text()
     _validate_labels(queries, _load_valid_endpoints(openapi_doc))
@@ -115,7 +98,8 @@ def _run_worker(model_name: str, candidate_dim: int) -> dict:
         f"모델 {model_name}의 실제 dim({provider.dim})이 지정한 candidate_dim({candidate_dim})과 다르다"
         " — VARIANTS 설정을 확인하라."
     )
-    assert EMBEDDING_DIM == candidate_dim, "EMBEDDING_DIM 패치가 적용되지 않았다"
+
+    _patch_embedding_dim(candidate_dim)
 
     admin_url, test_url = _make_temp_db()
     dbname = test_url.rsplit("/", 1)[1]
@@ -127,7 +111,7 @@ def _run_worker(model_name: str, candidate_dim: int) -> dict:
         # 어긋나면 dim 불일치로 인한 조용한 오색인이 일어날 수 있으므로 여기서 죽는다.
         column_dim = Chunk.__table__.c.embedding.type.dim
         assert column_dim == provider.dim, (
-            f"벡터 컬럼 dim({column_dim}) != provider.dim({provider.dim}) — EMBEDDING_DIM 패치 실패"
+            f"벡터 컬럼 dim({column_dim}) != provider.dim({provider.dim}) — dim 바꿔치기 실패"
         )
 
         state = AppState.from_engine(
@@ -194,19 +178,6 @@ def _run_variant_subprocess(model_name: str, candidate_dim: int) -> dict:
 
 
 def main() -> None:
-    # 지연 임포트 이유는 모듈 상단 docstring 참고(워커 서브프로세스와 동일 파일을
-    # 공유하므로 최상단 임포트를 피한다). 이 프로세스는 dim 패치가 필요 없지만,
-    # 최상단에서 import하면 --worker 로 실행될 때도 같이 실행돼 패치보다 먼저
-    # app.models.chunk 를 로드해버린다.
-    from compare_strategies import (  # type: ignore[import-not-found]
-        RECALL_KS,
-        _format_summary_line,
-        _load_queries,
-        _load_valid_endpoints,
-        _summarize,
-        _validate_labels,
-    )
-
     queries = _load_queries()
     openapi_doc = (_DIR / "openapi.json").read_text()
     _validate_labels(queries, _load_valid_endpoints(openapi_doc))

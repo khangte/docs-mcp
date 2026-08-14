@@ -28,6 +28,7 @@ from app.services.indexer.chunk_builder import (
     build_chunks as build_chunks_baseline,
     build_endpoint_chunk_text,
 )
+from app.services.indexer.section_splitter import CountTokens
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from app.services.parser.openapi_parser import ParsedDocument
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
@@ -63,10 +64,16 @@ def build_chunks_contextual(
     document: ParsedDocument,
     endpoint_ids: dict[tuple[str, str], str],
     section_ids: dict[int, str] | None = None,
+    schema_ids: dict[int, str] | None = None,
+    count_tokens: CountTokens | None = None,
+    token_limit: int = 480,
 ) -> list[BuiltChunk]:
     """`chunk_builder.build_chunks`를 미러링하되 엔드포인트 청크만 tag를 접두한다.
 
     스키마/섹션 청크는 baseline과 동일 — 방향1 실험 대상이 엔드포인트 청크뿐이므로.
+    `indexer_service.index_document()`가 `build_chunks`를 호출하는 전체
+    시그니처(schema_ids/count_tokens/token_limit 포함)와 맞춰야
+    `indexer_service_module.build_chunks` 몽키패치 지점에서 그대로 대체된다.
     """
     chunks: list[BuiltChunk] = []
     for endpoint in document.endpoints:
@@ -80,7 +87,14 @@ def build_chunks_contextual(
                 text=build_endpoint_chunk_text_contextual(endpoint),
             )
         )
-    baseline_chunks = build_chunks_baseline(document, endpoint_ids, section_ids)
+    baseline_chunks = build_chunks_baseline(
+        document,
+        endpoint_ids,
+        section_ids,
+        schema_ids,
+        count_tokens=count_tokens,
+        token_limit=token_limit,
+    )
     chunks.extend(c for c in baseline_chunks if c.chunk_type != "endpoint")
     return chunks
 
