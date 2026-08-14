@@ -192,10 +192,11 @@ class NotionSource:
         visited: set[str],
         depth: int,
     ) -> None:
-        """page_id 하위 child_page 트리를 재귀 순회하며 acc 에 평탄 누적한다.
+        """page_id 하위 child_page/child_database 트리를 재귀 순회하며 acc 에 평탄 누적한다.
 
-        child_page 를 통해서만 내려간다 — 텍스트/토글 블록 안에 중첩된
-        child_page 는 이 목록에 포함되지 않는다(깊은 순회는 후속 스코프).
+        child_database 를 만나면 그 database 를 query 해 얻은 행(페이지)들도
+        동일하게 재귀 대상에 포함한다 — 텍스트/토글 블록 안에 중첩된
+        child_page/child_database 는 이 목록에 포함되지 않는다(깊은 순회는 후속 스코프).
         """
         if depth > MAX_PAGE_DEPTH:
             return
@@ -203,17 +204,34 @@ class NotionSource:
             _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
             return
         for block in self._list_children(client, page_id):
-            if block.get("type") != "child_page" or not block.get("id"):
-                continue
-            child_id = str(block["id"])
-            if child_id in visited:
-                continue
-            visited.add(child_id)
-            acc.append(_child_page_to_file_meta(block))
-            if len(acc) >= MAX_PAGES:
-                _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
-                return
-            self._collect_child_pages(client, child_id, acc, visited, depth + 1)
+            block_type = block.get("type")
+            if block_type == "child_page" and block.get("id"):
+                child_id = str(block["id"])
+                if child_id in visited:
+                    continue
+                if not self._record_page(_child_page_to_file_meta(block), child_id, acc, visited):
+                    _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
+                    return
+                self._collect_child_pages(client, child_id, acc, visited, depth + 1)
+            elif block_type == "child_database" and block.get("id"):
+                db_id = str(block["id"])
+                for row in self._paginate(client, f"/databases/{db_id}/query", {}):
+                    row_id = str(row.get("id") or "")
+                    if not row_id or row_id in visited:
+                        continue
+                    if not self._record_page(_to_file_meta(row), row_id, acc, visited):
+                        _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
+                        return
+                    self._collect_child_pages(client, row_id, acc, visited, depth + 1)
+
+    @staticmethod
+    def _record_page(
+        meta: FileMeta, item_id: str, acc: list[FileMeta], visited: set[str]
+    ) -> bool:
+        """방문 처리 후 acc 에 추가한다. 상한 도달 시 False(호출자는 순회 중단)."""
+        visited.add(item_id)
+        acc.append(meta)
+        return len(acc) < MAX_PAGES
 
     def _list_children(self, client: httpx.Client, block_id: str) -> list[dict[str, Any]]:
         """블록 자식 목록을 페이지네이션까지 처리해 반환한다."""

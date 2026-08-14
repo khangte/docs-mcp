@@ -312,6 +312,88 @@ def test_list_pages_without_page_id_still_uses_database_or_search(
     assert paths == ["/databases/db-1/query"]
 
 
+def test_list_pages_with_page_id_includes_child_database_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """child_database 블록을 만나면 database query 로 행을 조회해 acc 에 합류한다."""
+    hub_children = [
+        {
+            "id": "db-1",
+            "type": "child_database",
+            "has_children": False,
+            "child_database": {"title": "안건 DB"},
+        },
+    ]
+    db_rows = [
+        {
+            "id": "row-1",
+            "properties": {
+                "이름": {"type": "title", "title": [{"plain_text": "행 1"}]}
+            },
+            "url": "https://www.notion.so/row-1",
+            "last_edited_time": "2026-07-05T00:00:00.000Z",
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/databases/db-1/query":
+            return _json({"results": db_rows})
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": hub_children if block_id == "hub-page" else []})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["row-1"]
+    assert pages[0].title == "행 1"
+
+
+def test_list_pages_with_page_id_recurses_into_database_row_child_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """database row 하위에 child_page 가 있으면 재귀로 마저 수집한다."""
+    hub_children = [
+        {
+            "id": "db-1",
+            "type": "child_database",
+            "has_children": False,
+            "child_database": {"title": "안건 DB"},
+        },
+    ]
+    db_rows = [
+        {
+            "id": "row-1",
+            "properties": {"이름": {"type": "title", "title": [{"plain_text": "행 1"}]}},
+            "url": "https://www.notion.so/row-1",
+            "last_edited_time": "2026-07-05T00:00:00.000Z",
+        },
+    ]
+    row_children = [
+        {
+            "id": "nested-1",
+            "type": "child_page",
+            "has_children": False,
+            "child_page": {"title": "행 하위 문서"},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/databases/db-1/query":
+            return _json({"results": db_rows})
+        block_id = request.url.path.split("/")[2]
+        children_by_id = {"hub-page": hub_children, "row-1": row_children}
+        return _json({"results": children_by_id.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["row-1", "nested-1"]
+
+
 # --- ProjectSourceService.register_page --------------------------------------
 
 
