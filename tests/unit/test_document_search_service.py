@@ -20,8 +20,9 @@ from datetime import datetime
 import pytest
 
 from app.core.errors import IntegrationError, ValidationError
-from app.models import DEFAULT_PROJECT
+from app.models import DEFAULT_PROJECT, EMBEDDING_DIM, Chunk, Document
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
+from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_search_service import (
     BODY_FETCH_OVERSCAN,
@@ -33,6 +34,7 @@ from app.services.documents.document_search_service import (
     documents_tokenize,
 )
 from app.services.documents.sources.document_source import FetchedDocument
+from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from tests.fixtures.document_sources import ExplodingDocumentSource
 
 _PROJECT_A = "A"
@@ -1043,3 +1045,182 @@ def test_query_variants_ignores_blank_and_empty_entries(
     )
 
     assert [i.title for i in items] == ["로그인 설계서"]
+
+
+# --- doc36 Phase3 #12: indexed 전략(title+keyword+vector 3-arm RRF) -----------
+# docs/architect-review/39_document_search_phase3_rrf_verdict.md §3-6
+
+
+def _seed_indexed_document(
+    session,
+    document_id: str,
+    project: str,
+    source: str,
+    external_id: str,
+    title: str,
+    url: str,
+    chunk_texts: list[str],
+) -> None:
+    """색인된 문서 한 건(Document + section 청크 N개 + document_meta.document_id 연결)을 저장한다."""
+    session.add(
+        Document(
+            id=document_id,
+            project=project,
+            source_url=None,
+            title=title,
+            content_hash="hash",
+            raw_text="\n".join(chunk_texts),
+            doc_type=source,
+        )
+    )
+    session.flush()
+    for idx, chunk_text in enumerate(chunk_texts):
+        session.add(
+            Chunk(
+                id=f"{document_id}-c{idx}",
+                document_id=document_id,
+                chunk_type="section",
+                ref_id=f"{document_id}-sec{idx}",
+                text=chunk_text,
+            )
+        )
+    session.add(
+        DocumentMeta(
+            project=project,
+            source=source,
+            external_id=external_id,
+            title=title,
+            url=url,
+            last_synced_at=datetime(2026, 7, 1, 12, 0, 0),
+            document_id=document_id,
+        )
+    )
+    session.commit()
+
+
+@pytest.fixture()
+def indexed_search_service(db_session, default_resolver):
+    """indexed 전략(벡터 arm 비활성 — HashEmbeddingProvider 는 의미 유사도가 없어 결정성을 위해 끈다)."""
+    return DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        chunk_repo=ChunkRepository(db_session),
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
+        vector_fallback_enabled=False,
+        document_search_strategy="indexed",
+    )
+
+
+def test_indexed_strategy_finds_body_only_match_absent_from_title(
+    db_session, indexed_search_service
+) -> None:
+    """제목엔 전혀 없고 본문(색인된 section 청크)에만 있는 질의 토큰으로도 문서를 찾는다.
+
+    Phase3(본문 색인) 도입의 존재 이유 그 자체 — title 게이트를 유일한 후보
+    공급원으로 남기는 구조(doc39 §1.1 이 반려한 (A)안)라면 이 테스트는
+    영원히 실패한다.
+    """
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-body-only",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="body-only",
+        title="완전히 무관한 제목",
+        url="https://example.test/drive/body-only",
+        chunk_texts=["여기에만 리프레시토큰회전 이라는 특수 표현이 등장한다."],
+    )
+
+    items = indexed_search_service.search("리프레시토큰회전", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["완전히 무관한 제목"]
+    assert "리프레시토큰회전" in items[0].snippet
+    assert items[0].snippet_as_of is not None
+
+
+def test_indexed_strategy_collapses_multiple_section_hits_into_one_result(
+    db_session, indexed_search_service
+) -> None:
+    """한 문서의 여러 section 청크가 모두 히트해도 결과는 문서 1건으로 접힌다.
+
+    융합 키가 `ref_id`(섹션 ID)가 아니라 `Chunk.document_id` 여야 성립한다
+    (doc39 §2.2) — ref_id 로 접으면 문서 하나가 섹션 수만큼 슬롯을 먹는다.
+    """
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-multi-section",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="multi-section",
+        title="무관 제목",
+        url="https://example.test/drive/multi-section",
+        chunk_texts=[
+            "첫 섹션에도 멀티섹션검색어 가 등장한다.",
+            "둘째 섹션에도 멀티섹션검색어 가 등장한다.",
+        ],
+    )
+
+    items = indexed_search_service.search("멀티섹션검색어", DocumentSearchOptions())
+
+    assert len(items) == 1
+
+
+def test_indexed_strategy_unindexed_document_survives_via_title_arm(
+    db_session, indexed_search_service
+) -> None:
+    """본문이 색인되지 않은 문서(document_meta.document_id=NULL)도 title 매칭만으로 살아남는다.
+
+    title arm 의 문서 키는 `deterministic_document_id(project,source,external_id)`
+    로 순수 계산되므로, 이 문서를 표시하려면 title arm 자체가 들고 있는
+    `DocumentMeta` 를 메타 원천으로 써야 한다 — `document_meta.document_id`
+    로만 역매핑하면(그 컬럼이 NULL이라) 이 문서는 조용히 유실된다(회귀 방지).
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "unindexed", "미색인 특수문서 제목")
+
+    items = indexed_search_service.search("미색인", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["미색인 특수문서 제목"]
+    assert items[0].snippet_as_of is None
+
+
+def test_indexed_strategy_source_filter_excludes_other_source_body_match(
+    db_session, indexed_search_service
+) -> None:
+    """source 필터는 body-only 매치에도 그대로 적용된다(청크 arm 은 project 스코프만 걸기 때문에 별도 후처리가 필요)."""
+    _seed_indexed_document(
+        db_session,
+        document_id="notion:doc-wrong-source",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_NOTION,
+        external_id="wrong-source",
+        title="무관 제목",
+        url="https://example.test/notion/wrong-source",
+        chunk_texts=["소스필터전용검색어 가 여기 있다."],
+    )
+
+    items = indexed_search_service.search(
+        "소스필터전용검색어", DocumentSearchOptions(source=SOURCE_DRIVE)
+    )
+
+    assert items == []
+
+
+def test_unrecognized_document_search_strategy_degrades_to_fetch(
+    db_session, default_resolver, fake_drive_source
+) -> None:
+    """인식 못 하는 전략 값은 fetch(기존 경로)로 degrade 한다(doc39 §2.7)."""
+    service = DocumentSearchService(
+        meta_repo=DocumentMetaRepository(db_session),
+        resolver=default_resolver,
+        chunk_repo=ChunkRepository(db_session),
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
+        vector_fallback_enabled=False,
+        document_search_strategy="not-a-real-strategy",
+    )
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+
+    items = service.search("로그인", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["로그인 설계서"]
+    assert fake_drive_source.fetch_call_count == 1

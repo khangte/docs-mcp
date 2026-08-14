@@ -17,19 +17,31 @@ _HNSW_EF_SEARCH = 100
 
 @dataclass
 class ChunkVectorHit:
-    """벡터 검색 결과 한 건(청크 ID + 엔드포인트 ref_id + 코사인 유사도 점수)."""
+    """벡터 검색 결과 한 건(청크 ID + ref_id + document_id + 코사인 유사도 점수).
+
+    `document_id` 는 문서 검색(doc36 Phase3)이 section 청크 결과를 문서
+    단위로 접어 RRF 융합 키로 쓰기 위한 프로젝션이다(엔드포인트 경로는
+    `ref_id` 를 계속 쓴다).
+    """
 
     chunk_id: str
     ref_id: str
+    document_id: str
     score: float
 
 
 @dataclass
 class ChunkTextHit:
-    """FTS 키워드 검색 결과 한 건(청크 ID + 엔드포인트 ref_id + ts_rank 점수)."""
+    """FTS 키워드 검색 결과 한 건(청크 ID + ref_id + document_id + ts_rank 점수).
+
+    `document_id` 는 문서 검색(doc36 Phase3)이 section 청크 결과를 문서
+    단위로 접어 RRF 융합 키로 쓰기 위한 프로젝션이다(엔드포인트 경로는
+    `ref_id` 를 계속 쓴다).
+    """
 
     chunk_id: str
     ref_id: str
+    document_id: str
     score: float
 
 
@@ -71,14 +83,18 @@ class ChunkRepository:
         return self._session.execute(stmt).scalars().all()
 
     def list_endpoint_chunk_ids(
-        self, document_id: str | None = None, project: str | None = None
+        self,
+        document_id: str | None = None,
+        project: str | None = None,
+        chunk_type: str = "endpoint",
     ) -> set[str]:
-        """endpoint 타입 청크의 ID만 가볍게 조회한다(다른 컬럼은 적재하지 않음).
+        """`chunk_type` 청크의 ID만 가볍게 조회한다(다른 컬럼은 적재하지 않음).
 
         벡터 검색의 스코프(`candidate_ids`)를 만들 때 전체 `Chunk` 로우를
-        메모리에 올릴 필요가 없어 이 메서드를 쓴다.
+        메모리에 올릴 필요가 없어 이 메서드를 쓴다. 기본값은 `endpoint`이며,
+        `section`을 넘기면 협업 문서 본문 청크 스코프로 그대로 재사용된다.
         """
-        stmt = select(Chunk.id).where(Chunk.chunk_type == "endpoint")
+        stmt = select(Chunk.id).where(Chunk.chunk_type == chunk_type)
         if document_id is not None:
             stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
@@ -88,15 +104,19 @@ class ChunkRepository:
         return set(self._session.execute(stmt).scalars().all())
 
     def has_endpoint_chunks(
-        self, document_id: str | None = None, project: str | None = None
+        self,
+        document_id: str | None = None,
+        project: str | None = None,
+        chunk_type: str = "endpoint",
     ) -> bool:
-        """조건에 맞는 endpoint 청크가 하나라도 있는지 가벼운 EXISTS 조회로 확인한다.
+        """조건에 맞는 `chunk_type` 청크가 하나라도 있는지 가벼운 EXISTS 조회로 확인한다.
 
         `EndpointCandidateSearch` 가 "이 스코프에 endpoint 청크가 아예 없다"를
         빠르게 판별해 키워드/벡터 검색(및 임베딩 API 호출)을 생략하는 데 쓴다.
-        전체 청크를 적재하지 않아 가볍다.
+        전체 청크를 적재하지 않아 가볍다. 기본값은 `endpoint`이며, `section`을
+        넘기면 협업 문서 본문 색인 여부 판별에 그대로 재사용된다.
         """
-        stmt = select(Chunk.id).where(Chunk.chunk_type == "endpoint")
+        stmt = select(Chunk.id).where(Chunk.chunk_type == chunk_type)
         if document_id is not None:
             stmt = stmt.where(Chunk.document_id == document_id)
         if project is not None:
@@ -113,8 +133,12 @@ class ChunkRepository:
         document_id: str | None = None,
         project: str | None = None,
         score_terms: Sequence[str] | None = None,
+        chunk_type: str = "endpoint",
     ) -> list[ChunkTextHit]:
-        """endpoint 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
+        """`chunk_type` 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
+
+        기본값은 `endpoint`이며, `section`을 넘기면 협업 문서 본문 청크
+        검색에 그대로 재사용된다.
 
         `terms` 는 `|`(OR) 로 결합한다 — "질의 term 중 하나라도 겹치면 후보,
         많이 겹칠수록 상위"인 기존 키워드 검색 의미를 유지하기 위함이다
@@ -149,8 +173,8 @@ class ChunkRepository:
         )
         rank = func.ts_rank(Chunk.text_tsv, score_tsq)
         stmt = (
-            select(Chunk.id, Chunk.ref_id, rank.label("score"))
-            .where(Chunk.chunk_type == "endpoint")
+            select(Chunk.id, Chunk.ref_id, Chunk.document_id, rank.label("score"))
+            .where(Chunk.chunk_type == chunk_type)
             .where(Chunk.text_tsv.op("@@", is_comparison=True)(tsq))
         )
         if document_id is not None:
@@ -162,8 +186,8 @@ class ChunkRepository:
         stmt = stmt.order_by(rank.desc(), Chunk.id.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
-            ChunkTextHit(chunk_id=cid, ref_id=ref_id, score=float(score))
-            for cid, ref_id, score in rows
+            ChunkTextHit(chunk_id=cid, ref_id=ref_id, document_id=doc_id, score=float(score))
+            for cid, ref_id, doc_id, score in rows
         ]
 
     def search_by_vector(
@@ -171,18 +195,29 @@ class ChunkRepository:
         query_vector: list[float],
         top_k: int,
         candidate_ids: set[str] | None = None,
+        chunk_type: str = "endpoint",
+        document_id: str | None = None,
+        project: str | None = None,
     ) -> list[ChunkVectorHit]:
         """pgvector 코사인 거리(`<=>`)로 top_k 를 유사도 내림차순으로 반환한다.
 
         `candidate_ids` 가 주어지면 그 안의 청크만 고려한다. `chunk_type` 은
-        `candidate_ids` 유무와 무관하게 항상 SQL 로 `endpoint` 로 제한한다
-        (Q2: 이전에는 `candidate_ids` 가 "endpoint 만 남기는 필터"를 겸했는데,
+        `candidate_ids` 유무와 무관하게 항상 SQL 로 제한한다(기본값 `endpoint`,
+        Q2: 이전에는 `candidate_ids` 가 "endpoint 만 남기는 필터"를 겸했는데,
         전역 스코프에서 `candidate_ids=None` 을 넘기게 되면서 SQL 자체에
-        조건이 없으면 schema 청크가 섞여 들어온다).
+        조건이 없으면 schema 청크가 섞여 들어온다). `section`을 넘기면 협업
+        문서 본문 청크 검색에 그대로 재사용된다.
+
+        `document_id`/`project` 는 SQL 조인으로 스코프를 거는 대안이다
+        (`docs/architect-review/39` §2.6) — section 청크는 문서 수 × 섹션
+        수라 `candidate_ids` 로 만든 ID 집합이 커질 수 있어, 문서 검색
+        경로는 이 인자들을 쓴다. `candidate_ids` 와 동시에 줄 수도 있다
+        (둘 다 AND 로 결합).
+
         코사인 거리는 [0, 2] 범위이므로 유사도 = 1 - 거리 로 변환한다.
-        `ref_id` 를 함께 SQL 로 프로젝션해(`Chunk.ref_id`, 조인 불필요),
-        호출측이 chunk_id → ref_id 를 역매핑하려고 전체 청크를 메모리에
-        적재할 필요가 없게 한다(RRF 융합은 endpoint(ref_id) 단위로 동작).
+        `ref_id`/`document_id` 를 함께 SQL 로 프로젝션해(조인 불필요),
+        호출측이 chunk_id → ref_id/document_id 를 역매핑하려고 전체 청크를
+        메모리에 적재할 필요가 없게 한다.
         """
         if top_k <= 0:
             return []
@@ -193,17 +228,34 @@ class ChunkRepository:
         self._session.execute(text(f"SET LOCAL hnsw.ef_search = {ef}"))
         distance = Chunk.embedding.cosine_distance(query_vector)
         stmt = (
-            select(Chunk.id, Chunk.ref_id, distance.label("distance"))
-            .where(Chunk.chunk_type == "endpoint")
+            select(Chunk.id, Chunk.ref_id, Chunk.document_id, distance.label("distance"))
+            .where(Chunk.chunk_type == chunk_type)
             .where(Chunk.embedding.is_not(None))
         )
         if candidate_ids is not None:
             if not candidate_ids:
                 return []
             stmt = stmt.where(Chunk.id.in_(candidate_ids))
+        if document_id is not None:
+            stmt = stmt.where(Chunk.document_id == document_id)
+        if project is not None:
+            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
+                Document.project == project
+            )
         stmt = stmt.order_by(distance.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
-            ChunkVectorHit(chunk_id=cid, ref_id=ref_id, score=1.0 - float(dist))
-            for cid, ref_id, dist in rows
+            ChunkVectorHit(chunk_id=cid, ref_id=ref_id, document_id=doc_id, score=1.0 - float(dist))
+            for cid, ref_id, doc_id, dist in rows
         ]
+
+    def get_texts_by_ids(self, chunk_ids: Sequence[str]) -> dict[str, str]:
+        """chunk_id 집합에 대응하는 text 를 배치 조회한다(문서당 반복 조회 방지).
+
+        문서 검색(doc36 Phase3)이 RRF 승자 청크의 스니펫 원문을 만들 때 쓴다.
+        """
+        if not chunk_ids:
+            return {}
+        stmt = select(Chunk.id, Chunk.text).where(Chunk.id.in_(chunk_ids))
+        rows = self._session.execute(stmt).all()
+        return {cid: chunk_text for cid, chunk_text in rows}

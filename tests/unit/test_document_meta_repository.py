@@ -10,7 +10,7 @@ from datetime import datetime
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.models import DEFAULT_PROJECT
+from app.models import DEFAULT_PROJECT, Document
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
 from app.repositories.document_meta_repository import DocumentMetaRepository
 
@@ -67,6 +67,56 @@ def test_same_external_id_across_sources_is_allowed(
 
     assert repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "shared") is not None
     assert repo.find(DEFAULT_PROJECT, SOURCE_NOTION, "shared") is not None
+
+
+# --- doc36 Phase3 #12: list_by_document_ids(Chunk.document_id → 메타 역매핑) ----
+
+
+def _seed_document(session, document_id: str, project: str = DEFAULT_PROJECT) -> None:
+    """`Document` 한 건을 저장한다(FK 참조용, 이미 있으면 건드리지 않는다)."""
+    if session.get(Document, document_id) is not None:
+        return
+    session.add(
+        Document(
+            id=document_id,
+            project=project,
+            source_url=None,
+            title=f"문서 {document_id}",
+            content_hash="hash",
+            raw_text="본문",
+        )
+    )
+    session.flush()
+
+
+def test_list_by_document_ids_returns_matching_rows(db_session, repo: DocumentMetaRepository) -> None:
+    """document_id 집합에 해당하는 메타 행만 배치로 돌려준다."""
+    _seed_document(db_session, "drive:doc-a")
+    _seed_document(db_session, "drive:doc-b")
+    row_a = _row(SOURCE_DRIVE, "a", title="A 문서")
+    row_a.document_id = "drive:doc-a"
+    row_b = _row(SOURCE_DRIVE, "b", title="B 문서")
+    row_b.document_id = "drive:doc-b"
+    repo.add(row_a)
+    repo.add(row_b)
+    db_session.commit()
+
+    rows = repo.list_by_document_ids(["drive:doc-a"])
+
+    assert [r.title for r in rows] == ["A 문서"]
+
+
+def test_list_by_document_ids_ignores_unindexed_rows(db_session, repo: DocumentMetaRepository) -> None:
+    """document_id 가 NULL(미색인)인 행은 어떤 조회에도 걸리지 않는다."""
+    repo.add(_row(SOURCE_DRIVE, "unindexed"))
+    db_session.commit()
+
+    assert repo.list_by_document_ids(["drive:doc-a"]) == []
+
+
+def test_list_by_document_ids_empty_input_returns_empty(repo: DocumentMetaRepository) -> None:
+    """빈 입력이면 쿼리 없이 빈 리스트를 반환한다."""
+    assert repo.list_by_document_ids([]) == []
 
 
 def test_same_external_id_across_projects_is_allowed(

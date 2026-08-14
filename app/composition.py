@@ -57,6 +57,9 @@ class AppState:
     #: "rrf"(기본) | "fallback"(롤백 스위치). `EndpointCandidateSearch` 로 그대로
     #: 전달된다.
     search_strategy: str = "rrf"
+    #: "fetch"(기본) | "indexed"(doc36 Phase3 RRF). `DocumentSearchService` 로
+    #: 그대로 전달된다.
+    document_search_strategy: str = "fetch"
     #: Drive 서비스 계정 토큰 발급기. 자격증명이 없으면 None. project 마다
     #: 새로 만들지 않고 재사용해 credentials 캐싱 중복을 막는다.
     drive_token_provider: ServiceAccountTokenProvider | None = None
@@ -77,6 +80,7 @@ class AppState:
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
         search_strategy: str | None = None,
+        document_search_strategy: str | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
@@ -114,6 +118,11 @@ class AppState:
             ),
             search_strategy=(
                 settings.search_strategy if search_strategy is None else search_strategy
+            ),
+            document_search_strategy=(
+                settings.document_search_strategy
+                if document_search_strategy is None
+                else document_search_strategy
             ),
             drive_token_provider=build_drive_token_provider(settings),
             drive_source_builder=drive_source_builder,
@@ -231,6 +240,10 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         document_search_service = DocumentSearchService(
             meta_repo=document_meta_repo,
             resolver=project_source_resolver,
+            chunk_repo=chunk_repo,
+            embedding_provider=state.embedding_provider,
+            vector_fallback_enabled=state.vector_fallback_enabled,
+            document_search_strategy=state.document_search_strategy,
         )
         document_index_service = DocumentIndexService(
             session=session,

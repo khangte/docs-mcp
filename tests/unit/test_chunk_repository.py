@@ -473,3 +473,178 @@ def test_has_endpoint_chunks_respects_document_id_and_project_scope(db_session) 
     assert repo.has_endpoint_chunks(project="B") is False
     assert repo.has_endpoint_chunks(document_id="doc-a") is True
     assert repo.has_endpoint_chunks(project="A") is True
+
+
+# --- doc36 Phase3 #11: chunk_type 인자 승격(공유 메서드, section 조회 겸용) ------
+
+
+def test_list_endpoint_chunk_ids_chunk_type_param_selects_section(db_session) -> None:
+    """chunk_type='section' 을 넘기면 section 청크 ID 만 반환한다(기본값은 endpoint 유지)."""
+    _seed_chunk(db_session, "c1", "doc1", "endpoint text", chunk_type="endpoint")
+    _seed_chunk(db_session, "c2", "doc1", "section text", chunk_type="section")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    assert repo.list_endpoint_chunk_ids() == {"c1"}
+    assert repo.list_endpoint_chunk_ids(chunk_type="section") == {"c2"}
+
+
+def test_has_endpoint_chunks_chunk_type_param_selects_section(db_session) -> None:
+    """chunk_type='section' 을 넘기면 section 청크 존재 여부만 본다."""
+    _seed_chunk(db_session, "c1", "doc1", "endpoint text", chunk_type="endpoint")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    assert repo.has_endpoint_chunks(chunk_type="section") is False
+    assert repo.has_endpoint_chunks(chunk_type="endpoint") is True
+
+
+def test_search_endpoint_by_text_chunk_type_param_selects_section(db_session) -> None:
+    """chunk_type='section' 을 넘기면 section 청크만 FTS 검색 대상이 된다."""
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", chunk_type="endpoint")
+    _seed_chunk(db_session, "c2", "doc1", "find pet again", ref_id="sec-1", chunk_type="section")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(["pet"], top_k=10, chunk_type="section")
+
+    assert [h.chunk_id for h in hits] == ["c2"]
+
+
+def test_search_endpoint_by_text_returns_document_id(db_session) -> None:
+    """FTS 히트에 document_id 가 함께 담겨 문서 단위 RRF 융합 키로 쓸 수 있다."""
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep1")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(["pet"], top_k=10)
+
+    assert hits[0].document_id == "doc1"
+
+
+def test_search_by_vector_returns_document_id(db_session) -> None:
+    """벡터 검색 히트에 document_id 가 함께 담긴다."""
+    document = Document(
+        id="doc-1",
+        project="default",
+        source_url=None,
+        title="샘플 문서",
+        content_hash="hash",
+        raw_text="{}",
+    )
+    db_session.add(document)
+    db_session.add(
+        Chunk(
+            id="chunk-1",
+            document_id="doc-1",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
+
+    assert hits[0].document_id == "doc-1"
+
+
+def _seed_chunk_with_embedding(
+    session, chunk_id: str, document_id: str, ref_id: str, project: str = "default"
+) -> None:
+    """embedding 값을 가진 청크 한 건을 저장한다."""
+    _seed_document(session, document_id, project=project)
+    session.add(
+        Chunk(
+            id=chunk_id,
+            document_id=document_id,
+            chunk_type="endpoint",
+            ref_id=ref_id,
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+
+
+def test_search_by_vector_project_scopes_results(db_session) -> None:
+    """project 를 지정하면 다른 project 의 청크는 벡터 검색에서 제외된다."""
+    _seed_chunk_with_embedding(db_session, "c1", "doc-a", ref_id="ep1", project="A")
+    _seed_chunk_with_embedding(db_session, "c2", "doc-b", ref_id="ep2", project="B")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5, project="A")
+
+    assert [h.chunk_id for h in hits] == ["c1"]
+
+
+def test_search_by_vector_document_id_scopes_results(db_session) -> None:
+    """document_id 를 지정하면 다른 문서의 청크는 벡터 검색에서 제외된다."""
+    _seed_chunk_with_embedding(db_session, "c1", "doc1", ref_id="ep1")
+    _seed_chunk_with_embedding(db_session, "c2", "doc2", ref_id="ep2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5, document_id="doc2")
+
+    assert [h.chunk_id for h in hits] == ["c2"]
+
+
+def test_get_texts_by_ids_returns_text_map(db_session) -> None:
+    """chunk_id 집합의 text 를 배치 조회한다(문서당 반복 조회 방지)."""
+    _seed_chunk(db_session, "c1", "doc1", "first text", ref_id="ep1")
+    _seed_chunk(db_session, "c2", "doc1", "second text", ref_id="ep2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    result = repo.get_texts_by_ids(["c1", "c2", "missing"])
+
+    assert result == {"c1": "first text", "c2": "second text"}
+
+
+def test_get_texts_by_ids_empty_input_returns_empty_dict(db_session) -> None:
+    """빈 입력이면 쿼리 없이 빈 dict 를 반환한다."""
+    repo = ChunkRepository(db_session)
+
+    assert repo.get_texts_by_ids([]) == {}
+
+
+def test_search_by_vector_chunk_type_param_selects_section(db_session) -> None:
+    """chunk_type='section' 을 넘기면 section 청크만 벡터 검색 대상이 된다."""
+    document = Document(
+        id="doc-1",
+        project="default",
+        source_url=None,
+        title="샘플 문서",
+        content_hash="hash",
+        raw_text="{}",
+    )
+    db_session.add(document)
+    db_session.add(
+        Chunk(
+            id="chunk-endpoint",
+            document_id="doc-1",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.add(
+        Chunk(
+            id="chunk-section",
+            document_id="doc-1",
+            chunk_type="section",
+            ref_id="sec-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5, chunk_type="section")
+
+    assert [h.chunk_id for h in hits] == ["chunk-section"]

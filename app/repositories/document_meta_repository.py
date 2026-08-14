@@ -125,6 +125,19 @@ class DocumentMetaRepository:
         stmt = stmt.order_by(DocumentMeta.source, DocumentMeta.external_id)
         return self._session.execute(stmt).scalars().all()
 
+    def list_by_document_ids(self, document_ids: Sequence[str]) -> Sequence[DocumentMeta]:
+        """`document_id`(FK, `document.id`) 집합에 대응하는 메타 행을 배치 조회한다.
+
+        문서 검색(doc36 Phase3)이 청크 arm(FTS/벡터) 결과의 `Chunk.document_id`
+        를 표시용 메타(title/url/project/source)로 역매핑할 때 쓴다. 문서당
+        반복 조회를 피하기 위한 배치 조회이므로 결과당 `find()` 를 호출하지
+        않는다. `document_id` 가 NULL(본문 미색인)인 행은 대상이 아니다.
+        """
+        if not document_ids:
+            return []
+        stmt = select(DocumentMeta).where(DocumentMeta.document_id.in_(document_ids))
+        return self._session.execute(stmt).scalars().all()
+
     def find_latest_by_source_and_external_id(
         self, source: str, external_id: str
     ) -> DocumentMeta | None:

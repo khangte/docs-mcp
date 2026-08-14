@@ -45,25 +45,37 @@ def reciprocal_rank_fuse(
     *,
     top_k: int,
     k: int = RRF_K,
+    title_ref_ids: Sequence[str] = (),
 ) -> list[FusedResult]:
-    """두 ranker 의 순위 리스트를 RRF 공식으로 융합해 top_k 로 자른다.
+    """두/세 ranker 의 순위 리스트를 RRF 공식으로 융합해 top_k 로 자른다.
 
     `score(d) = Σ_arm 1/(k + rank_arm(d))` — 해당 arm 에 후보가 없으면 그
     항은 0. 각 arm 내 중복 ref_id 는 첫 등장 등수만 채택한다. 동점이면
     ref_id 오름차순으로 정렬해 결정적 결과를 보장한다(골든 회귀 테스트 전제).
+
+    `title_ref_ids` 는 문서 검색(doc36 Phase3)이 title 신호를 3번째 arm으로
+    편입하기 위한 선택 인자다(`docs/architect-review/39` §2.1). 생략(기본
+    빈 시퀀스)하면 점수·정렬에 전혀 관여하지 않아 기존 2-arm 호출부(엔드포인트
+    검색)는 무변경이다. `match_type` 은 title 기여 여부와 무관하게 keyword/vector
+    두 arm 만으로 계산한다 — title 단독 히트는 편의상 "vector" 로 표시되며,
+    이 라벨은 문서 검색 계약에 노출되지 않으므로 무해하다.
     """
     keyword_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(keyword_ref_ids), start=1)}
     vector_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(vector_ref_ids), start=1)}
+    title_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(title_ref_ids), start=1)}
 
     fused: list[FusedResult] = []
-    for ref_id in keyword_ranks.keys() | vector_ranks.keys():
+    for ref_id in keyword_ranks.keys() | vector_ranks.keys() | title_ranks.keys():
         in_keyword = ref_id in keyword_ranks
         in_vector = ref_id in vector_ranks
+        in_title = ref_id in title_ranks
         score = 0.0
         if in_keyword:
             score += 1.0 / (k + keyword_ranks[ref_id])
         if in_vector:
             score += 1.0 / (k + vector_ranks[ref_id])
+        if in_title:
+            score += 1.0 / (k + title_ranks[ref_id])
         match_type: MatchType = "both" if in_keyword and in_vector else ("keyword" if in_keyword else "vector")
         fused.append(FusedResult(ref_id=ref_id, score=score, match_type=match_type))
 

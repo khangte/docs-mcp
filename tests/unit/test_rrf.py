@@ -66,3 +66,32 @@ def test_top_k_cuts_after_fusion() -> None:
 def test_empty_inputs_return_empty() -> None:
     """양쪽 arm 모두 비어 있으면 빈 리스트다."""
     assert reciprocal_rank_fuse([], [], top_k=5) == []
+
+
+# --- doc36 Phase3 #12: 3번째 arm(title) ------------------------------------
+
+
+def test_title_arm_defaults_to_empty_and_does_not_change_two_arm_result() -> None:
+    """title_ref_ids 를 생략하면 기존 2-arm 결과·골든 테스트와 동일하다(하위 호환)."""
+    fused = reciprocal_rank_fuse(["a", "b"], ["a", "c"], top_k=5)
+    fused_explicit_empty = reciprocal_rank_fuse(["a", "b"], ["a", "c"], top_k=5, title_ref_ids=[])
+
+    assert fused == fused_explicit_empty
+
+
+def test_title_only_hit_contributes_to_score() -> None:
+    """title arm 에만 있는 ref_id 도 결과에 포함되고 점수가 0보다 크다."""
+    fused = reciprocal_rank_fuse([], [], top_k=5, title_ref_ids=["a"])
+
+    assert [f.ref_id for f in fused] == ["a"]
+    assert fused[0].score > 0.0
+
+
+def test_title_arm_adds_to_score_when_combined_with_other_arms() -> None:
+    """세 arm 모두에 있는 후보가 두 arm에만 있는 후보보다 점수가 높다."""
+    fused = reciprocal_rank_fuse(["a"], ["a"], top_k=5, title_ref_ids=["a", "b"])
+    by_ref = {f.ref_id: f for f in fused}
+
+    two_arm_only = reciprocal_rank_fuse(["a"], ["a"], top_k=5)
+
+    assert by_ref["a"].score > two_arm_only[0].score
