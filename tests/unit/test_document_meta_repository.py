@@ -93,28 +93,6 @@ def test_duplicate_project_source_and_external_id_violates_unique(
         db_session.commit()
 
 
-def test_list_by_source_filters(db_session, repo: DocumentMetaRepository) -> None:
-    """list_by_source 는 지정한 출처의 행만 돌려준다."""
-    repo.add(_row(SOURCE_DRIVE, "d1"))
-    repo.add(_row(SOURCE_NOTION, "n1"))
-    db_session.commit()
-
-    assert [m.external_id for m in repo.list_by_source(SOURCE_DRIVE)] == ["d1"]
-
-
-def test_list_by_source_respects_project_filter(
-    db_session, repo: DocumentMetaRepository
-) -> None:
-    """list_by_source 에 project 를 주면 그 프로젝트 행만 돌려준다."""
-    repo.add(_row(SOURCE_DRIVE, "a1", project=_PROJECT_A))
-    repo.add(_row(SOURCE_DRIVE, "b1", project=_PROJECT_B))
-    db_session.commit()
-
-    found = repo.list_by_source(SOURCE_DRIVE, project=_PROJECT_A)
-
-    assert [m.external_id for m in found] == ["a1"]
-
-
 def test_list_by_project_source_never_includes_other_projects(
     db_session, repo: DocumentMetaRepository
 ) -> None:
@@ -145,39 +123,6 @@ def test_list_by_project_source_is_ordered_by_external_id(
     found = repo.list_by_project_source(_PROJECT_A, SOURCE_DRIVE)
 
     assert [m.external_id for m in found] == ["d1", "d2", "d3"]
-
-
-def test_list_all_without_filter_returns_every_row(
-    db_session, repo: DocumentMetaRepository
-) -> None:
-    """source/project 를 생략하면 전체 행을 돌려준다."""
-    repo.add(_row(SOURCE_DRIVE, "d1"))
-    repo.add(_row(SOURCE_NOTION, "n1"))
-    db_session.commit()
-
-    assert len(repo.list_all()) == 2
-
-
-def test_list_all_respects_project_filter(db_session, repo: DocumentMetaRepository) -> None:
-    """list_all 에 project 를 주면 그 프로젝트 행만 돌려준다."""
-    repo.add(_row(SOURCE_DRIVE, "a1", project=_PROJECT_A))
-    repo.add(_row(SOURCE_DRIVE, "b1", project=_PROJECT_B))
-    db_session.commit()
-
-    found = repo.list_all(project=_PROJECT_A)
-
-    assert [m.external_id for m in found] == ["a1"]
-
-
-def test_list_all_is_deterministically_ordered(
-    db_session, repo: DocumentMetaRepository
-) -> None:
-    """list_all 은 (source, external_id) 순으로 결정적으로 정렬된다."""
-    for external_id in ("d3", "d1", "d2"):
-        repo.add(_row(SOURCE_DRIVE, external_id))
-    db_session.commit()
-
-    assert [m.external_id for m in repo.list_all()] == ["d1", "d2", "d3"]
 
 
 # --- find_latest_by_source_and_external_id (Q1: 포인트 조회) -------------------
@@ -252,12 +197,6 @@ def test_delete_removes_row(db_session, repo: DocumentMetaRepository) -> None:
     db_session.commit()
 
     assert repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1") is None
-
-
-def test_empty_repository_returns_empty_lists(repo: DocumentMetaRepository) -> None:
-    """행이 없으면 빈 시퀀스를 돌려준다."""
-    assert list(repo.list_all()) == []
-    assert list(repo.list_by_source(SOURCE_NOTION)) == []
 
 
 # --- search_by_tokens (1단계 후보 SQL 필터) --------------------------------------

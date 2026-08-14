@@ -89,7 +89,7 @@ def test_ascii_recall_matches_legacy_candidate_set(app_state, sample_openapi_3: 
     """ASCII 질의 집합에 대해 레거시 스코어러 후보 집합과 FTS 후보 집합이 동일하다."""
     _register(app_state, sample_openapi_3)
     bundle = _bundle(app_state)
-    chunks = list(bundle.chunk_repo.list_endpoint_chunks())
+    chunks = [c for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
     keyword_search = KeywordSearch(bundle.chunk_repo)
 
     for query in _ASCII_QUERIES:
@@ -127,7 +127,7 @@ def test_ascii_recall_gate_catches_mixed_script_compound_regression(app_state) -
     """
     _register(app_state, _MIXED_SCRIPT_OPENAPI)
     bundle = _bundle(app_state)
-    chunks = list(bundle.chunk_repo.list_endpoint_chunks())
+    chunks = [c for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
     keyword_search = KeywordSearch(bundle.chunk_repo)
 
     legacy_get = set(_legacy_candidate_scores(chunks, "GET").keys())
@@ -253,7 +253,7 @@ def test_legacy_vs_fts_rank_correlation_diagnostic(
     """
     _register(app_state, sample_openapi_3)
     bundle = _bundle(app_state)
-    chunks = list(bundle.chunk_repo.list_endpoint_chunks())
+    chunks = [c for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
     keyword_search = KeywordSearch(bundle.chunk_repo)
 
     legacy = _legacy_candidate_scores(chunks, query)

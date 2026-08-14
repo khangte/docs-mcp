@@ -56,7 +56,7 @@ def test_new_files_are_counted_as_added(index_service, meta_repo, fake_drive_sou
     result = index_service.refresh()
 
     assert (result.added, result.updated, result.removed, result.synced) == (2, 0, 0, 2)
-    assert {m.external_id for m in meta_repo.list_by_source(SOURCE_DRIVE)} == {"d1", "d2"}
+    assert {m.external_id for m in meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)} == {"d1", "d2"}
 
 
 def test_unchanged_modified_at_is_not_counted_as_updated(
@@ -231,7 +231,7 @@ def test_mid_save_failure_keeps_already_committed_rows(
     index_service.refresh()
 
     db_session.expire_all()
-    committed = meta_repo.list_by_source(SOURCE_DRIVE)
+    committed = meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)
     assert len(committed) == BATCH_SIZE * 2
 
 
@@ -252,7 +252,7 @@ def test_mid_save_failure_with_single_source_still_commits(
     result = service.refresh()
 
     db_session.expire_all()
-    assert len(meta_repo.list_by_source(SOURCE_DRIVE)) == BATCH_SIZE
+    assert len(meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)) == BATCH_SIZE
     assert result.failed_sources == (f"{DEFAULT_PROJECT}/{SOURCE_DRIVE}",)
 
 
@@ -270,7 +270,7 @@ def test_mid_save_failure_counts_match_committed_rows(
     result = service.refresh()
 
     db_session.expire_all()
-    assert result.added == len(meta_repo.list_by_source(SOURCE_DRIVE))
+    assert result.added == len(meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE))
     assert result.added == BATCH_SIZE
 
 
@@ -307,7 +307,7 @@ def test_failed_items_are_retried_on_next_refresh(
     result = service.refresh()
 
     db_session.expire_all()
-    assert len(meta_repo.list_by_source(SOURCE_DRIVE)) == total
+    assert len(meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)) == total
     assert result.failed_sources == ()
 
 
@@ -329,7 +329,7 @@ def test_mid_save_failure_before_first_batch_commits_nothing(
         service.refresh()
 
     db_session.expire_all()
-    assert list(meta_repo.list_by_source(SOURCE_DRIVE)) == []
+    assert list(meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)) == []
 
 
 # --- 교차 소스 삭제 회귀 방지 (같은 project 내부) --------------------------------
@@ -340,8 +340,8 @@ def test_refreshing_one_source_never_deletes_another_sources_rows(
 ) -> None:
     """이미 캐시된 다른 source 의 행이 한 source 갱신 때문에 삭제되지 않는다.
 
-    `_refresh_source` 가 `list_by_source()` 대신 `list_all()` 을 쓰면 다른
-    출처의 행이 "원본에서 사라진 것"으로 오인돼 통째로 삭제된다. 데이터 유실로
+    `_refresh_source` 가 source 로만 좁히고 다른 출처 행까지 기준 집합에
+    포함시키면 "원본에서 사라진 것"으로 오인돼 통째로 삭제된다. 데이터 유실로
     직결되는 지점이라 회귀 테스트로 고정한다.
     """
     fake_drive_source.put("d1", "드라이브 문서", "본문", modified_at=_T1)

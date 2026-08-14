@@ -53,7 +53,6 @@ class AppState:
     session_factory: sessionmaker[Session]
     embedding_provider: EmbeddingProvider
     fetcher: OpenAPIFetcher
-    hybrid_alpha: float = 0.4
     vector_fallback_enabled: bool = True
     #: "rrf"(기본) | "fallback"(롤백 스위치). `EndpointCandidateSearch` 로 그대로
     #: 전달된다.
@@ -73,7 +72,6 @@ class AppState:
         cls,
         engine: Engine,
         fetcher: OpenAPIFetcher,
-        hybrid_alpha: float = 0.4,
         vector_fallback_enabled: bool | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         drive_source_builder: Callable[[str], DocumentSource | None] | None = None,
@@ -109,7 +107,6 @@ class AppState:
             session_factory=create_session_factory(engine),
             embedding_provider=provider,
             fetcher=fetcher,
-            hybrid_alpha=hybrid_alpha,
             vector_fallback_enabled=(
                 is_vector_fallback_available()
                 if vector_fallback_enabled is None

@@ -58,13 +58,3 @@ class ValidationError(DomainError):
 
 class IntegrationError(Exception):
     """외부 HTTP/LLM/임베딩 실패."""
-
-
-class APIError(Exception):
-    """진입점에서 사용자에게 돌려줄 에러."""
-
-    def __init__(self, status_code: int, message: str, code: str = "api_error") -> None:
-        """HTTP 상태 코드·메시지·코드 식별자를 보관한다."""
-        super().__init__(message)
-        self.status_code = status_code
-        self.code = code

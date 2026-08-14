@@ -1,6 +1,6 @@
 """`ProjectSourceRepository` 단위 테스트 (project_source 병합 후, §4).
 
-`upsert`/`get`/`list_by_type`/`list_all`/`delete` 계약을 drive/notion 양쪽에서
+`upsert`/`get`/`list_by_type`/`delete` 계약을 drive/notion 양쪽에서
 검증한다. PK 는 `(project, source_type, location)` 이지만 서비스 정책상
 `(project, source_type)` 단위 upsert 로 취급된다(§0 스코프 결정).
 """
@@ -32,7 +32,7 @@ def test_upsert_same_type_replaces_value_not_new_row(db_session) -> None:
     repo.upsert("A", "drive", "folder-a-v2")
     db_session.commit()
 
-    rows = repo.list_all()
+    rows = repo.list_by_type("drive")
     assert len(rows) == 1
     assert rows[0].location == "folder-a-v2"
 
@@ -84,19 +84,6 @@ def test_list_by_type_excludes_other_source_type(db_session) -> None:
     rows = repo.list_by_type("drive")
 
     assert [r.source_type for r in rows] == ["drive"]
-
-
-def test_list_all_returns_project_then_source_type_ascending_order(db_session) -> None:
-    """list_all 반환 순서가 (project, source_type) 오름차순으로 결정적이다."""
-    repo = ProjectSourceRepository(db_session)
-    repo.upsert("B", "notion", "db-b")
-    repo.upsert("A", "notion", "db-a")
-    repo.upsert("A", "drive", "folder-a")
-    db_session.commit()
-
-    keys = [(row.project, row.source_type) for row in repo.list_all()]
-
-    assert keys == [("A", "drive"), ("A", "notion"), ("B", "notion")]
 
 
 def test_delete_existing_project_returns_true_and_removes_row(db_session) -> None:

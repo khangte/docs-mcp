@@ -59,11 +59,6 @@ class ProjectSourceRepository:
         )
         return self._session.execute(stmt).scalars().all()
 
-    def list_all(self) -> Sequence[ProjectSource]:
-        """전체 매핑을 (project, source_type) 오름차순으로 반환한다(결정적 순서)."""
-        stmt = select(ProjectSource).order_by(ProjectSource.project, ProjectSource.source_type)
-        return self._session.execute(stmt).scalars().all()
-
     def delete(self, project: str, source_type: str) -> bool:
         """(project, source_type) 매핑을 삭제한다. 없었으면 False(멱등)."""
         existing = self.get(project, source_type)

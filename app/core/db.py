@@ -25,15 +25,6 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
-def session_scope(session_factory: sessionmaker[Session]) -> Iterator[Session]:
-    """요청 범위 세션 생성기."""
-    session = session_factory()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
 @contextmanager
 def managed_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     """예외 발생 시에도 session.close() 를 보장하는 컨텍스트 매니저.

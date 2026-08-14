@@ -15,11 +15,6 @@ from app.services.parser.openapi_parser import (
 
 _LOG = get_logger("docs_mcp.indexer.chunk_builder")
 
-#: `docs/architect-review/23` §5: 임베딩 경고 임계값과 동일 상수 재사용 의도.
-#: 실제 값은 호출자(IndexerService)가 `embedding_provider.TOKEN_WARNING_THRESHOLD`
-#: 를 명시적으로 넘긴다 — chunk_builder 는 모델/임베딩 모듈에 의존하지 않는다.
-DEFAULT_SECTION_TOKEN_LIMIT = 480
-
 
 @dataclass
 class BuiltChunk:
@@ -107,7 +102,7 @@ def build_chunks(
     section_ids: dict[int, str] | None = None,
     schema_ids: dict[int, str] | None = None,
     count_tokens: CountTokens | None = None,
-    token_limit: int = DEFAULT_SECTION_TOKEN_LIMIT,
+    token_limit: int = 480,
 ) -> list[BuiltChunk]:
     """문서 내 모든 엔드포인트/스키마/섹션에 대해 청크를 생성한다.
 

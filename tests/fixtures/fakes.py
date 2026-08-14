@@ -6,9 +6,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-from app.services.examples.request_example_service import RequestExampleService
 from app.services.indexer.embedding_provider import EmbeddingProvider
 from app.services.search.vector_search import VectorSearchHit
 
@@ -92,20 +89,6 @@ class ExplodingEmbeddingProvider:
         raise AssertionError("임베딩 프로바이더가 호출되면 안 되는 경로에서 호출됨(질의)")
 
 
-class CountingExampleService:
-    """예시 코드 생성 호출 횟수를 세는 페이크 서비스."""
-
-    def __init__(self, delegate: RequestExampleService) -> None:
-        """위임 서비스를 보관하고 호출 카운터를 0 으로 초기화한다."""
-        self._delegate = delegate
-        self.generate_call_count = 0
-
-    def generate(self, endpoint_id: str, fmt: str) -> dict[str, Any]:
-        """호출 횟수를 기록한 뒤 위임 서비스로 예시를 생성한다."""
-        self.generate_call_count += 1
-        return self._delegate.generate(endpoint_id, fmt)
-
-
 class StubVectorSearch:
     """고정된 점수를 내는 페이크 벡터 검색기.
 
@@ -142,34 +125,3 @@ class StubVectorSearch:
         ]
 
 
-class QueryAwareStubVectorSearch:
-    """질의 문자열별로 다른 (청크 ID, ref_id) 목록을 내는 페이크 벡터 검색기.
-
-    `query_variants` 가 벡터 arm 에도 라우팅되는지(원본 질의와 변형 질의를
-    각각 별도로 임베딩해 히트를 병합하는지) 검증하려면, 질의 텍스트에 따라
-    결과가 달라지는 스텁이 필요하다(`StubVectorSearch` 는 질의와 무관하게
-    항상 같은 결과를 낸다).
-    """
-
-    def __init__(self, chunks_by_query: dict[str, list[tuple[str, str]]], score: float = 0.9) -> None:
-        """질의별 (청크 ID, ref_id) 매핑과 고정 점수를 보관하고 호출 기록을 초기화한다."""
-        self._chunks_by_query = chunks_by_query
-        self._score = score
-        self.call_count = 0
-        #: 실제로 호출된 질의 문자열 순서(원본+변형 라우팅 여부 검증용).
-        self.queries_seen: list[str] = []
-
-    def search(
-        self,
-        query: str,
-        top_k: int,
-        candidates: set[str] | None = None,
-    ) -> list[VectorSearchHit]:
-        """질의 문자열에 매핑된 청크 목록을 고정 점수로 top_k 만큼 반환한다."""
-        self.call_count += 1
-        self.queries_seen.append(query)
-        chunks = self._chunks_by_query.get(query, [])
-        return [
-            VectorSearchHit(chunk_id=chunk_id, ref_id=ref_id, score=self._score)
-            for chunk_id, ref_id in chunks[:top_k]
-        ]

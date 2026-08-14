@@ -213,15 +213,6 @@ def _make_resolver(session_factory) -> tuple[ProjectSourceResolver, object]:
     return resolver, session
 
 
-def _percentile(values: list[float], pct: float) -> float:
-    """values 의 pct(0~100) 백분위수를 최근접 순위법으로 계산한다."""
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    rank = max(0, min(len(ordered) - 1, int(round(pct / 100 * (len(ordered) - 1)))))
-    return ordered[rank]
-
-
 def _time_calls(label: str, fn, repeat: int = REPEAT, warmup: int = WARMUP) -> None:
     """fn() 을 warmup + repeat 회 호출해 latency(ms) 평균/p95 를 출력한다."""
     for _ in range(warmup):
@@ -232,7 +223,7 @@ def _time_calls(label: str, fn, repeat: int = REPEAT, warmup: int = WARMUP) -> N
         fn()
         samples_ms.append((time.perf_counter() - started) * 1000)
     mean_ms = statistics.mean(samples_ms)
-    p95_ms = _percentile(samples_ms, 95)
+    p95_ms = statistics.quantiles(samples_ms, n=100, method="inclusive")[94]
     print(f"  {label:<28} mean={mean_ms:8.2f}ms  p95={p95_ms:8.2f}ms  (n={repeat})")
 
 

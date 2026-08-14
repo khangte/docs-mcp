@@ -1,7 +1,7 @@
 """요청 예시 코드 생성.
 
 저장된 정규화 스키마만 보고 결정적으로 생성한다. 외부 호출 없음.
-지원 포맷: curl / fetch / axios / python(requests).
+지원 포맷: curl.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ from app.models import (
 )
 from app.repositories.endpoint_repository import EndpointRepository
 
-_SUPPORTED_FORMATS = {"curl", "fetch", "axios", "python"}
-
 
 class RequestExampleService:
     """저장된 엔드포인트 정보로부터 호출 예시 코드를 생성한다."""
@@ -28,8 +26,8 @@ class RequestExampleService:
         self._endpoint_repo = endpoint_repo
 
     def generate(self, endpoint_id: str, fmt: str) -> dict[str, Any]:
-        """지정 포맷(curl/fetch/axios/python)으로 호출 예시 코드 페이로드를 만들어 반환한다."""
-        if fmt not in _SUPPORTED_FORMATS:
+        """curl 포맷으로 호출 예시 코드 페이로드를 만들어 반환한다."""
+        if fmt != "curl":
             raise ValidationError(f"unsupported format: {fmt}")
         endpoint = self._endpoint_repo.get(endpoint_id)
         if endpoint is None:
@@ -45,14 +43,7 @@ class RequestExampleService:
         if query_pairs:
             full_url += "?" + "&".join(f"{k}={v}" for k, v in query_pairs)
 
-        if fmt == "curl":
-            code = _render_curl(endpoint.method, full_url, header_pairs, body_sample)
-        elif fmt == "fetch":
-            code = _render_fetch(endpoint.method, full_url, header_pairs, body_sample)
-        elif fmt == "axios":
-            code = _render_axios(endpoint.method, full_url, header_pairs, body_sample)
-        else:
-            code = _render_python(endpoint.method, full_url, header_pairs, body_sample)
+        code = _render_curl(endpoint.method, full_url, header_pairs, body_sample)
         return {"format": fmt, "code": code, "notes": None}
 
 
@@ -135,51 +126,3 @@ def _render_curl(
         parts.append("  -H 'Content-Type: application/json'")
         parts.append("  -d '" + json.dumps(body) + "'")
     return " \\\n".join(parts)
-
-
-def _render_fetch(
-    method: str, url: str, headers: list[tuple[str, str]], body: Any | None
-) -> str:
-    """JS fetch() 호출 형식의 예시 코드를 렌더링한다."""
-    options: dict[str, Any] = {"method": method.upper()}
-    hdr_obj: dict[str, str] = {k: v for k, v in headers}
-    if body is not None:
-        hdr_obj["Content-Type"] = "application/json"
-        options["body"] = json.dumps(body)
-    if hdr_obj:
-        options["headers"] = hdr_obj
-    rendered_options = json.dumps(options, indent=2)
-    return f"fetch('{url}', {rendered_options})"
-
-
-def _render_axios(
-    method: str, url: str, headers: list[tuple[str, str]], body: Any | None
-) -> str:
-    """axios() 호출 형식의 예시 코드를 렌더링한다."""
-    config: dict[str, Any] = {"method": method.lower(), "url": url}
-    hdr_obj: dict[str, str] = {k: v for k, v in headers}
-    if hdr_obj:
-        config["headers"] = hdr_obj
-    if body is not None:
-        config["data"] = body
-    return "axios(" + json.dumps(config, indent=2) + ")"
-
-
-def _render_python(
-    method: str, url: str, headers: list[tuple[str, str]], body: Any | None
-) -> str:
-    """Python requests 호출 형식의 예시 코드를 렌더링한다."""
-    lines = [
-        "import requests",
-        "",
-        f"response = requests.{method.lower()}(",
-        f"    '{url}',",
-    ]
-    hdr_obj = {k: v for k, v in headers}
-    if hdr_obj:
-        lines.append(f"    headers={json.dumps(hdr_obj)},")
-    if body is not None:
-        lines.append(f"    json={json.dumps(body)},")
-    lines.append(")")
-    lines.append("print(response.status_code, response.text)")
-    return "\n".join(lines)

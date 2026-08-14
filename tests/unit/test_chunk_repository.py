@@ -48,7 +48,7 @@ def _seed_chunk(
     )
 
 
-def _seed_document_with_chunk(session, chunk_type: str = "endpoint") -> None:
+def _seed_document_with_chunk(session) -> None:
     """endpoint 청크 한 건을 embedding 값과 함께 저장한다."""
     document = Document(
         id="doc-1",
@@ -62,7 +62,7 @@ def _seed_document_with_chunk(session, chunk_type: str = "endpoint") -> None:
     chunk = Chunk(
         id="chunk-1",
         document_id="doc-1",
-        chunk_type=chunk_type,
+        chunk_type="endpoint",
         ref_id="ref-1",
         text="hello world",
         embedding=[0.1] * EMBEDDING_DIM,
@@ -76,8 +76,8 @@ def test_list_all_defers_text_tsv_column(db_session) -> None:
     """text_tsv 는 필터 전용 컬럼이므로 일반 조회 시 지연 로딩되어야 한다.
 
     `mapped_column(..., deferred=True)` 없이는 `select(Chunk)` 로 전체
-    컬럼을 적재하는 `list_all()`/`list_endpoint_chunks()` 같은 경로에서
-    매번 text_tsv(청크 전체 텍스트의 lexeme 표현)까지 전송된다.
+    컬럼을 적재하는 `list_all()` 같은 경로에서 매번 text_tsv(청크 전체
+    텍스트의 lexeme 표현)까지 전송된다.
     """
     _seed_document_with_chunk(db_session)
     repo = ChunkRepository(db_session)
@@ -87,41 +87,6 @@ def test_list_all_defers_text_tsv_column(db_session) -> None:
     assert len(chunks) == 1
     state = attributes.instance_state(chunks[0])
     assert "text_tsv" in state.unloaded
-
-
-def test_list_endpoint_chunks_defers_embedding_column(db_session) -> None:
-    """쓰이지 않는 embedding 컬럼은 지연 로딩되어 조회 시 함께 전송되지 않는다."""
-    _seed_document_with_chunk(db_session)
-    repo = ChunkRepository(db_session)
-
-    chunks = repo.list_endpoint_chunks()
-
-    assert len(chunks) == 1
-    state = attributes.instance_state(chunks[0])
-    assert "embedding" in state.unloaded
-
-
-def test_list_endpoint_chunks_still_returns_expected_fields(db_session) -> None:
-    """embedding 을 지연 로딩해도 나머지 필드는 정상 값을 유지한다."""
-    _seed_document_with_chunk(db_session)
-    repo = ChunkRepository(db_session)
-
-    chunks = repo.list_endpoint_chunks()
-
-    assert chunks[0].id == "chunk-1"
-    assert chunks[0].text == "hello world"
-    assert chunks[0].ref_id == "ref-1"
-    assert chunks[0].chunk_type == "endpoint"
-
-
-def test_list_endpoint_chunks_excludes_non_endpoint_types(db_session) -> None:
-    """chunk_type 이 endpoint 가 아니면 결과에서 제외된다(기존 동작 유지)."""
-    _seed_document_with_chunk(db_session, chunk_type="schema")
-    repo = ChunkRepository(db_session)
-
-    chunks = repo.list_endpoint_chunks()
-
-    assert chunks == []
 
 
 # --- P1: search_endpoint_by_text (Postgres FTS) --------------------------------

@@ -6,9 +6,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import delete, func, select, text
-from sqlalchemy.orm import Session, defer
+from sqlalchemy.orm import Session
 
-from app.models import ApiEndpoint, Chunk, Document
+from app.models import Chunk, Document
 
 #: 벡터 검색 시 강제할 hnsw.ef_search 하한. 기본값(40)은 RRF 융합용 넓은 후보폭
 #: (top_k 최대 200)보다 작아 recall 을 깎을 수 있어 세션 GUC 로 올려 잡는다.
@@ -54,10 +54,6 @@ class ChunkRepository:
         """청크 한 건을 세션에 추가한다."""
         self._session.add(chunk)
 
-    def bulk_add(self, chunks: Sequence[Chunk]) -> None:
-        """청크 여러 건을 한 번에 세션에 추가한다."""
-        self._session.add_all(list(chunks))
-
     def delete_by_document(self, document_id: str) -> int:
         """주어진 문서의 모든 청크를 삭제하고 삭제된 행 수를 반환한다."""
         stmt = delete(Chunk).where(Chunk.document_id == document_id)
@@ -74,40 +70,13 @@ class ChunkRepository:
         stmt = select(Chunk).where(Chunk.document_id == document_id)
         return self._session.execute(stmt).scalars().all()
 
-    def list_endpoint_chunks(
-        self, document_id: str | None = None, project: str | None = None
-    ) -> Sequence[Chunk]:
-        """endpoint 타입 청크만 SQL 로 필터링해 반환한다.
-
-        후보 검색은 endpoint 청크만 사용하므로 section/schema 청크를 DB 단계에서
-        걸러낸다. 반환된 청크의 embedding 컬럼은 호출측(EndpointCandidateSearch)이
-        전혀 쓰지 않으므로 `defer()` 로 로딩을 지연해 전송하지 않는다.
-
-        Args:
-            document_id: 주어지면 해당 문서로 범위를 제한한다.
-            project: 주어지면 `Document` 와 조인해 해당 project 로
-                범위를 제한한다(SQL 로 필터링, Python 필터링 금지).
-        """
-        stmt = (
-            select(Chunk)
-            .where(Chunk.chunk_type == "endpoint")
-            .options(defer(Chunk.embedding))
-        )
-        if document_id is not None:
-            stmt = stmt.where(Chunk.document_id == document_id)
-        if project is not None:
-            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
-                Document.project == project
-            )
-        return self._session.execute(stmt).scalars().all()
-
     def list_endpoint_chunk_ids(
         self, document_id: str | None = None, project: str | None = None
     ) -> set[str]:
         """endpoint 타입 청크의 ID만 가볍게 조회한다(다른 컬럼은 적재하지 않음).
 
-        벡터 검색의 스코프(`candidate_ids`)를 만들 때 `list_endpoint_chunks()`
-        처럼 전체 `Chunk` 로우를 메모리에 올릴 필요가 없어 이 메서드를 쓴다.
+        벡터 검색의 스코프(`candidate_ids`)를 만들 때 전체 `Chunk` 로우를
+        메모리에 올릴 필요가 없어 이 메서드를 쓴다.
         """
         stmt = select(Chunk.id).where(Chunk.chunk_type == "endpoint")
         if document_id is not None:
@@ -125,7 +94,7 @@ class ChunkRepository:
 
         `EndpointCandidateSearch` 가 "이 스코프에 endpoint 청크가 아예 없다"를
         빠르게 판별해 키워드/벡터 검색(및 임베딩 API 호출)을 생략하는 데 쓴다.
-        전체 청크를 적재하지 않으므로 `list_endpoint_chunks()` 보다 가볍다.
+        전체 청크를 적재하지 않아 가볍다.
         """
         stmt = select(Chunk.id).where(Chunk.chunk_type == "endpoint")
         if document_id is not None:
@@ -196,69 +165,6 @@ class ChunkRepository:
             ChunkTextHit(chunk_id=cid, ref_id=ref_id, score=float(score))
             for cid, ref_id, score in rows
         ]
-
-    def list_by_endpoint_filter(
-        self,
-        method: str | None = None,
-        tag: str | None = None,
-        document_id: str | None = None,
-        project: str | None = None,
-    ) -> Sequence[Chunk]:
-        """method/tag/document_id/project SQL 필터를 적용해 후보 청크를 반환한다.
-
-        - endpoint 청크: 조건에 맞는 ApiEndpoint 와 JOIN 해 필터링
-        - schema/section 청크: method/tag 조건 없이 document_id/project 만 적용
-        - project 는 `Document` 와 조인해 SQL 로 필터링한다.
-        필터가 모두 None 이면 전체 청크를 반환한다.
-        """
-        if method is None and tag is None and document_id is None and project is None:
-            return self.list_all()
-
-        if method is not None or tag is not None:
-            # endpoint 청크는 ApiEndpoint JOIN 필터
-            endpoint_stmt = (
-                select(Chunk)
-                .join(ApiEndpoint, Chunk.ref_id == ApiEndpoint.id)
-                .where(Chunk.chunk_type == "endpoint")
-            )
-            if document_id is not None:
-                endpoint_stmt = endpoint_stmt.where(Chunk.document_id == document_id)
-            if project is not None:
-                endpoint_stmt = endpoint_stmt.join(
-                    Document, Chunk.document_id == Document.id
-                ).where(Document.project == project)
-            if method is not None:
-                endpoint_stmt = endpoint_stmt.where(
-                    ApiEndpoint.method == method.upper()
-                )
-            if tag is not None:
-                # tags_json 에 JSON 배열로 저장되어 있으므로 LIKE 검색
-                endpoint_stmt = endpoint_stmt.where(
-                    ApiEndpoint.tags_json.contains(f'"{tag}"')
-                )
-            endpoint_chunks = list(self._session.execute(endpoint_stmt).scalars().all())
-
-            # schema/section 청크는 method/tag 조건 없이 document_id/project 만 적용
-            other_stmt = select(Chunk).where(Chunk.chunk_type.in_(("schema", "section")))
-            if document_id is not None:
-                other_stmt = other_stmt.where(Chunk.document_id == document_id)
-            if project is not None:
-                other_stmt = other_stmt.join(
-                    Document, Chunk.document_id == Document.id
-                ).where(Document.project == project)
-            other_chunks = list(self._session.execute(other_stmt).scalars().all())
-
-            return endpoint_chunks + other_chunks
-
-        # method/tag 없고 document_id/project 만 있는 경우
-        stmt = select(Chunk)
-        if document_id is not None:
-            stmt = stmt.where(Chunk.document_id == document_id)
-        if project is not None:
-            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
-                Document.project == project
-            )
-        return self._session.execute(stmt).scalars().all()
 
     def search_by_vector(
         self,

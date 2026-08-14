@@ -1,7 +1,7 @@
 """임베딩 모델(e5-small vs e5-base) A/B 실측 스크립트.
 
 `docs/architect-review/15-embedding-model-swap-experiment.md` 3절이 정의한 실험 하네스다.
-`compare_chunking.py`의 temp-DB 생성/등록/지표 로직을 재사용하되, 바꾸는
+`compare_strategies.py`의 temp-DB 생성/등록/지표 로직을 재사용하되, 바꾸는
 변형 축은 "청킹"이 아니라 "임베딩 provider + 벡터 컬럼 dim"이다.
 
 **비자명한 마찰(docs/15 §3-1)**: `Chunk.embedding = mapped_column(Vector(EMBEDDING_DIM))`
@@ -15,6 +15,12 @@
 
 사용법(로컬 postgres 필요, `docker compose up -d postgres`):
     uv run python tests/fixtures/rrf_eval/compare_embedding.py
+
+**`compare_strategies` 임포트는 항상 함수 안(지연 임포트)에서만 한다.** 그
+모듈의 최상단이 `app.composition`(→ `app.models.chunk`)을 즉시 임포트하므로,
+모듈 최상단에서 임포트하면 이 파일 어디서 실행되든(워커/부모 프로세스 모두)
+`_patch_embedding_dim()` 이전에 `app.models.chunk` 가 먼저 로드돼 패치가
+무의미해진다.
 """
 
 from __future__ import annotations
@@ -25,85 +31,23 @@ import statistics
 import subprocess
 import sys
 import time
-import uuid
-from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING
 
-from metrics import dcg_at, recall_at, reciprocal_rank  # type: ignore[import-not-found]
+from metrics import recall_at, reciprocal_rank  # type: ignore[import-not-found]
+
+if TYPE_CHECKING:
+    from compare_strategies import EvalQuery
 
 _DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _DIR.parent.parent.parent
 TOP_K = 10
-RECALL_KS = (1, 3, 5, 10)
 
 #: 실행 축(docs/15 §3-3). baseline=현행, 후보1=1차 드롭인 후보.
 VARIANTS = [
     {"label": "baseline(e5-small)", "model": "intfloat/multilingual-e5-small", "dim": 384},
     {"label": "후보1(e5-base)", "model": "intfloat/multilingual-e5-base", "dim": 768},
 ]
-
-
-@dataclass
-class EvalQuery:
-    query: str
-    category: str
-    accepted: list[tuple[str, str]]
-
-
-def _load_queries(path: Path) -> list[EvalQuery]:
-    raw = json.loads(path.read_text())
-    return [
-        EvalQuery(
-            query=item["query"],
-            category=item["category"],
-            accepted=[(m, p) for m, p in item["accepted"]],
-        )
-        for item in raw
-    ]
-
-
-def _load_valid_endpoints(openapi_doc: str) -> set[tuple[str, str]]:
-    paths = json.loads(openapi_doc)["paths"]
-    return {(method.upper(), path) for path, methods in paths.items() for method in methods}
-
-
-def _validate_labels(queries: list[EvalQuery], valid_endpoints: set[tuple[str, str]]) -> None:
-    bad = [
-        (eq.query, method, path)
-        for eq in queries
-        for method, path in eq.accepted
-        if (method, path) not in valid_endpoints
-    ]
-    if bad:
-        raise ValueError(f"미존재 라벨(openapi.json에 없는 accepted 엔드포인트): {bad}")
-
-
-def _rank_of_answer(candidates, accepted: list[tuple[str, str]]) -> int | None:
-    accepted_set = set(accepted)
-    for i, c in enumerate(candidates, start=1):
-        if (c.method, c.path) in accepted_set:
-            return i
-    return None
-
-
-class EvalSummary(NamedTuple):
-    recall: dict[int, float]
-    mrr: float
-    ndcg10: float
-
-
-def _summarize(ranks: list[int | None]) -> EvalSummary:
-    n = len(ranks)
-    recall = {k: sum(recall_at(r, k) for r in ranks) / n for k in RECALL_KS}
-    mrr = statistics.mean(reciprocal_rank(r) for r in ranks)
-    ndcg10 = statistics.mean(dcg_at(r, 10) for r in ranks)
-    return EvalSummary(recall=recall, mrr=mrr, ndcg10=ndcg10)
-
-
-def _format_summary_line(label: str, summary: EvalSummary) -> str:
-    recall_str = " ".join(f"Recall@{k} {summary.recall[k]:.0%}" for k in RECALL_KS)
-    return f"- {label}: {recall_str} | MRR {summary.mrr:.3f} | nDCG@10 {summary.ndcg10:.3f}"
 
 
 # ---------------------------------------------------------------------------
@@ -141,35 +85,19 @@ def _patch_embedding_dim(candidate_dim: int) -> None:
     exec(compile(patched_source, spec.origin, "exec"), module.__dict__)
 
 
-def _make_temp_db() -> tuple[str, str]:
-    from app.core.db import create_db_engine
-    from sqlalchemy import text
-
-    admin_url = "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
-    dbname = f"embedeval_{uuid.uuid4().hex[:8]}"
-    admin = create_db_engine(admin_url, isolation_level="AUTOCOMMIT")
-    with admin.connect() as c:
-        c.execute(text(f'CREATE DATABASE "{dbname}"'))
-    test_url = admin_url.rsplit("/", 1)[0] + "/" + dbname
-    setup = create_db_engine(test_url)
-    with setup.begin() as c:
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    return admin_url, test_url
-
-
-def _drop_temp_db(admin_url: str, dbname: str) -> None:
-    from app.core.db import create_db_engine
-    from sqlalchemy import text
-
-    admin = create_db_engine(admin_url, isolation_level="AUTOCOMMIT")
-    with admin.connect() as c:
-        c.execute(text(f'DROP DATABASE "{dbname}" WITH (FORCE)'))
-
-
 def _run_worker(model_name: str, candidate_dim: int) -> dict:
     """서브프로세스 본체: dim 패치 → 임베딩·색인·84+질의 평가 → 지연 측정."""
     _patch_embedding_dim(candidate_dim)
+
+    # compare_strategies 임포트는 패치 *이후*에만 한다(모듈 상단 docstring 참고).
+    from compare_strategies import (  # type: ignore[import-not-found]
+        _drop_temp_db,
+        _load_queries,
+        _load_valid_endpoints,
+        _make_temp_db,
+        _rank_of_answer,
+        _validate_labels,
+    )
 
     from app.composition import AppState, build_services
     from app.core.db import create_db_engine
@@ -178,7 +106,7 @@ def _run_worker(model_name: str, candidate_dim: int) -> dict:
     from app.services.ingestor.openapi_fetcher import InMemoryFetcher
     from app.services.search.endpoint_candidate_search import CandidateSearchOptions
 
-    queries = _load_queries(_DIR / "queries.json")
+    queries = _load_queries()
     openapi_doc = (_DIR / "openapi.json").read_text()
     _validate_labels(queries, _load_valid_endpoints(openapi_doc))
 
@@ -266,7 +194,20 @@ def _run_variant_subprocess(model_name: str, candidate_dim: int) -> dict:
 
 
 def main() -> None:
-    queries = _load_queries(_DIR / "queries.json")
+    # 지연 임포트 이유는 모듈 상단 docstring 참고(워커 서브프로세스와 동일 파일을
+    # 공유하므로 최상단 임포트를 피한다). 이 프로세스는 dim 패치가 필요 없지만,
+    # 최상단에서 import하면 --worker 로 실행될 때도 같이 실행돼 패치보다 먼저
+    # app.models.chunk 를 로드해버린다.
+    from compare_strategies import (  # type: ignore[import-not-found]
+        RECALL_KS,
+        _format_summary_line,
+        _load_queries,
+        _load_valid_endpoints,
+        _summarize,
+        _validate_labels,
+    )
+
+    queries = _load_queries()
     openapi_doc = (_DIR / "openapi.json").read_text()
     _validate_labels(queries, _load_valid_endpoints(openapi_doc))
 

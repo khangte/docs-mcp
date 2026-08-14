@@ -30,7 +30,6 @@ def bootstrap_app_state(cfg: Settings | None = None) -> AppState:
     return AppState.from_engine(
         engine=engine,
         fetcher=HttpOpenAPIFetcher(),
-        hybrid_alpha=cfg.hybrid_alpha,
     )
 
 

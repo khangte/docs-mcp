@@ -193,8 +193,8 @@ def test_vector_fallback_respects_project_filter(app_state, sample_openapi_3: st
     bundle = _bundle(app_state)
     # "invoiceOnly" 는 A 문서(petstore)에는 전혀 등장하지 않는 키워드이므로
     # project="B" 범위에서 키워드 0건 → 벡터 폴백으로 전환되게 만든다.
-    candidate_chunks = bundle.chunk_repo.list_endpoint_chunks(project="B")
-    assert candidate_chunks, "B 프로젝트에 청크가 있어야 폴백 대상이 있다"
+    candidate_chunk_ids = bundle.chunk_repo.list_endpoint_chunk_ids(project="B")
+    assert candidate_chunk_ids, "B 프로젝트에 청크가 있어야 폴백 대상이 있다"
 
     candidates = bundle.candidate_search.search(
         "zzzzz_nothing_matches_here_xxx", CandidateSearchOptions(top_k=10, project="B")

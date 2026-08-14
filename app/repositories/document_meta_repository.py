@@ -60,33 +60,6 @@ class DocumentMetaRepository:
         )
         return self._session.execute(stmt).scalars().all()
 
-    def list_by_source(
-        self, source: str, project: str | None = None
-    ) -> Sequence[DocumentMeta]:
-        """특정 source 의 메타 행을 external_id 오름차순으로 반환한다.
-
-        Args:
-            source: 대상 출처.
-            project: 주어지면 해당 project 로 범위를 제한한다.
-        """
-        stmt = select(DocumentMeta).where(DocumentMeta.source == source)
-        if project is not None:
-            stmt = stmt.where(DocumentMeta.project == project)
-        stmt = stmt.order_by(DocumentMeta.external_id)
-        return self._session.execute(stmt).scalars().all()
-
-    def list_all(
-        self, source: str | None = None, project: str | None = None
-    ) -> Sequence[DocumentMeta]:
-        """메타 행 전체를 반환한다. source/project 를 주면 그 범위로 제한한다."""
-        stmt = select(DocumentMeta)
-        if source is not None:
-            stmt = stmt.where(DocumentMeta.source == source)
-        if project is not None:
-            stmt = stmt.where(DocumentMeta.project == project)
-        stmt = stmt.order_by(DocumentMeta.source, DocumentMeta.external_id)
-        return self._session.execute(stmt).scalars().all()
-
     def search_by_tokens(
         self,
         tokens: Sequence[str],

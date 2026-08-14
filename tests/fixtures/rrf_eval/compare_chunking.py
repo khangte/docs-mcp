@@ -14,15 +14,10 @@
 
 from __future__ import annotations
 
-import json
-import statistics
-import uuid
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, NamedTuple
+from typing import Callable
 
-from metrics import dcg_at, recall_at, reciprocal_rank  # type: ignore[import-not-found]
-from sqlalchemy import text
+from metrics import recall_at, reciprocal_rank  # type: ignore[import-not-found]
 
 import app.services.indexer.indexer_service as indexer_service_module
 from app.composition import AppState, build_services
@@ -36,74 +31,21 @@ from app.services.indexer.chunk_builder import (
 from app.services.ingestor.openapi_fetcher import InMemoryFetcher
 from app.services.parser.openapi_parser import ParsedDocument
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
+from compare_strategies import (  # type: ignore[import-not-found]
+    RECALL_KS,
+    EvalQuery,
+    _drop_temp_db,
+    _format_summary_line,
+    _load_queries,
+    _load_valid_endpoints,
+    _make_temp_db,
+    _rank_of_answer,
+    _summarize,
+    _validate_labels,
+)
 
 _DIR = Path(__file__).parent
 TOP_K = 10
-RECALL_KS = (1, 3, 5, 10)
-
-
-@dataclass
-class EvalQuery:
-    query: str
-    category: str
-    accepted: list[tuple[str, str]]
-
-
-def _load_queries() -> list[EvalQuery]:
-    raw = json.loads((_DIR / "queries.json").read_text())
-    return [
-        EvalQuery(
-            query=item["query"],
-            category=item["category"],
-            accepted=[(m, p) for m, p in item["accepted"]],
-        )
-        for item in raw
-    ]
-
-
-def _load_valid_endpoints(openapi_doc: str) -> set[tuple[str, str]]:
-    paths = json.loads(openapi_doc)["paths"]
-    return {(method.upper(), path) for path, methods in paths.items() for method in methods}
-
-
-def _validate_labels(queries: list[EvalQuery], valid_endpoints: set[tuple[str, str]]) -> None:
-    bad = [
-        (eq.query, method, path)
-        for eq in queries
-        for method, path in eq.accepted
-        if (method, path) not in valid_endpoints
-    ]
-    if bad:
-        raise ValueError(f"미존재 라벨(openapi.json에 없는 accepted 엔드포인트): {bad}")
-
-
-def _make_temp_db() -> tuple[str, str]:
-    """관리자 접속 URL과 새로 만든 임시 DB의 접속 URL을 반환한다."""
-    admin_url = "postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/docs_mcp"
-    dbname = f"chunkeval_{uuid.uuid4().hex[:8]}"
-    admin = create_db_engine(admin_url, isolation_level="AUTOCOMMIT")
-    with admin.connect() as c:
-        c.execute(text(f'CREATE DATABASE "{dbname}"'))
-    test_url = admin_url.rsplit("/", 1)[0] + "/" + dbname
-    setup = create_db_engine(test_url)
-    with setup.begin() as c:
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    return admin_url, test_url
-
-
-def _drop_temp_db(admin_url: str, dbname: str) -> None:
-    admin = create_db_engine(admin_url, isolation_level="AUTOCOMMIT")
-    with admin.connect() as c:
-        c.execute(text(f'DROP DATABASE "{dbname}" WITH (FORCE)'))
-
-
-def _rank_of_answer(candidates, accepted: list[tuple[str, str]]) -> int | None:
-    accepted_set = set(accepted)
-    for i, c in enumerate(candidates, start=1):
-        if (c.method, c.path) in accepted_set:
-            return i
-    return None
 
 
 def build_endpoint_chunk_text_contextual(endpoint) -> str:
@@ -141,25 +83,6 @@ def build_chunks_contextual(
     baseline_chunks = build_chunks_baseline(document, endpoint_ids, section_ids)
     chunks.extend(c for c in baseline_chunks if c.chunk_type != "endpoint")
     return chunks
-
-
-class EvalSummary(NamedTuple):
-    recall: dict[int, float]
-    mrr: float
-    ndcg10: float
-
-
-def _summarize(ranks: list[int | None]) -> EvalSummary:
-    n = len(ranks)
-    recall = {k: sum(recall_at(r, k) for r in ranks) / n for k in RECALL_KS}
-    mrr = statistics.mean(reciprocal_rank(r) for r in ranks)
-    ndcg10 = statistics.mean(dcg_at(r, 10) for r in ranks)
-    return EvalSummary(recall=recall, mrr=mrr, ndcg10=ndcg10)
-
-
-def _format_summary_line(label: str, summary: EvalSummary) -> str:
-    recall_str = " ".join(f"Recall@{k} {summary.recall[k]:.0%}" for k in RECALL_KS)
-    return f"- {label}: {recall_str} | MRR {summary.mrr:.3f} | nDCG@10 {summary.ndcg10:.3f}"
 
 
 def _run_variant(

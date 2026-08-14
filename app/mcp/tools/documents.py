@@ -5,14 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import anyio
 from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
-from app.core.db import managed_session
-from app.core.errors import DomainError, IntegrationError
 from app.mcp.payloads import _to_document_content_payload, _to_document_search_payload
-from app.mcp.tools._common import _run_bundle, to_error_payload
+from app.mcp.tools._common import run_bundle_tool
 from app.mcp.types import (
     DocumentContentPayload,
     DocumentSearchResponse,
@@ -20,13 +17,11 @@ from app.mcp.types import (
     ErrorPayload,
     RegisterDocumentResult,
 )
-from app.repositories.document_repository import DocumentRepository
 from app.services.documents.document_search_service import DocumentSearchOptions
 
 
 def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
     """문서 관련 MCP 도구(list/register/search_documents/get_document)를 등록한다."""
-    session_factory = app_state.session_factory
 
     @mcp.tool()
     async def list_documents(
@@ -44,27 +39,22 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
             연동 오류가 발생하면 error/code/message 필드를 담은 ErrorPayload를
             대신 반환한다.
         """
-        def _sync() -> list[DocumentSummary] | ErrorPayload:
-            try:
-                with managed_session(session_factory) as session:
-                    repo = DocumentRepository(session)
-                    docs = repo.list_all(project=project)
-                    return [
-                        {
-                            "document_id": d.id,
-                            "title": d.title,
-                            "version": d.version,
-                            "doc_type": d.doc_type,
-                            "project": d.project,
-                            "source_url": d.source_url,
-                            "endpoints_count": len(d.endpoints),
-                            "indexed_at": d.indexed_at.isoformat() if d.indexed_at else None,
-                        }
-                        for d in docs
-                    ]
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> list[DocumentSummary]:
+            docs = bundle.document_repo.list_all(project=project)
+            return [
+                {
+                    "document_id": d.id,
+                    "title": d.title,
+                    "version": d.version,
+                    "doc_type": d.doc_type,
+                    "project": d.project,
+                    "source_url": d.source_url,
+                    "endpoints_count": len(d.endpoints),
+                    "indexed_at": d.indexed_at.isoformat() if d.indexed_at else None,
+                }
+                for d in docs
+            ]
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def register_document(
@@ -99,32 +89,27 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
             raw_document = json.dumps(raw_document)
         raw_doc_captured = raw_document
 
-        def _sync() -> RegisterDocumentResult | ErrorPayload:
-            def _inner(bundle):
-                result = bundle.sync_service.register(
-                    project=project,
-                    source_url=source_url,
-                    raw_document=raw_doc_captured,
-                    title_override=title_override,
-                    doc_type=doc_type,
-                )
-                doc = result.document
-                return {
-                    "document_id": doc.id,
-                    "title": doc.title,
-                    "version": doc.version,
-                    "doc_type": doc.doc_type,
-                    "project": doc.project,
-                    "endpoints_count": result.endpoints_count,
-                    "sections_count": result.sections_count,
-                    "chunks_count": result.chunks_count,
-                    "status": result.status,
-                }
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> RegisterDocumentResult:
+            result = bundle.sync_service.register(
+                project=project,
+                source_url=source_url,
+                raw_document=raw_doc_captured,
+                title_override=title_override,
+                doc_type=doc_type,
+            )
+            doc = result.document
+            return {
+                "document_id": doc.id,
+                "title": doc.title,
+                "version": doc.version,
+                "doc_type": doc.doc_type,
+                "project": doc.project,
+                "endpoints_count": result.endpoints_count,
+                "sections_count": result.sections_count,
+                "chunks_count": result.chunks_count,
+                "status": result.status,
+            }
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def search_documents(
@@ -165,18 +150,13 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
             빈 리스트다. 검색 중 도메인/외부 연동 오류가 발생하면
             error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
-        def _sync() -> DocumentSearchResponse | ErrorPayload:
-            def _inner(bundle) -> DocumentSearchResponse:
-                options = DocumentSearchOptions(
-                    top_k=top_k, source=source, project=project, query_variants=query_variants
-                )
-                items = bundle.document_search_service.search(query, options)
-                return _to_document_search_payload(items)
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> DocumentSearchResponse:
+            options = DocumentSearchOptions(
+                top_k=top_k, source=source, project=project, query_variants=query_variants
+            )
+            items = bundle.document_search_service.search(query, options)
+            return _to_document_search_payload(items)
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def get_document(source: str, external_id: str) -> DocumentContentPayload | ErrorPayload:
@@ -194,12 +174,7 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
             external_id 이거나 권한이 없으면 error/code/message 필드를 담은
             ErrorPayload를 대신 반환한다.
         """
-        def _sync() -> DocumentContentPayload | ErrorPayload:
-            def _inner(bundle) -> DocumentContentPayload:
-                content = bundle.document_search_service.get_document(source, external_id)
-                return _to_document_content_payload(content)
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> DocumentContentPayload:
+            content = bundle.document_search_service.get_document(source, external_id)
+            return _to_document_content_payload(content)
+        return await run_bundle_tool(app_state, _inner)

@@ -7,9 +7,9 @@ from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
 from app.core.db import managed_session
-from app.core.errors import DocumentNotFoundError, DomainError, IntegrationError
+from app.core.errors import DocumentNotFoundError
 from app.mcp.payloads import _to_endpoint_details_payload, _to_resolved_schema_payload, _to_tag_list_payload
-from app.mcp.tools._common import _run_bundle, to_error_payload
+from app.mcp.tools._common import run_bundle_tool
 from app.mcp.types import (
     EndpointCandidateItem,
     EndpointDetails,
@@ -64,31 +64,26 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             project 와 불일치하면(빈 결과와 구분해) code="document_not_found"
             에러 페이로드를 반환한다.
         """
-        def _sync() -> EndpointSearchResponse | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> EndpointSearchResponse:
-                options = CandidateSearchOptions(
-                    top_k=top_k,
-                    document_id=document_id,
-                    project=project,
-                    query_variants=query_variants,
-                )
-                candidates = bundle.candidate_search.search(query, options)
-                items: list[EndpointCandidateItem] = [
-                    {
-                        "endpoint_id": c.endpoint_id,
-                        "method": c.method,
-                        "path": c.path,
-                        "summary": c.summary,
-                        "match_type": c.match_type,
-                    }
-                    for c in candidates
-                ]
-                return {"items": items}
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> EndpointSearchResponse:
+            options = CandidateSearchOptions(
+                top_k=top_k,
+                document_id=document_id,
+                project=project,
+                query_variants=query_variants,
+            )
+            candidates = bundle.candidate_search.search(query, options)
+            items: list[EndpointCandidateItem] = [
+                {
+                    "endpoint_id": c.endpoint_id,
+                    "method": c.method,
+                    "path": c.path,
+                    "summary": c.summary,
+                    "match_type": c.match_type,
+                }
+                for c in candidates
+            ]
+            return {"items": items}
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def get_endpoint_details(
@@ -120,17 +115,12 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             example_code 가 추가된다. endpoint_id가 존재하지 않으면
             error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
-        def _sync() -> EndpointDetails | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> EndpointDetails:
-                result = bundle.endpoint_details_service.get_details(
-                    endpoint_id, include_example=include_example
-                )
-                return _to_endpoint_details_payload(result)
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> EndpointDetails:
+            result = bundle.endpoint_details_service.get_details(
+                endpoint_id, include_example=include_example
+            )
+            return _to_endpoint_details_payload(result)
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def resolve_ref(
@@ -160,17 +150,12 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             불일치하거나, 해당 스키마가 없으면 error/code/message 필드를 담은
             ErrorPayload를 대신 반환한다.
         """
-        def _sync() -> ResolvedSchemaResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> ResolvedSchemaResult:
-                resolved = bundle.schema_ref_resolver.resolve(
-                    ref, document_id=document_id, project=project
-                )
-                return _to_resolved_schema_payload(resolved)
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> ResolvedSchemaResult:
+            resolved = bundle.schema_ref_resolver.resolve(
+                ref, document_id=document_id, project=project
+            )
+            return _to_resolved_schema_payload(resolved)
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def list_tags(
@@ -193,17 +178,12 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             document_id가 존재하지 않거나 project 와 불일치하면
             error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """
-        def _sync() -> TagListResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> TagListResult:
-                summaries = bundle.tag_catalog_service.list_tags(
-                    document_id=document_id, project=project
-                )
-                return _to_tag_list_payload(summaries)
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> TagListResult:
+            summaries = bundle.tag_catalog_service.list_tags(
+                document_id=document_id, project=project
+            )
+            return _to_tag_list_payload(summaries)
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.resource("document://{document_id}/raw")
     async def get_raw_document(document_id: str) -> str:

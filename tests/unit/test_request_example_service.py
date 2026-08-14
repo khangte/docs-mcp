@@ -30,35 +30,6 @@ def test_curl_example_contains_method_and_path(
     assert "{petId}" not in payload["code"]
 
 
-def test_fetch_example_valid_js_call(services_factory, sample_openapi_3: str) -> None:
-    services, ep = _register_and_find_get_pet(services_factory, sample_openapi_3)
-    payload = services.example_service.generate(ep.id, "fetch")
-    assert payload["format"] == "fetch"
-    assert payload["code"].startswith("fetch(")
-    assert "/pet/42" in payload["code"]
-    assert '"method": "GET"' in payload["code"]
-
-
-def test_axios_example_contains_method_and_url(
-    services_factory, sample_openapi_3: str
-) -> None:
-    services, ep = _register_and_find_get_pet(services_factory, sample_openapi_3)
-    payload = services.example_service.generate(ep.id, "axios")
-    assert payload["format"] == "axios"
-    assert payload["code"].startswith("axios(")
-    assert '"method": "get"' in payload["code"]
-    assert "/pet/42" in payload["code"]
-
-
-def test_python_example_uses_requests(services_factory, sample_openapi_3: str) -> None:
-    services, ep = _register_and_find_get_pet(services_factory, sample_openapi_3)
-    payload = services.example_service.generate(ep.id, "python")
-    assert payload["format"] == "python"
-    assert "import requests" in payload["code"]
-    assert "requests.get(" in payload["code"]
-    assert "/pet/42" in payload["code"]
-
-
 def test_unsupported_format_raises(services_factory, sample_openapi_3: str) -> None:
     services, ep = _register_and_find_get_pet(services_factory, sample_openapi_3)
     with pytest.raises(ValidationError):

@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import anyio
 from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
-from app.core.errors import DomainError, IntegrationError
 from app.mcp.payloads import _to_drive_source_item, _to_notion_source_item, _to_refresh_payload
-from app.mcp.tools._common import _run_bundle, to_error_payload
+from app.mcp.tools._common import run_bundle_tool
 from app.mcp.types import (
     DriveSourceListResult,
     ErrorPayload,
@@ -66,21 +64,16 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             document_id 목록이며, 개별 실패는 다른 문서 처리를 막지 않는다.
             include_registered=False 면 registered 키 자체가 없다(하위호환).
         """
-        def _sync() -> RefreshIndexResult | ErrorPayload:
-            def _inner(bundle) -> RefreshIndexResult:
-                payload = _to_refresh_payload(
-                    bundle.document_index_service.refresh(source=source, project=project)
+        def _inner(bundle: ServiceBundle) -> RefreshIndexResult:
+            payload = _to_refresh_payload(
+                bundle.document_index_service.refresh(source=source, project=project)
+            )
+            if include_registered:
+                payload["registered"] = resync_registered_documents(
+                    bundle, project=project, force=force
                 )
-                if include_registered:
-                    payload["registered"] = resync_registered_documents(
-                        bundle, project=project, force=force
-                    )
-                return payload
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+            return payload
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def register_drive_source(
@@ -99,15 +92,10 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             project 나 folder_id 가 비었으면 error/code/message 필드를 담은
             ErrorPayload(code="validation_error")를 대신 반환한다.
         """
-        def _sync() -> RegisterDriveSourceResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> RegisterDriveSourceResult:
-                row, status = bundle.project_source_service.register(project, "drive", folder_id)
-                return {"project": row.project, "folder_id": row.location, "status": status}
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> RegisterDriveSourceResult:
+            row, status = bundle.project_source_service.register(project, "drive", folder_id)
+            return {"project": row.project, "folder_id": row.location, "status": status}
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def list_drive_sources(
@@ -122,19 +110,14 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             items 키에 project/folder_id/created_at/updated_at 을 갖는 항목
             리스트를 담은 dict. project 오름차순으로 결정적으로 정렬된다.
         """
-        def _sync() -> DriveSourceListResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> DriveSourceListResult:
-                if project is not None:
-                    row = bundle.project_source_service.get(project, "drive")
-                    rows = [row] if row is not None else []
-                else:
-                    rows = list(bundle.project_source_service.list_by_type("drive"))
-                return {"items": [_to_drive_source_item(r) for r in rows]}
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> DriveSourceListResult:
+            if project is not None:
+                row = bundle.project_source_service.get(project, "drive")
+                rows = [row] if row is not None else []
+            else:
+                rows = list(bundle.project_source_service.list_by_type("drive"))
+            return {"items": [_to_drive_source_item(r) for r in rows]}
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def remove_drive_source(project: str) -> RemoveDriveSourceResult | ErrorPayload:
@@ -149,17 +132,10 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         Returns:
             project, removed(bool)를 담은 dict.
         """
-        def _sync() -> RemoveDriveSourceResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> RemoveDriveSourceResult:
-                normalized_project, removed = bundle.project_source_service.remove(
-                    project, "drive"
-                )
-                return {"project": normalized_project, "removed": removed}
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> RemoveDriveSourceResult:
+            normalized_project, removed = bundle.project_source_service.remove(project, "drive")
+            return {"project": normalized_project, "removed": removed}
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def register_notion_source(
@@ -178,21 +154,16 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             dict. project 나 database_id 가 비었으면 error/code/message
             필드를 담은 ErrorPayload(code="validation_error")를 대신 반환한다.
         """
-        def _sync() -> RegisterNotionSourceResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> RegisterNotionSourceResult:
-                row, status = bundle.project_source_service.register(
-                    project, "notion", database_id, kind="database"
-                )
-                return {
-                    "project": row.project,
-                    "database_id": row.location,
-                    "status": status,
-                }
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> RegisterNotionSourceResult:
+            row, status = bundle.project_source_service.register(
+                project, "notion", database_id, kind="database"
+            )
+            return {
+                "project": row.project,
+                "database_id": row.location,
+                "status": status,
+            }
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def register_notion_page(
@@ -215,19 +186,14 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             project 나 page_id 가 비었으면 error/code/message 필드를 담은
             ErrorPayload(code="validation_error")를 대신 반환한다.
         """
-        def _sync() -> RegisterNotionPageResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> RegisterNotionPageResult:
-                row, status = bundle.project_source_service.register_page(project, page_id)
-                return {
-                    "project": row.project,
-                    "page_id": row.location,
-                    "status": status,
-                }
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> RegisterNotionPageResult:
+            row, status = bundle.project_source_service.register_page(project, page_id)
+            return {
+                "project": row.project,
+                "page_id": row.location,
+                "status": status,
+            }
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def list_notion_sources(
@@ -244,19 +210,14 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             page 매핑이어도 값은 `database_id` 필드에 담긴다. project
             오름차순으로 결정적으로 정렬된다.
         """
-        def _sync() -> NotionSourceListResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> NotionSourceListResult:
-                if project is not None:
-                    row = bundle.project_source_service.get(project, "notion")
-                    rows = [row] if row is not None else []
-                else:
-                    rows = list(bundle.project_source_service.list_by_type("notion"))
-                return {"items": [_to_notion_source_item(r) for r in rows]}
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> NotionSourceListResult:
+            if project is not None:
+                row = bundle.project_source_service.get(project, "notion")
+                rows = [row] if row is not None else []
+            else:
+                rows = list(bundle.project_source_service.list_by_type("notion"))
+            return {"items": [_to_notion_source_item(r) for r in rows]}
+        return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()
     async def remove_notion_source(project: str) -> RemoveNotionSourceResult | ErrorPayload:
@@ -271,14 +232,7 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         Returns:
             project, removed(bool)를 담은 dict.
         """
-        def _sync() -> RemoveNotionSourceResult | ErrorPayload:
-            def _inner(bundle: ServiceBundle) -> RemoveNotionSourceResult:
-                normalized_project, removed = bundle.project_source_service.remove(
-                    project, "notion"
-                )
-                return {"project": normalized_project, "removed": removed}
-            try:
-                return _run_bundle(app_state, _inner)
-            except (DomainError, IntegrationError) as e:
-                return to_error_payload(e)
-        return await anyio.to_thread.run_sync(_sync)
+        def _inner(bundle: ServiceBundle) -> RemoveNotionSourceResult:
+            normalized_project, removed = bundle.project_source_service.remove(project, "notion")
+            return {"project": normalized_project, "removed": removed}
+        return await run_bundle_tool(app_state, _inner)

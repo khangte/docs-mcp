@@ -5,6 +5,8 @@ SPEC 기능 1 의 검증 기준을 그대로 옮긴다.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.composition import build_services
@@ -14,12 +16,8 @@ from app.services.search.endpoint_candidate_search import (
     EndpointCandidateSearch,
 )
 from app.services.search.keyword_search import KeywordSearch
-from app.services.search.vector_search import VectorSearch
-from tests.fixtures.fakes import (
-    ExplodingEmbeddingProvider,
-    QueryAwareStubVectorSearch,
-    StubVectorSearch,
-)
+from app.services.search.vector_search import VectorSearch, VectorSearchHit
+from tests.fixtures.fakes import ExplodingEmbeddingProvider, StubVectorSearch
 
 NO_MATCH_QUERY = "zzzzz_nothing_matches_here_xxx"
 
@@ -222,7 +220,7 @@ def _search_with_stub_vector(
     """
     bundle = _bundle(app_state)
     endpoint_chunks = [
-        (c.id, c.ref_id) for c in bundle.chunk_repo.list_endpoint_chunks()
+        (c.id, c.ref_id) for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"
     ]
     assert endpoint_chunks, "엔드포인트 청크가 있어야 스텁 검증이 의미 있다"
     stub = StubVectorSearch(endpoint_chunks[:stub_chunk_limit], score=stub_score)
@@ -396,13 +394,26 @@ def test_query_variants_widen_vector_arm_too(app_state, sample_openapi_3: str) -
     """
     _register(app_state, sample_openapi_3)
     bundle = _bundle(app_state)
-    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_endpoint_chunks()]
+    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
     assert endpoint_chunks
 
     original_query = "고객 새로 등록"
     variant_query = "create customer"
     target_chunk = endpoint_chunks[0]
-    stub = QueryAwareStubVectorSearch({variant_query: [target_chunk]})
+
+    queries_seen: list[str] = []
+
+    def stub_search(
+        query: str, top_k: int, candidates: set[str] | None = None
+    ) -> list[VectorSearchHit]:
+        queries_seen.append(query)
+        chunks = [target_chunk] if query == variant_query else []
+        return [
+            VectorSearchHit(chunk_id=chunk_id, ref_id=ref_id, score=0.9)
+            for chunk_id, ref_id in chunks[:top_k]
+        ]
+
+    stub = SimpleNamespace(search=stub_search)
     search = EndpointCandidateSearch(
         chunk_repo=bundle.chunk_repo,
         endpoint_repo=bundle.endpoint_repo,
@@ -416,7 +427,7 @@ def test_query_variants_widen_vector_arm_too(app_state, sample_openapi_3: str) -
         CandidateSearchOptions(top_k=5, query_variants=[variant_query]),
     )
 
-    assert stub.queries_seen == [original_query, variant_query]
+    assert queries_seen == [original_query, variant_query]
     assert any(c.endpoint_id == target_chunk[1] for c in candidates)
 
 
@@ -429,7 +440,7 @@ def test_rrf_both_match_type_when_keyword_and_vector_agree(
     """키워드·벡터 두 arm 모두에서 같은 엔드포인트가 나오면 match_type="both" 다."""
     _register(app_state, sample_openapi_3)
     bundle = _bundle(app_state)
-    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_endpoint_chunks()]
+    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
     keyword_search = KeywordSearch(bundle.chunk_repo)
     keyword_hits = keyword_search.search("find pet by id", top_k=50)
     assert keyword_hits, "키워드 arm 이 최소 1건은 잡아야 시나리오가 의미 있다"

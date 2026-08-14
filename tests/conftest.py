@@ -131,7 +131,6 @@ def app_state(pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_sourc
         engine=pg_engine,
         fetcher=in_memory_fetcher,
         embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
-        hybrid_alpha=0.4,
         vector_fallback_enabled=True,
         drive_source_builder=lambda folder_id: fake_drive_source,
         notion_source_builder=lambda notion_id, kind: fake_notion_source,
@@ -270,7 +269,6 @@ def two_project_app_state(
         engine=pg_engine,
         fetcher=in_memory_fetcher,
         embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
-        hybrid_alpha=0.4,
         vector_fallback_enabled=True,
         drive_source_builder=fake_drive_source_builder,
         notion_source_builder=fake_notion_source_builder,
@@ -366,15 +364,4 @@ def services_factory(app_state):
 
     return _factory
 
-
-@pytest.fixture()
-def seeded_services(services_factory, sample_openapi_3):
-    """app_state 와 동일 엔진을 공유하는 서비스로 샘플 문서를 먼저 등록."""
-    services = services_factory()
-    result = services.sync_service.register(
-        project="default",
-        source_url=None,
-        raw_document=sample_openapi_3,
-    )
-    return {"services": services, "document_id": result.document.id, "result": result}
 

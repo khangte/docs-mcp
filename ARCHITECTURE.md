@@ -109,7 +109,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 
 - **Vector Search**: pgvector(cosine similarity, HNSW 인덱스)를 이용한 의미론적 검색
 - **Keyword Search**: Postgres FTS(`to_tsquery` OR 매칭 + `ts_rank`, `chunk.text_tsv` 생성컬럼 + GIN 인덱스) 기반 키워드 검색
-- **Rerank**: 키워드/벡터 결과를 RRF(Reciprocal Rank Fusion, `RRF_K=60`)로 순위 융합(기본 `rrf` 전략). 롤백용 `fallback` 전략은 키워드 우선·0건일 때만 벡터를 보조로 시도하는 배타적 분기이며, `hybrid_alpha` 가중합은 두 전략 어디에도 적용되지 않는 legacy 설정이다(과거 `SearchService` 하이브리드 전용 — 검색 로직(`app/services/`)에서는 미참조이며, `.env.example`/README 에서도 제거했다. config/bootstrap/composition 의 기본값 배선만 잔존한다)
+- **Rerank**: 키워드/벡터 결과를 RRF(Reciprocal Rank Fusion, `RRF_K=60`)로 순위 융합(기본 `rrf` 전략). 롤백용 `fallback` 전략은 키워드 우선·0건일 때만 벡터를 보조로 시도하는 배타적 분기다. `hybrid_alpha` 가중합(과거 `SearchService` 하이브리드 전용 legacy 설정)은 config/bootstrap/composition 배선까지 완전히 제거했다
 
 ### 5-3. 프로젝트 단위 격리
 

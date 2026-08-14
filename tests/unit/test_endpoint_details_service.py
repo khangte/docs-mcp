@@ -6,13 +6,25 @@ SPEC 기능 2 의 검증 기준을 그대로 옮긴다.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from app.composition import build_services
 from app.core.errors import EndpointNotFoundError
 from app.services.endpoints.endpoint_details_service import EndpointDetailsService
-from tests.fixtures.fakes import CountingExampleService
+
+
+def _counting_example_service(delegate):
+    """호출 위임 서비스를 감싸 generate() 호출 횟수를 세는 페이크."""
+    ns = SimpleNamespace(generate_call_count=0)
+
+    def generate(endpoint_id: str, fmt: str):
+        ns.generate_call_count += 1
+        return delegate.generate(endpoint_id, fmt)
+
+    ns.generate = generate
+    return ns
 
 
 def _register(app_state, raw: str) -> str:
@@ -55,7 +67,7 @@ def test_default_does_not_call_example_generation(app_state, sample_openapi_3: s
     doc_id = _register(app_state, sample_openapi_3)
     endpoint_id = _find_endpoint_id(app_state, doc_id, "GET", "/pet/{petId}")
     bundle = _bundle(app_state)
-    counting = CountingExampleService(bundle.example_service)
+    counting = _counting_example_service(bundle.example_service)
     service = EndpointDetailsService(
         endpoint_repo=bundle.endpoint_repo, example_service=counting
     )
@@ -70,7 +82,7 @@ def test_include_example_true_calls_generation_once(app_state, sample_openapi_3:
     doc_id = _register(app_state, sample_openapi_3)
     endpoint_id = _find_endpoint_id(app_state, doc_id, "GET", "/pet/{petId}")
     bundle = _bundle(app_state)
-    counting = CountingExampleService(bundle.example_service)
+    counting = _counting_example_service(bundle.example_service)
     service = EndpointDetailsService(
         endpoint_repo=bundle.endpoint_repo, example_service=counting
     )
@@ -289,7 +301,7 @@ def test_unknown_endpoint_raises_not_found(app_state) -> None:
 def test_unknown_endpoint_does_not_call_example_generation(app_state) -> None:
     """엔드포인트가 없으면 include_example=True 여도 예시 생성을 시도하지 않는다."""
     bundle = _bundle(app_state)
-    counting = CountingExampleService(bundle.example_service)
+    counting = _counting_example_service(bundle.example_service)
     service = EndpointDetailsService(
         endpoint_repo=bundle.endpoint_repo, example_service=counting
     )
