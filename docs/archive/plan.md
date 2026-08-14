@@ -1,6 +1,22 @@
-# 프로젝트 기획서
+# 프로젝트 기획서 (아카이브 — 현행 아님)
 
-> **[2026-08-05]** 이 문서에 등장하는 FastAPI 관련 내용은 코드베이스에서 제거되었습니다. 현재는 MCP 서버 단일 진입점 구조입니다.
+> **⚠️ 이 문서는 프로젝트 착수 시점의 초기 기획서이며, 현재 코드베이스를 설명하지 않습니다.**
+> 2026-08-14 자로 `docs/product_specs/` 에서 `docs/archive/` 로 옮겼습니다. 보존하는
+> 이유는 하나뿐입니다 — `docs/adr/` 의 ADR 들이 결정 당시 근거로 이 문서의 절 번호를
+> 인용하고 있어(`관련: plan.md §6` 등), 지우면 그 인용이 갈 곳을 잃습니다.
+> **설계 판단의 근거로 이 문서를 인용하지 마세요.**
+>
+> 현행 문서는 다음입니다:
+>
+> - 구조·레이어·MCP 도구 계약 → [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
+> - 검색 로직 상세 → [`docs/search-flow.md`](../search-flow.md)
+> - 운영(등록·도구 목록·배치) → [`docs/operations.md`](../operations.md)
+> - 결정 기록 → [`docs/adr/`](../adr/)
+>
+> 특히 아래는 이 문서와 현재 코드가 **정면으로 어긋나는** 지점입니다:
+> FastAPI 기반 REST API 계층(제거됨, MCP 단일 진입점), `src/` 디렉터리 구조(현재 `app/`),
+> `mcp_server.py` 단일 파일(현재 `app/mcp/server.py` + `app/mcp/tools/`),
+> OpenAPI 전용 범위(현재 Markdown·CSV·PDF/DOCX·Drive·Notion 포함).
 
 ## 1. 프로젝트명
 

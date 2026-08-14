@@ -1,6 +1,11 @@
 # 아키텍처 문서 (Simplified)
 
-본 문서는 `docs-mcp`의 핵심 설계 원칙과 구조를 정의한다. 상세 기획은 `docs/product_specs/plan.md`를 참고한다.
+본 문서는 `docs-mcp`의 핵심 설계 원칙과 구조를 정의한다. 검색 로직 상세는 `docs/search-flow.md`,
+운영 절차는 `docs/operations.md`, 결정 기록은 `docs/adr/` 를 참고한다.
+
+> 착수 시점의 초기 기획서는 `docs/archive/plan.md` 로 아카이브했다(FastAPI·`src/` 기반으로
+> 현재 구조와 어긋나므로 **설계 근거로 인용하지 않는다**). ADR 의 `관련: plan.md §N` 인용이
+> 갈 곳을 잃지 않게 보존만 한 것이다.
 
 ## 1. 설계 원칙
 
@@ -53,10 +58,11 @@ app/
 │   ├── payloads.py  # MCP 도구 결과 → 응답 dict(TypedDict) 변환 순수 함수
 │   └── types.py     # MCP 도구 응답 TypedDict 스키마
 ├── core/            # 공통 설정, DB 엔진, 예외 및 로깅
-├── models/          # SQLAlchemy ORM 모델 (Base, ApiDocument 등)
+├── models/          # SQLAlchemy ORM 모델 (Base, Document, Chunk, DocumentMeta 등)
 ├── repositories/    # 데이터베이스 액세스 레이어 (CRUD)
 ├── schemas/         # Pydantic DTO (요청/응답 모델)
 ├── scripts/         # 운영 배치 스크립트 (원샷 CLI)
+│   ├── diagnose_long_sections.py  # 과대 섹션 진단(운영 조사용)
 │   ├── reembed.py            # 임베딩 모델/차원 교체 후 재임베딩
 │   └── refresh_documents.py  # 문서 소스 주기 동기화(OS 스케줄러가 주기 소유)
 └── services/        # 비즈니스 로직
@@ -102,7 +108,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 ### 5-2. 검색 (Hybrid Search)
 
 - **Vector Search**: pgvector(cosine similarity, HNSW 인덱스)를 이용한 의미론적 검색
-- **Keyword Search**: Postgres FTS(`to_tsquery` OR 매칭 + `ts_rank`, `api_chunk.text_tsv` 생성컬럼 + GIN 인덱스) 기반 키워드 검색
+- **Keyword Search**: Postgres FTS(`to_tsquery` OR 매칭 + `ts_rank`, `chunk.text_tsv` 생성컬럼 + GIN 인덱스) 기반 키워드 검색
 - **Rerank**: 키워드/벡터 결과를 RRF(Reciprocal Rank Fusion, `RRF_K=60`)로 순위 융합(기본 `rrf` 전략). 롤백용 `fallback` 전략은 키워드 우선·0건일 때만 벡터를 보조로 시도하는 배타적 분기이며, `hybrid_alpha` 가중합은 두 전략 어디에도 적용되지 않는 legacy 설정이다(과거 `SearchService` 하이브리드 전용 — 검색 로직(`app/services/`)에서는 미참조이며, `.env.example`/README 에서도 제거했다. config/bootstrap/composition 의 기본값 배선만 잔존한다)
 
 ### 5-3. 프로젝트 단위 격리
@@ -135,7 +141,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 - 틱이 주기보다 길어져 겹치는 것은 Postgres advisory lock 으로 막는다(새 의존성 0, 프로세스
   종료 시 자동 해제). 락 키는 두 축이 다르다 — 같은 키면 무거운 축 B 가 가벼운 축 A 를 굶긴다.
 - 설계·실측 근거: `docs/architect-review/32-refresh-index-batch-automation.md`,
-  운영 방법(타이머 유닛·cron·종료코드)은 `README.md` "자동 동기화" 절.
+  운영 방법(타이머 유닛·cron·실행 환경 함정·종료코드)은 `docs/operations.md` "자동 동기화" 절.
 
 ## 6. MCP 도구 계약 (Interface)
 
@@ -148,11 +154,24 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 5. `resolve_ref`: `$ref` 컴포넌트 스키마 필드 펼치기 (`project`/`document_id` 필터 가능)
 6. `list_tags`: 등록 문서의 태그 목록 조회 (`project`/`document_id` 필터 가능)
 
-**협업 문서 (Google Drive / Notion)** 7. `search_documents`: Drive/Notion 문서 검색 (`project` 필터, 결과 부족 시 `query_variants` 로 후보 필터 확장 가능) 8. `get_document`: 협업 문서 원문 실시간 조회 9. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터, `include_registered`+`force` 로 URL 기반 ApiDocument 재동기화 가능)
+**협업 문서 (Google Drive / Notion)**
 
-**프로젝트→소스 매핑 (Drive 3종, Notion 4종)** 10. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록 11. `register_notion_page`: 프로젝트에 Notion 허브 페이지 매핑 등록(지정 페이지 하위 페이지·데이터베이스를 재귀 탐색(최대 4단계)해 검색 대상으로 삼음, Drive 에는 대응 도구 없음) 12. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회 13. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
+7. `search_documents`: Drive/Notion 문서 검색 (`project` 필터, 결과 부족 시 `query_variants` 로 후보 필터 확장 가능)
+8. `get_document`: 협업 문서 원문 실시간 조회
+9. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터, `include_registered`+`force` 로 URL 기반 `Document` 재동기화 가능)
 
-**리소스** 14. `document://{document_id}/raw`: 등록된 OpenAPI 문서의 원문(JSON/YAML) 조회
+**프로젝트→소스 매핑 (Drive 3종, Notion 4종)**
+
+10. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록
+11. `register_notion_page`: 프로젝트에 Notion 허브 페이지 매핑 등록(지정 페이지 하위 페이지·데이터베이스를 재귀 탐색(최대 4단계)해 검색 대상으로 삼음, Drive 에는 대응 도구 없음)
+12. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회
+13. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
+
+**리소스**
+
+14. `document://{document_id}/raw`: 등록된 OpenAPI 문서의 원문(JSON/YAML) 조회
+
+전체 17개 도구의 인자·반환 필드는 `docs/operations.md` "제공되는 도구 전체 목록" 을 참고한다.
 
 ## 7. 기술 스택 및 보안
 
