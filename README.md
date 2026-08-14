@@ -30,6 +30,10 @@ Markdown·CSV·PDF/DOCX·OpenAPI(Swagger) 문서와 Google Drive/Notion 협업 �
 
 검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM 이 반환된 후보(top_k) 중에서 선택합니다 — 서버는 **후보 피더**이고 품질 지표는 recall@k 입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
 
+위 수치는 자체 제작 평가셋 기준입니다. 실제 대형 스펙(Stripe/GitHub OpenAPI) 20질의에서는
+Recall@10 50%로 떨어지며, 그 간격과 대응 경위는 아래 구현 여정 문서에 정리해 두었습니다.
+
+- [`docs/implementation-journey.md`](docs/implementation-journey.md) — 로드맵 0~5가 실제로 어떤 순서·판단을 거쳐 구현됐는지(커밋·설계문서 매핑, 기각된 개선안 포함)
 - [`docs/search-flow.md`](docs/search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
 - [`docs/architect-review/03-search-performance-improvements.md`](docs/architect-review/03-search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
 - [`docs/architect-review/09-search-quality-post-rrf.md`](docs/architect-review/09-search-quality-post-rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토

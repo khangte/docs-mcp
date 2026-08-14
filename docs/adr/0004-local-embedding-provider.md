@@ -34,7 +34,7 @@
 ## 결과
 - 장점: 외부 API 키·비용·네트워크 의존 제거, 오프라인(모델 캐시 후) 동작 가능,
   다국어(한글) 의미 검색을 항상 사용 가능(키 유무에 좌우되지 않음).
-- 단점: 최초 실행 시 모델 다운로드(~120MB, HuggingFace 네트워크 필요),
+- 단점: 최초 실행 시 모델 다운로드(~471MB, HuggingFace 네트워크 필요; `cbc6312`에서 실측 정정),
   `torch`+`sentence-transformers` 의존성 무게 증가(CPU 전용 휠로 고정해
   CUDA 휠 포함은 방지). 배포 환경에서 모델을 미리 캐시(`HF_HOME`)해두는 것을 권장.
 - 후속 영향: `app/services/indexer/embedding_provider.py`(Protocol·구현체),
