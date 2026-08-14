@@ -1,4 +1,4 @@
-"""문서(OpenAPI/Markdown/CSV, 협업 문서) 관련 MCP 도구 등록."""
+"""문서(Markdown/CSV/PDF/DOCX/OpenAPI, 협업 문서) 관련 MCP 도구 등록."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
     async def list_documents(
         project: str | None = None,
     ) -> list[DocumentSummary] | ErrorPayload:
-        """등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다.
+        """등록된 문서(Markdown/CSV/PDF/DOCX/OpenAPI)의 요약 목록을 반환한다.
 
         Args:
             project: 특정 프로젝트로 범위를 제한하고 싶을 때 지정. 생략하면

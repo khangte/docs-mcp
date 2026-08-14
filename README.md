@@ -1,13 +1,13 @@
-# docs-mcp: OpenAPI RAG MCP Server
+# docs-mcp: RAG MCP Server
 
-OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 수집, 색인하고 하이브리드 검색(키워드+벡터)으로 원하는 API 엔드포인트나 문서 내용을 찾아주는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하는 것이 주 용도이며, 최종 자연어 답변 생성은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 수행합니다.
+Markdown·CSV·PDF/DOCX·OpenAPI(Swagger) 문서와 Google Drive/Notion 협업 문서를 수집·색인하고, 하이브리드 검색(키워드+벡터)으로 필요한 문서 내용을 찾아주는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하며, 최종 자연어 답변은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 생성합니다.
 
 ## 주요 기능
 
-- **다양한 문서 소스 관리**: URL 또는 로컬 텍스트를 통해 OpenAPI 3.x/Swagger 2.0, Markdown, CSV 문서를 등록, 목록 조회 및 삭제할 수 있습니다.
-- **하이브리드 검색(RRF 융합)**: 키워드(Postgres FTS)와 벡터 유사도 검색을 **RRF(Reciprocal Rank Fusion)**로 항상 융합해 원하는 API 엔드포인트 또는 문서 섹션을 정확하게 찾아냅니다.
-- **코드 예시 생성**: `get_endpoint_details`에서 `include_example=true`로 조회하면 엔드포인트 상세 정보로부터 `curl` 호출 예시 코드를 즉시 생성합니다.
-- **자동 재색인**: 문서의 내용 변경을 감지(해시 비교)하여 변경된 경우에만 지능적으로 인덱스를 업데이트합니다.
+- **다양한 문서 소스 관리**: URL 또는 원문으로 Markdown, CSV, PDF/DOCX, OpenAPI 3.x/Swagger 2.0 문서를 등록·조회·삭제. Google Drive/Notion 은 폴더/DB 매핑으로 연결합니다.
+- **하이브리드 검색(RRF 융합)**: 키워드(Postgres FTS)와 벡터 유사도를 **RRF(Reciprocal Rank Fusion)**로 항상 융합해 문서 섹션을 찾습니다.
+- **OpenAPI 전용 도구**: OpenAPI/Swagger 로 등록한 문서는 엔드포인트 검색·상세 조회(`curl` 예시 생성 포함)·`$ref` 펼치기·태그 목록을 추가로 제공합니다.
+- **자동 재색인**: 원문 해시를 비교해 변경된 문서만 다시 색인합니다.
 
 ## 기술 스택
 
@@ -18,17 +18,14 @@ OpenAPI(Swagger)·Markdown·CSV 문서와 Google Drive/Notion 협업 문서를 �
 - **Search**:
   - pgvector 코사인 거리(`<=>`, HNSW 인덱스) 기반 벡터 검색
   - 임베딩: 로컬 CPU 모델(`sentence-transformers`, `LocalEmbeddingProvider`, 기본 `intfloat/multilingual-e5-small`) 또는 결정적 해시 기반 폴백(`HashEmbeddingProvider`)
-  - 하이브리드 검색 엔진 (Keyword + Vector)
-- **문서 파서**: OpenAPI/Swagger, Markdown, CSV (`app/services/parser/document_router.py`가 자동 판별)
+- **문서 파서**: Markdown, CSV, PDF/DOCX, OpenAPI/Swagger (`app/services/parser/document_router.py`가 자동 판별). Drive 경유 XLSX/PPTX 도 텍스트 추출
 - **MCP**: `fastmcp` 서드파티 패키지
 - **Schema/DTO**: Pydantic v2
 <!-- /AUTO-GENERATED -->
 
 ## 시작하기
 
-아래 1~3(의존성 설치 → DB 준비 → 환경 설정)은 준비 단계입니다.
-준비가 끝나면 [MCP 연동](#mcp-model-context-protocol-연동) 절에서 MCP 클라이언트에 서버를 등록합니다.
-등록 후에는 클라이언트가 필요할 때마다 프로세스를 직접 실행하므로, 사용자가 서버를 따로 띄우는 단계는 없습니다.
+아래 1~3 은 준비 단계입니다. 끝나면 [MCP 연동](#mcp-model-context-protocol-연동)에서 클라이언트에 서버를 등록하며, 등록 후에는 클라이언트가 프로세스를 직접 실행하므로 서버를 따로 띄울 필요가 없습니다.
 
 ### 1. 의존성 설치
 
@@ -76,17 +73,11 @@ uv run alembic upgrade head
 - Notion 은 Integration 을 만들어 토큰을 발급하고, 대상 페이지/데이터베이스를
   해당 Integration 에 연결합니다.
 
-준비가 끝났으면 다음 절 [MCP 연동](#mcp-model-context-protocol-연동)에서 MCP 클라이언트에 서버를 등록하세요.
-
 ## MCP (Model Context Protocol) 연동
 
-이 프로젝트는 Claude Desktop 및 기타 MCP 호환 클라이언트에서 도구로 사용할 수 있는 MCP 서버 기능을 제공합니다.
-
-> `app/mcp/server.py`는 별도 진입점이며, 아래처럼 등록해두면 MCP 클라이언트(Claude
-> Desktop/Code 등)가 필요할 때마다 `command`+`args`로 직접 프로세스를 실행해 stdio로
-> 통신합니다. 단, **PostgreSQL(+pgvector)은 미리 떠 있어야** 합니다 — MCP 서버가
-> 내부적으로 이 DB에 접속하므로, 등록 전에 `docker compose up -d postgres` 와
-> `uv run alembic upgrade head` 는 실행해 두세요.
+진입점은 `app/mcp/server.py` 이며, 아래처럼 등록해두면 클라이언트가 `command`+`args`로
+프로세스를 실행해 stdio 로 통신합니다. 단 MCP 서버가 DB 에 접속하므로 **PostgreSQL(+pgvector)은
+미리 떠 있어야** 합니다(위 2단계).
 
 ### 1. Claude Desktop 설정 (macOS/Windows)
 
@@ -152,12 +143,10 @@ claude mcp remove docs-mcp   # 등록 해제
 `search_documents`, `refresh_index`)은 `project` 로 범위를 좁힐 수
 있습니다(생략 시 전체 프로젝트 대상 — 하위 호환).
 
-> **`project` 는 단순 문자열 태그이며 보안 경계가 아닙니다.** 인증도, 접근
-> 제어도 하지 않습니다. 같은 서버·같은 DB 자격증명에 접근할 수 있는 누구나
-> 모든 프로젝트의 문서를 `project` 필터 없이 조회할 수 있습니다. 서로 다른
-> 신뢰 수준의 사용자를 프로젝트로 격리하려는 목적이라면 이 기능으로는
-> 부족하며, 별도 서버·별도 DB·인증 계층이 필요합니다. 이 기능이 막아주는
-> 것은 "여러 프로젝트를 한 서버에서 쓸 때 검색 결과가 서로 섞이는 문제"뿐입니다.
+> **`project` 는 단순 문자열 태그이며 보안 경계가 아닙니다.** 인증도 접근 제어도
+> 없어, 같은 DB 자격증명을 가진 누구나 `project` 필터 없이 모든 문서를 조회할 수
+> 있습니다. 막아주는 것은 "여러 프로젝트의 검색 결과가 섞이는 문제"뿐이므로, 신뢰
+> 수준이 다른 사용자를 격리하려면 별도 서버·DB·인증 계층이 필요합니다.
 
 프로젝트별 Drive/Notion 소스 매핑은 `register_drive_source`/`register_notion_source`/
 `register_notion_page`(아래 도구 표 참고)로 하며, 매핑 등록/변경은 서버 재시작
@@ -176,7 +165,7 @@ claude mcp remove docs-mcp   # 등록 해제
 
 | 도구                     | 설명                                                                                                                                                                             | 반환 필드                                                                                                               |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `list_documents`         | 등록된 문서(OpenAPI/Markdown/CSV)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체)                                                                       | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at                                 |
+| `list_documents`         | 등록된 문서(Markdown/CSV/PDF/DOCX/OpenAPI)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체)                                                                       | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at                                 |
 | `register_document`      | 신규 문서를 등록한다. `project`(필수)와 URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별)                            | document_id, title, version, doc_type, project, endpoints_count, sections_count, chunks_count, status                   |
 | `search_endpoints`       | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조). `project`/`document_id` 로 범위를 제한할 수 있다                                      | items[{endpoint_id, method, path, summary, match_type}]                                                                 |
 | `get_endpoint_details`   | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함)                                                                                            | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
@@ -197,23 +186,20 @@ claude mcp remove docs-mcp   # 등록 해제
 본문을 실시간 조회한다(캐시엔 제목·URL·수정일만 저장). 새로 만든 문서가
 검색되지 않으면 `refresh_index` 를 먼저 실행한다.
 
-Drive/Notion 자격증명이 없으면 이 세 도구는 등록은 되지만 호출 시 "미구성"
-`IntegrationError`(`no document source is configured: ...`)를 반환한다.
-**"소스 미설정"과 "검색 결과 0건"은 구별된다** — 소스가 정상 구성됐는데 질의에
-맞는 문서가 없으면 `search_documents` 는 오류가 아니라 빈 `items` 를 돌려준다.
-어느 경우든 OpenAPI 경로는 영향받지 않는다.
+Drive/Notion 자격증명이 없으면 협업 문서 도구(`search_documents`/`get_document`/
+`refresh_index`)는 등록은 되지만 호출 시 "미구성" `IntegrationError`
+(`no document source is configured: ...`)를 반환한다. **"소스 미설정"과 "검색 결과
+0건"은 구별된다** — 소스가 정상 구성됐는데 맞는 문서가 없으면 오류가 아니라 빈
+`items` 를 돌려준다. 어느 경우든 OpenAPI 경로는 영향받지 않는다.
 
-`search_documents` 결과가 0건이거나 기대보다 적으면 문서 제목이 질의와 다른
-표현을 쓰고 있을 가능성이 크다(예: "주문조회 API" 질의로 "결제 내역 조회"
-문서를 못 찾음). 이럴 때는 같은 `query` 로 재호출하되 `query_variants` 에
-동의어·영한 혼용·유사 표현을 담아 넘긴다:
+결과가 0건이거나 기대보다 적으면 문서 제목이 질의와 다른 표현을 쓰는 경우가 많다.
+같은 `query` 로 재호출하되 `query_variants` 에 동의어·영한 혼용을 담아 넘긴다:
 
 ```
 search_documents(query="주문조회 API", query_variants=["결제 내역 조회", "order lookup"])
 ```
 
-`query_variants` 는 1단계 SQL 후보 필터만 넓히고 점수·순위 계산에는 섞이지
-않는다 — 상위 결과는 여전히 `query` 원본 토큰과 가장 잘 맞는 문서다.
+`query_variants` 는 1단계 SQL 후보 필터만 넓히고 점수·순위에는 섞이지 않는다.
 
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
@@ -230,39 +216,28 @@ search_documents(query="주문조회 API", query_variants=["결제 내역 조회
 준비 단계(1~3)와 MCP 서버 등록은 이미 끝났다고 가정합니다 →
 [시작하기](#시작하기), [MCP 연동](#mcp-model-context-protocol-연동).
 
-**(A) OpenAPI/Swagger — URL로 등록**
+**(A) Markdown/CSV/OpenAPI — URL 또는 원문으로 등록**
 
 ```
 register_document(project="my-api", source_url="https://example.com/openapi.json")
-```
-
-`doc_type` 은 생략 가능합니다. 원문이 `{` 로 시작하거나 앞부분에
-`openapi:`/`swagger:` 가 있으면 자동으로 openapi 로 판별됩니다.
-
-**(B) OpenAPI/Markdown/CSV — 원문 직접 등록**
-
-```
 register_document(project="my-api", raw_document="<원문 문자열 또는 dict>")
 ```
 
-`doc_type` 을 생략하면 원문 내용을 보고 openapi/csv/markdown 순으로 자동
-판별합니다(규칙은 `app/services/parser/document_router.py`의
-`detect_doc_type` 참고). 판별이 애매하면 `doc_type="openapi"|"markdown"|"csv"`
-로 직접 지정하세요. `raw_document` 가 dict 이면 내부적으로 JSON 문자열로
-변환됩니다.
+`doc_type` 을 생략하면 URL 확장자와 원문 내용으로 openapi/csv/markdown 을 자동
+판별합니다(규칙은 `app/services/parser/document_router.py` 의 `detect_doc_type`).
+애매하면 `doc_type="openapi"|"markdown"|"csv"` 로 지정하세요. `raw_document` 가
+dict 이면 JSON 문자열로 변환됩니다.
 
-**(C) PDF/DOCX — base64 원문 + doc_type 필수**
+**(B) PDF/DOCX — base64 원문 + doc_type 필수**
 
 ```
 register_document(project="my-api", raw_document="<base64 인코딩 문자열>", doc_type="pdf")
 ```
 
-PDF/DOCX 는 자동 판별 대상이 아니므로 **`doc_type` 지정이 필수**이고,
-**`source_url` 이 아니라 `raw_document` 로만** 등록할 수 있습니다(파일을
-base64 로 인코딩해 전달). 텍스트 추출 후 markdown 문서와 동일하게
-섹션화됩니다.
+자동 판별 대상이 아니라 **`doc_type` 필수**이고, **`source_url` 이 아니라
+`raw_document` 로만** 등록됩니다. 텍스트 추출 후 markdown 과 동일하게 섹션화됩니다.
 
-**(D) Google Drive — 폴더 매핑**
+**(C) Google Drive — 폴더 매핑**
 
 ```
 register_drive_source(project="my-api", folder_id="<Drive 폴더 ID>")
@@ -276,7 +251,7 @@ Google 네이티브 문서(Docs/Sheets/Slides)는 물론, PDF/DOCX/XLSX/PPTX
 바이너리(이미지/영상 등)는 텍스트 추출을 지원하지 않아 조회 시 오류로
 처리됩니다.
 
-**(E) Notion — 데이터베이스 또는 페이지 매핑**
+**(D) Notion — 데이터베이스 또는 페이지 매핑**
 
 ```
 register_notion_source(project="my-api", database_id="<Notion DB ID>")
@@ -288,17 +263,12 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 호출이 이전 매핑을 덮어씀). Drive와 마찬가지로 매핑 후 `refresh_index` 를
 실행해야 검색 대상이 됩니다.
 
-> (D)/(E)로 매핑한 협업 문서는 사전 색인 없이 `search_documents` 호출
-> 시점에 원본을 실시간 조회합니다. 새로 만든 문서가 검색되지 않으면
-> `refresh_index` 를 먼저 실행하세요(자세한 내용은 위 도구 표 아래 설명 참고).
-
 ## 자동 동기화 (배치)
 
-`refresh_index` 를 매번 수동으로 호출하지 않도록, 메타 캐시(+선택적 등록
-문서 재색인)를 주기적으로 갱신하는 원샷 CLI 진입점을 제공합니다. MCP
-stdio 서버는 클라이언트가 세션마다 띄우는 단명 프로세스라 그 안에
-스케줄러를 둘 수 없으므로, 이 스크립트는 **한 번 돌고 종료**하고 주기는
-OS 스케줄러(systemd timer 또는 cron)가 소유합니다
+`refresh_index` 를 수동 호출하지 않도록 메타 캐시(+선택적 등록 문서 재색인)를
+갱신하는 원샷 CLI 를 제공합니다. MCP stdio 서버는 세션마다 뜨는 단명 프로세스라
+스케줄러를 품을 수 없으므로, 이 스크립트는 **한 번 돌고 종료**하고 주기는 OS
+스케줄러(systemd timer 또는 cron)가 소유합니다
 (설계: [`docs/architect-review/32-refresh-index-batch-automation.md`](docs/architect-review/32-refresh-index-batch-automation.md)).
 
 ```bash
@@ -310,21 +280,16 @@ uv run python -m app.scripts.refresh_documents \
 돌립니다:
 
 - **축 A(메타 캐시 동기화)** — 문서 목록·제목·수정일만 갱신(본문 미조회).
-  **1시간마다** 실행 권장. 실측(실 소스 1틱)은 **47초**로 1시간 주기 예산
-  3600초의 **1.3%** 입니다 — 1시간 주기에 여유가 큽니다. 단 Drive 하위 폴더
-  BFS 순회 때문에 호출 수가 폴더 수에 비례하므로, 폴더 트리가 훨씬 큰
-  프로젝트는 자기 환경에서 1틱을 재보고 주기를 늘리세요.
-- **축 B(등록 문서 재색인, `--include-registered`)** — `source_url` 이
-  있는 등록 문서마다 원본을 재fetch·재파싱·재임베딩합니다. 변경 없어도
-  문서마다 네트워크 fetch가 발생해 비용이 크므로 **1일 1회(야간)** 만
-  돌립니다. `--force` 는 배치에서 쓰지 않습니다(해시 동일 시 skip이 정상
-  경로).
+  **1시간마다** 권장. 실측 1틱 **47초**(1시간 예산의 1.3%)라 여유가 큽니다. 단
+  Drive 하위 폴더 BFS 순회로 호출 수가 폴더 수에 비례하니, 폴더 트리가 큰
+  프로젝트는 1틱을 직접 재보고 주기를 늘리세요.
+- **축 B(등록 문서 재색인, `--include-registered`)** — `source_url` 이 있는 문서마다
+  원본을 재fetch·재파싱·재임베딩합니다. 변경이 없어도 fetch 비용이 들어 **1일
+  1회(야간)** 만 돌립니다. `--force` 는 배치에서 쓰지 않습니다(해시 동일 시 skip 이
+  정상 경로).
 
-중복 실행은 Postgres advisory lock 으로 막습니다(새 의존성 0). 두 축은
-락 키가 달라 무거운 축 B 실행 중에도 축 A 틱이 굶지 않습니다.
-
-아래 systemd user timer 예시는 실제로 등록·수동 1회 실행까지 거쳐 스케줄
-경로가 확인된 구성입니다.
+중복 실행은 Postgres advisory lock 으로 막습니다. 두 축은 락 키가 달라 축 B 실행
+중에도 축 A 틱이 굶지 않습니다.
 
 ### systemd user timer (권장)
 
@@ -384,11 +349,7 @@ systemctl --user enable --now docs-refresh.timer docs-resync.timer
 
 ## 검색 아키텍처 (요약)
 
-엔드포인트 검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM이 반환된 후보(top_k) 중에서 선택합니다 — 즉 서버는 **후보 피더**이며 품질 지표는 recall@k입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
-
-성능 개선(P1~P6)·평가셋·RRF K 스윕 등 상세 내역은 아래 문서를 참고하세요.
-
-관련 문서:
+검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM 이 반환된 후보(top_k) 중에서 선택합니다 — 서버는 **후보 피더**이고 품질 지표는 recall@k 입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
 
 - [`docs/search-flow.md`](docs/search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
 - [`docs/architect-review/03-search-performance-improvements.md`](docs/architect-review/03-search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
