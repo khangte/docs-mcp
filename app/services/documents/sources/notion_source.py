@@ -282,6 +282,18 @@ def _notion_error_message(path: str, response: httpx.Response) -> str:
         )
     if status == 404:
         return f"notion document not found: {path}"
+    if status == 400 and path.startswith("/databases/"):
+        try:
+            hint = response.json().get("additional_data", {}).get("child_data_source_ids")
+        except (ValueError, AttributeError):
+            hint = None
+        _LOG.warning(
+            "notion database query 400: %s child_data_source_ids=%s "
+            "(multi data source 가능성, docs/architect-review/34_notion_api_version_upgrade_judgment.md 참조)",
+            path,
+            hint,
+        )
+        return f"notion database query failed for {path} (status 400): data source 가 여러 개일 수 있음(34번 문서 참조)"
     if status == 429:
         return "notion rate limit exceeded; retry later"
     return f"notion request failed for {path} (status {status})"

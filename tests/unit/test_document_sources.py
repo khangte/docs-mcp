@@ -821,3 +821,24 @@ def test_notion_http_errors_become_integration_error(
 
     with pytest.raises(IntegrationError, match=expected):
         source.fetch("missing")
+
+
+def test_notion_database_query_400_hints_multi_data_source(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """database query 400 은 multi data source 가능성을 메시지·로그에 남긴다(34번 문서)."""
+    source = NotionSource(token="t1", database_id="db-1")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"additional_data": {"child_data_source_ids": ["ds-1", "ds-2"]}},
+        )
+
+    _patch_client(monkeypatch, source, handler)
+
+    with caplog.at_level("WARNING"):
+        with pytest.raises(IntegrationError, match="data source"):
+            source.list_pages()
+
+    assert any("ds-1" in record.message for record in caplog.records)
