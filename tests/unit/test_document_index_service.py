@@ -747,3 +747,53 @@ def test_index_bodies_removed_file_without_prior_body_index_is_safe(
 
     assert result.removed == 1
     assert meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1") is None
+
+
+def test_index_bodies_backfills_unchanged_row_missing_document_id(
+    body_index_service, meta_repo, fake_drive_source
+) -> None:
+    """메타 변경이 없어도 document_id 가 NULL 이면 index_bodies=True 에서 소급 색인된다.
+
+    doc36 §6-2 백필 회귀: 게이트가 needs_body_index 에만 걸리면, 이미
+    메타만 동기화되고 본문 색인이 없던 기존 행은 --index-bodies 를 다시
+    돌려도 영원히 색인되지 않는다.
+    """
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=False)
+    assert meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1").document_id is None
+    fake_drive_source.reset_counts()
+
+    body_index_service.refresh(index_bodies=True)
+
+    assert fake_drive_source.fetch_call_count == 1
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row.document_id == deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+
+
+def test_index_bodies_one_fetch_failure_does_not_block_other_documents(
+    body_index_service, body_index_deps, meta_repo, fake_drive_source
+) -> None:
+    """한 문서의 fetch 실패가 같은 배치의 다른 문서 색인을 막지 않는다.
+
+    fetch 는 DB 쓰기 이전 지점이라 실패를 삼켜도 반쯤 쓰인 상태가 커밋되지
+    않는다. 실패한 문서는 document_id 가 NULL 로 남아 다음 실행에서 자동
+    재시도된다.
+    """
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "실패 문서", "본문", modified_at=_T1)
+    fake_drive_source.put("d2", "정상 문서", "# 정상 문서\n\n본문 내용.", modified_at=_T1)
+    fake_drive_source.failing_fetch_ids = {"d1"}
+
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.failed_sources == ()
+    row_d1 = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row_d1 is not None
+    assert row_d1.document_id is None
+    row_d2 = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d2")
+    document_id_d2 = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d2")
+    assert row_d2.document_id == document_id_d2
+    assert body_index_deps["document_repo"].get(document_id_d2) is not None

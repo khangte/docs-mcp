@@ -333,10 +333,12 @@ class DocumentIndexService:
             if needs_body_index:
                 pending.updated += 1
 
-        # 문서 7번 게이트: modified_at/title/url 이 안 바뀌었으면(needs_body_index
-        # False) fetch 자체를 건너뛴다. content_hash 2차 게이트는 fetch 한
-        # 문서에 한해 index_document_body 내부에서 처리한다.
-        if index_bodies and needs_body_index:
+        # 문서 7번 게이트: 메타 변경 또는 본문 미색인(document_id NULL)이 아니면
+        # fetch 자체를 건너뛴다. content_hash 2차 게이트는 fetch 한 문서에 한해
+        # index_document_body 내부에서 처리한다. document_id NULL 은 "본문 미색인"
+        # 신호이므로, 색인 성공 시 채워지는 document_id 가 다음 실행부터 이 조건을
+        # 자동으로 다시 좁힌다(비용 자기 종료, doc36 §6-2 백필 회귀 수정).
+        if index_bodies and (needs_body_index or row.document_id is None):
             self._index_body(project, source_name, meta, document_source, row)
 
     def _index_body(
@@ -347,12 +349,31 @@ class DocumentIndexService:
         document_source: DocumentSource,
         row: DocumentMeta,
     ) -> None:
-        """문서 한 건의 본문을 fetch 해 색인하고 메타 행에 document_id 를 기록한다."""
+        """문서 한 건의 본문을 fetch 해 색인하고 메타 행에 document_id 를 기록한다.
+
+        fetch 실패는 이 문서만 건너뛰고 로그로만 남긴다. fetch 는 DB 쓰기
+        이전 지점이라 실패를 삼켜도 반쯤 쓰인 상태가 커밋되지 않는다(반대로
+        `index_document_body` 내부 실패는 절대 여기서 감싸면 안 된다 — 청크
+        삭제/삽입이 이미 세션에 올라간 뒤라 다음 `_commit_batch` 에 반쯤 쓰인
+        상태로 실려 커밋된다). document_id 가 NULL 로 남으므로 다음 실행에서
+        자동 재시도된다.
+        """
         assert self._document_repo is not None
         assert self._endpoint_repo is not None
         assert self._chunk_repo is not None
         assert self._indexer is not None
-        fetched = document_source.fetch(meta.external_id)
+        try:
+            fetched = document_source.fetch(meta.external_id)
+        except IntegrationError as exc:
+            _LOG.warning(
+                "본문 fetch 실패(다음 갱신에서 재시도 가능): project=%s source=%s "
+                "external_id=%s (%s)",
+                project,
+                source_name,
+                meta.external_id,
+                exc,
+            )
+            return
         index_document_body(
             self._session,
             self._document_repo,
