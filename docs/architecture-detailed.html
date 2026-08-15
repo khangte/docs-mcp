@@ -1,0 +1,878 @@
+<title>docs-mcp 상세 아키텍처</title>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --surface-2: #eaeef4;
+    --border: #dbe1e9;
+    --text: #131922;
+    --text-dim: #59636f;
+    --accent: #2c58a0;
+    --accent-soft: #e5edf9;
+    --accent-2: #bd6a17;
+    --accent-2-soft: #fbecdc;
+    --shadow: 0 1px 2px rgba(20, 26, 34, 0.04), 0 12px 28px -14px rgba(20, 26, 34, 0.18);
+
+    --font-display: ui-monospace, "Cascadia Code", "JetBrains Mono", "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0f15;
+      --surface: #121924;
+      --surface-2: #17202c;
+      --border: #263241;
+      --text: #e9edf3;
+      --text-dim: #8d9aac;
+      --accent: #7ea6e8;
+      --accent-soft: #1a2941;
+      --accent-2: #f0a34a;
+      --accent-2-soft: #34260f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b0f15;
+    --surface: #121924;
+    --surface-2: #17202c;
+    --border: #263241;
+    --text: #e9edf3;
+    --text-dim: #8d9aac;
+    --accent: #7ea6e8;
+    --accent-soft: #1a2941;
+    --accent-2: #f0a34a;
+    --accent-2-soft: #34260f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.55;
+  }
+
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 72px 28px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 72px;
+  }
+
+  /* ---------- hero ---------- */
+  .hero { display: flex; flex-direction: column; gap: 18px; }
+  .kicker {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .kicker::before {
+    content: "";
+    width: 22px;
+    height: 1.5px;
+    background: var(--accent);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(34px, 5.6vw, 52px);
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .tagline {
+    max-width: 64ch;
+    font-size: 17.5px;
+    color: var(--text-dim);
+  }
+  .tagline b { color: var(--text); font-weight: 600; }
+
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .badge {
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 999px;
+    padding: 5px 12px;
+  }
+  .nav-note {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    color: var(--text-dim);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    align-self: flex-start;
+  }
+  .nav-note a { color: var(--accent); }
+
+  /* ---------- stats ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .stat .n {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .l { font-size: 12.5px; color: var(--text-dim); }
+
+  /* ---------- section shell ---------- */
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .s-head { display: flex; flex-direction: column; gap: 6px; }
+  h2 {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .s-sub { color: var(--text-dim); font-size: 14.5px; max-width: 68ch; }
+  .s-sub code, .s-sub b { color: var(--text); }
+  .s-sub code { font-family: var(--font-display); font-size: 0.92em; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 20px;
+    box-shadow: var(--shadow);
+  }
+  .svg-wrap { overflow-x: auto; }
+  svg { display: block; width: 100%; height: auto; max-width: 100%; }
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+  figcaption code { font-family: var(--font-display); font-size: 0.92em; background: var(--surface-2); padding: 0.1em 0.4em; border-radius: 4px; }
+
+  .node rect { fill: var(--surface); stroke: var(--border); stroke-width: 1.4; }
+  .node.compute rect { stroke: var(--accent); }
+  .node.store rect { stroke: var(--accent); fill: var(--accent-soft); }
+  .node.signal rect { stroke: var(--accent-2); stroke-width: 2; fill: var(--accent-2-soft); }
+  .node.group rect { fill: var(--surface-2); stroke: var(--border); stroke-dasharray: 5 4; }
+  .node.root rect { stroke: var(--accent); stroke-width: 2.4; fill: var(--accent-soft); }
+  .node text { font-family: var(--font-display); font-size: 12.5px; font-weight: 700; fill: var(--text); }
+  .node .sub { font-family: var(--font-body); font-weight: 400; font-size: 11px; fill: var(--text-dim); }
+  .edge { stroke: var(--text-dim); stroke-width: 1.5; fill: none; }
+  .edge.thin { stroke-width: 1.2; }
+  .edge.soft { stroke-dasharray: 4 4; stroke-width: 1.1; }
+  .edge-label { font-family: var(--font-body); font-size: 11.5px; fill: var(--text-dim); }
+  .section-tag { font-family: var(--font-display); font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; fill: var(--text-dim); text-transform: uppercase; }
+  .divider-soft { stroke: var(--border); stroke-width: 1; }
+
+  /* ---------- cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card .mark {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    color: var(--accent-2);
+    font-weight: 700;
+  }
+  .card h3 { font-family: var(--font-display); font-size: 15.5px; margin: 0; font-weight: 700; }
+  .card p { font-size: 13.5px; color: var(--text-dim); margin: 0; }
+  .card code { font-family: var(--font-display); font-size: 0.9em; background: var(--surface-2); padding: 0.1em 0.4em; border-radius: 4px; }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  th {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    font-weight: 700;
+  }
+  td.mod { font-family: var(--font-display); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+  td.dim { color: var(--text-dim); }
+  td code, th code { font-family: var(--font-display); font-size: 0.92em; background: var(--surface-2); padding: 0.1em 0.4em; border-radius: 4px; }
+  tr.grp td {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    background: var(--surface-2);
+    font-weight: 700;
+    padding: 8px 16px;
+  }
+
+  /* ---------- stack ---------- */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .stack-group { display: flex; flex-direction: column; gap: 8px; }
+  .stack-group h4 {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin: 0;
+    font-weight: 700;
+  }
+  .stack-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .stack-group li { font-size: 14px; }
+  .stack-group li b { font-weight: 600; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  @media (max-width: 720px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="hero">
+    <span class="kicker">Detailed Architecture · 02</span>
+    <h1>docs-mcp 상세 아키텍처</h1>
+    <p class="tagline">API 명세(OpenAPI)와 팀 협업 문서(Drive/Notion)를 <b>키워드+벡터 하이브리드 검색(RRF)</b>으로 색인해, MCP 프로토콜로 호출 LLM에 근거 문서를 공급하는 검색 서버. 최종 자연어 답변은 서버가 만들지 않는다 — 서버는 <b>후보 피더</b>다.</p>
+    <div class="badges">
+      <span class="badge">Python 3.11+</span>
+      <span class="badge">PostgreSQL + pgvector</span>
+      <span class="badge">SQLAlchemy 2.0</span>
+      <span class="badge">FastMCP</span>
+      <span class="badge">Pydantic v2</span>
+      <span class="badge">sentence-transformers</span>
+    </div>
+    <div class="nav-note">발표용 요약본 → <a href="./architecture-overview.html">architecture-overview.html</a></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span class="n">16 + 1</span><span class="l">MCP 도구 · 리소스</span></div>
+    <div class="stat"><span class="n">1,809</span><span class="l">평가 코퍼스 엔드포인트</span></div>
+    <div class="stat"><span class="n">K = 60</span><span class="l">RRF 하이브리드 융합</span></div>
+    <div class="stat"><span class="n">6</span><span class="l">논리 계층</span></div>
+  </div>
+
+  <section>
+    <div class="s-head">
+      <h2>1. 시스템 흐름</h2>
+      <p class="s-sub">두 진입점(MCP 서버 · 배치 스케줄러)이 하나의 서비스 계층을 공유하고, 검색은 항상 키워드(FTS)와 벡터(HNSW) 신호를 RRF로 융합한다.</p>
+    </div>
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 660" role="img" aria-label="Claude MCP 클라이언트와 OS 스케줄러가 각각 MCP 서버와 배치 CLI로 들어와 하나의 서비스 계층을 거쳐, PostgreSQL과 pgvector에 색인하고 외부 소스에서 문서를 가져오며, 검색은 키워드와 벡터 신호를 RRF로 융합하는 전체 시스템 다이어그램">
+          <defs>
+            <marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+            <marker id="pa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-2)" />
+            </marker>
+          </defs>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <line x1="220" y1="76" x2="220" y2="148" marker-end="url(#pa)" />
+            <line x1="700" y1="76" x2="700" y2="148" marker-end="url(#pa)" />
+            <line x1="260" y1="204" x2="360" y2="278" marker-end="url(#pa)" />
+            <line x1="660" y1="204" x2="560" y2="278" marker-end="url(#pa)" />
+            <line x1="380" y1="336" x2="290" y2="406" marker-end="url(#pa)" />
+            <line x1="540" y1="336" x2="660" y2="406" marker-end="url(#pa)" />
+          </g>
+          <text class="edge-label" x="232" y="115">stdio · 도구 호출</text>
+          <text class="edge-label" x="712" y="115">cron / systemd</text>
+          <text class="edge-label" x="392" y="244">tools → services</text>
+          <text class="edge-label" x="528" y="244" text-anchor="end">서비스 함수 직접 호출</text>
+          <text class="edge-label" x="285" y="376" text-anchor="end">색인 · 하이브리드 검색</text>
+          <text class="edge-label" x="600" y="376">fetch (동기화 시점만)</text>
+
+          <g class="node compute">
+            <rect x="60" y="20" width="320" height="56" rx="9" />
+            <text x="220" y="44" text-anchor="middle">Claude / MCP Client</text>
+            <text class="sub" x="220" y="62" text-anchor="middle">자연어 질의 · 도구 호출</text>
+          </g>
+          <g class="node compute">
+            <rect x="540" y="20" width="320" height="56" rx="9" />
+            <text x="700" y="44" text-anchor="middle">OS Scheduler</text>
+            <text class="sub" x="700" y="62" text-anchor="middle">systemd timer / cron</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="60" y="150" width="320" height="56" rx="9" />
+            <text x="220" y="174" text-anchor="middle">MCP Server</text>
+            <text class="sub" x="220" y="192" text-anchor="middle">16 tools + 1 resource · stdio transport</text>
+          </g>
+          <g class="node compute">
+            <rect x="540" y="150" width="320" height="56" rx="9" />
+            <text x="700" y="174" text-anchor="middle">Batch Sync CLI</text>
+            <text class="sub" x="700" y="192" text-anchor="middle">refresh_documents.py</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="230" y="280" width="460" height="58" rx="9" />
+            <text x="460" y="304" text-anchor="middle">Service Layer</text>
+            <text class="sub" x="460" y="322" text-anchor="middle">Ingest → Parse → Index → Hybrid Search</text>
+          </g>
+
+          <g class="node store">
+            <rect x="60" y="408" width="430" height="68" rx="9" />
+            <text x="275" y="434" text-anchor="middle">PostgreSQL + pgvector</text>
+            <text class="sub" x="275" y="452" text-anchor="middle">FTS keyword index + HNSW vector index</text>
+          </g>
+          <g class="node compute">
+            <rect x="530" y="408" width="330" height="68" rx="9" />
+            <text x="695" y="434" text-anchor="middle">External Sources</text>
+            <text class="sub" x="695" y="452" text-anchor="middle">OpenAPI specs · Google Drive · Notion</text>
+          </g>
+
+          <line class="divider-soft" x1="60" y1="500" x2="490" y2="500" />
+          <text class="section-tag" x="60" y="522">signature mechanism — hybrid fusion</text>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <line x1="150" y1="596" x2="150" y2="614" marker-end="url(#pa2)" style="color:var(--accent-2)" />
+            <line x1="400" y1="596" x2="400" y2="614" marker-end="url(#pa2)" style="color:var(--accent-2)" />
+          </g>
+
+          <g class="node compute">
+            <rect x="60" y="536" width="180" height="58" rx="9" />
+            <text x="150" y="560" text-anchor="middle">keyword arm</text>
+            <text class="sub" x="150" y="578" text-anchor="middle">to_tsquery + ts_rank</text>
+          </g>
+          <g class="node compute">
+            <rect x="310" y="536" width="180" height="58" rx="9" />
+            <text x="400" y="560" text-anchor="middle">vector arm</text>
+            <text class="sub" x="400" y="578" text-anchor="middle">cosine · HNSW</text>
+          </g>
+
+          <g class="node signal">
+            <rect x="60" y="616" width="430" height="40" rx="9" />
+            <text x="275" y="641" text-anchor="middle" style="fill:var(--accent-2)">Reciprocal Rank Fusion · K = 60</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>가중합이 아니라 <code>순위 융합</code>을 쓴다 — <code>ts_rank</code>와 코사인 유사도는 스케일이 달라 직접 더할 근거가 없기 때문이다. 배치는 <code>MCP</code> 계층을 우회해 같은 서비스 함수를 직접 호출해, 실시간 검색과 예약 동기화가 서로 다른 동작을 하지 않는다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>2. 컴포넌트 의존 구조</h2>
+      <p class="s-sub">화살표는 데이터 흐름이 아니라 <b>의존 방향</b>이다 — A → B 는 "A가 B를 임포트·호출한다"는 뜻. 위에서 아래로만 흐르는 것이 규칙이고, 그 규칙에서 유일하게 면제된 지점은 아래 별도 인셋에 따로 뽑았다.</p>
+    </div>
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 972" role="img" aria-label="docs-mcp 컴포넌트 의존 관계도. MCP 서버와 배치 CLI 두 진입점이 컴포지션 루트를 거쳐 서비스 계층으로 내려가고, 서비스 계층은 리포지토리, 도메인 모델, PostgreSQL 순으로 의존하며, app/core 는 모든 계층이 참조하는 횡단 관심사다. 배치 CLI 는 MCP 도구 계층을 우회한다. 하단 인셋에 의도적으로 허용한 계층 예외 1건을 표시했다.">
+          <defs>
+            <marker id="ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+            <marker id="ca2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-2)" />
+            </marker>
+          </defs>
+
+          <text class="section-tag" x="640" y="30" text-anchor="end">entry points</text>
+          <text class="section-tag" x="640" y="134" text-anchor="end">mcp tool layer · app/mcp</text>
+          <text class="section-tag" x="640" y="246" text-anchor="end">composition root</text>
+          <text class="section-tag" x="640" y="346" text-anchor="end">service layer · app/services</text>
+          <text class="section-tag" x="640" y="582" text-anchor="end">repository layer</text>
+          <text class="section-tag" x="640" y="676" text-anchor="end">domain model</text>
+          <text class="section-tag" x="640" y="762" text-anchor="end">datastore</text>
+          <text class="section-tag" x="672" y="30">cross-cutting</text>
+          <text class="section-tag" x="672" y="346">external systems</text>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <line x1="495" y1="96" x2="495" y2="120" />
+            <line x1="170" y1="120" x2="510" y2="120" />
+            <line x1="170" y1="120" x2="170" y2="144" marker-end="url(#ca)" />
+            <line x1="340" y1="120" x2="340" y2="144" marker-end="url(#ca)" />
+            <line x1="510" y1="120" x2="510" y2="144" marker-end="url(#ca)" />
+
+            <line x1="170" y1="198" x2="170" y2="228" />
+            <line x1="340" y1="198" x2="340" y2="228" />
+            <line x1="510" y1="198" x2="510" y2="228" />
+            <line x1="170" y1="228" x2="510" y2="228" />
+            <line x1="340" y1="228" x2="340" y2="258" marker-end="url(#ca)" />
+
+            <line x1="340" y1="314" x2="340" y2="358" marker-end="url(#ca)" />
+            <line x1="340" y1="548" x2="340" y2="594" marker-end="url(#ca)" />
+            <line x1="340" y1="650" x2="340" y2="688" marker-end="url(#ca)" />
+            <line x1="340" y1="736" x2="340" y2="774" marker-end="url(#ca)" />
+
+            <path d="M185,96 L185,110 L22,110 L22,286 L40,286" marker-end="url(#ca)" />
+          </g>
+
+          <g class="edge thin" style="color:var(--text-dim)">
+            <line x1="628" y1="398" x2="672" y2="398" marker-end="url(#ca)" />
+            <line x1="628" y1="512" x2="672" y2="512" marker-end="url(#ca)" />
+          </g>
+
+          <g class="edge thin" style="color:var(--text-dim)">
+            <line x1="356" y1="402" x2="328" y2="402" marker-end="url(#ca)" />
+            <line x1="424" y1="450" x2="316" y2="460" marker-end="url(#ca)" />
+            <line x1="356" y1="502" x2="328" y2="502" marker-end="url(#ca)" />
+            <line x1="560" y1="450" x2="560" y2="462" marker-end="url(#ca)" />
+          </g>
+
+          <g class="edge soft" style="color:var(--text-dim)">
+            <line x1="642" y1="170" x2="668" y2="152" marker-end="url(#ca)" />
+            <line x1="606" y1="256" x2="700" y2="198" marker-end="url(#ca)" />
+            <line x1="644" y1="378" x2="748" y2="198" marker-end="url(#ca)" />
+          </g>
+
+          <text class="edge-label" x="328" y="248" text-anchor="end">AppState · ServiceBundle 주입</text>
+          <text class="edge-label" x="328" y="340" text-anchor="end">build_services() — 세션 스코프 조립</text>
+          <text class="edge-label" x="328" y="576" text-anchor="end">모든 DB 접근은 리포지토리 경유</text>
+          <text class="edge-label" x="328" y="674" text-anchor="end">SQLAlchemy 2.0 ORM</text>
+          <text class="edge-label" x="328" y="762" text-anchor="end">Alembic 마이그레이션</text>
+          <text class="edge-label" x="640" y="390" text-anchor="end">HTTP 어댑터</text>
+          <text class="edge-label" x="640" y="504" text-anchor="end">spec fetch</text>
+          <text class="edge-label" transform="translate(16,250) rotate(-90)" text-anchor="middle">MCP 계층 우회 · 동일 서비스 함수</text>
+
+          <g class="node compute">
+            <rect x="40" y="42" width="290" height="54" rx="9" />
+            <text x="185" y="66" text-anchor="middle">Batch CLI</text>
+            <text class="sub" x="185" y="84" text-anchor="middle">app/scripts — refresh_documents · reembed</text>
+          </g>
+          <g class="node compute">
+            <rect x="350" y="42" width="290" height="54" rx="9" />
+            <text x="495" y="66" text-anchor="middle">MCP Server</text>
+            <text class="sub" x="495" y="84" text-anchor="middle">app/mcp/server.py — FastMCP · stdio</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="40" y="144" width="190" height="54" rx="9" />
+            <text x="135" y="168" text-anchor="middle">tools/documents</text>
+            <text class="sub" x="135" y="186" text-anchor="middle">4 tools</text>
+          </g>
+          <g class="node compute">
+            <rect x="245" y="144" width="190" height="54" rx="9" />
+            <text x="340" y="168" text-anchor="middle">tools/endpoints</text>
+            <text class="sub" x="340" y="186" text-anchor="middle">4 tools + 1 resource</text>
+          </g>
+          <g class="node compute">
+            <rect x="450" y="144" width="190" height="54" rx="9" />
+            <text x="545" y="168" text-anchor="middle">tools/sources</text>
+            <text class="sub" x="545" y="186" text-anchor="middle">8 tools</text>
+          </g>
+
+          <g class="node root">
+            <rect x="40" y="258" width="600" height="56" rx="9" />
+            <text x="340" y="282" text-anchor="middle">app/composition + app/bootstrap</text>
+            <text class="sub" x="340" y="300" text-anchor="middle">AppState(프로세스 스코프) · ServiceBundle(세션 스코프) — 유일한 조립 지점</text>
+          </g>
+
+          <g class="node group">
+            <rect x="40" y="358" width="600" height="190" rx="11" />
+          </g>
+          <g class="node compute">
+            <rect x="52" y="374" width="272" height="76" rx="9" />
+            <text x="188" y="400" text-anchor="middle">services/search</text>
+            <text class="sub" x="188" y="418" text-anchor="middle">keyword(FTS) · vector(HNSW) · rrf</text>
+            <text class="sub" x="188" y="434" text-anchor="middle">endpoint_candidate_search</text>
+          </g>
+          <g class="node compute">
+            <rect x="356" y="374" width="272" height="76" rx="9" />
+            <text x="492" y="400" text-anchor="middle">services/documents</text>
+            <text class="sub" x="492" y="418" text-anchor="middle">search · index · body_indexer</text>
+            <text class="sub" x="492" y="434" text-anchor="middle">sources/(drive|notion) · resolver</text>
+          </g>
+          <g class="node compute">
+            <rect x="52" y="462" width="272" height="76" rx="9" />
+            <text x="188" y="488" text-anchor="middle">services/indexer</text>
+            <text class="sub" x="188" y="506" text-anchor="middle">chunk_builder · section_splitter</text>
+            <text class="sub" x="188" y="522" text-anchor="middle">embedding_provider(local|hash)</text>
+          </g>
+          <g class="node compute">
+            <rect x="356" y="462" width="272" height="76" rx="9" />
+            <text x="492" y="488" text-anchor="middle">services/ingestor · parser</text>
+            <text class="sub" x="492" y="506" text-anchor="middle">sync_service · openapi_fetcher</text>
+            <text class="sub" x="492" y="522" text-anchor="middle">md/pdf/docx/pptx/xlsx/csv · openapi</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="40" y="594" width="600" height="56" rx="9" />
+            <text x="340" y="618" text-anchor="middle">app/repositories</text>
+            <text class="sub" x="340" y="636" text-anchor="middle">document · endpoint · chunk · document_meta · sync_history · project_source</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="40" y="688" width="600" height="48" rx="9" />
+            <text x="340" y="710" text-anchor="middle">app/models</text>
+            <text class="sub" x="340" y="727" text-anchor="middle">Document · DocumentSection · Chunk · DocumentMeta · ApiSchema · ProjectSource</text>
+          </g>
+
+          <g class="node store">
+            <rect x="40" y="774" width="600" height="56" rx="9" />
+            <text x="340" y="798" text-anchor="middle">PostgreSQL + pgvector</text>
+            <text class="sub" x="340" y="816" text-anchor="middle">tsvector GIN 색인 · HNSW cosine 색인 · advisory lock</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="672" y="42" width="220" height="152" rx="9" />
+            <text x="782" y="70" text-anchor="middle">app/core</text>
+            <text class="sub" x="782" y="92" text-anchor="middle">config — Settings/env</text>
+            <text class="sub" x="782" y="110" text-anchor="middle">db — engine · session</text>
+            <text class="sub" x="782" y="128" text-anchor="middle">errors — 도메인 예외</text>
+            <text class="sub" x="782" y="146" text-anchor="middle">logging</text>
+            <text class="sub" x="782" y="172" text-anchor="middle">아래 계층을 참조하지 않는다</text>
+          </g>
+
+          <g class="node group">
+            <rect x="672" y="358" width="220" height="190" rx="11" />
+          </g>
+          <g class="node compute">
+            <rect x="684" y="374" width="196" height="52" rx="9" />
+            <text x="782" y="396" text-anchor="middle">Google Drive API</text>
+            <text class="sub" x="782" y="413" text-anchor="middle">서비스 계정 · 폴더 매핑</text>
+          </g>
+          <g class="node compute">
+            <rect x="684" y="436" width="196" height="52" rx="9" />
+            <text x="782" y="458" text-anchor="middle">Notion API</text>
+            <text class="sub" x="782" y="475" text-anchor="middle">database · page</text>
+          </g>
+          <g class="node compute">
+            <rect x="684" y="498" width="196" height="42" rx="9" />
+            <text x="782" y="518" text-anchor="middle">OpenAPI spec (HTTP)</text>
+            <text class="sub" x="782" y="533" text-anchor="middle">swagger2 · openapi3</text>
+          </g>
+
+          <line class="divider-soft" x1="40" y1="866" x2="892" y2="866" />
+          <text class="section-tag" x="40" y="888">boundary exception — 규칙에서 면제한 단 한 곳</text>
+
+          <g class="edge" style="color:var(--accent-2)">
+            <line x1="300" y1="926" x2="386" y2="926" marker-end="url(#ca2)" />
+          </g>
+          <text class="edge-label" x="343" y="918" text-anchor="middle" style="fill:var(--accent-2)">TYPE_CHECKING 역참조</text>
+
+          <g class="node signal">
+            <rect x="40" y="902" width="260" height="46" rx="9" />
+            <text x="170" y="922" text-anchor="middle" style="fill:var(--accent-2)">documents/registered_resync</text>
+            <text class="sub" x="170" y="938" text-anchor="middle">서비스 계층 모듈</text>
+          </g>
+          <g class="node compute">
+            <rect x="386" y="902" width="300" height="46" rx="9" />
+            <text x="536" y="922" text-anchor="middle">app.mcp.types</text>
+            <text class="sub" x="536" y="938" text-anchor="middle">응답 스키마 TypedDict 공유</text>
+          </g>
+          <text class="edge-label" x="702" y="918">타입 검사 시점에만 존재한다</text>
+          <text class="edge-label" x="702" y="936">런타임 임포트 없음 — 유지 결정</text>
+        </svg>
+      </div>
+      <figcaption>조립은 <code>app/composition.py</code> + <code>app/bootstrap.py</code> 두 곳에서만 일어난다 — 서비스도 리포지토리도 서로를 직접 <code>import</code> 해 만들지 않고, 생성자 주입으로만 받는다. 그래서 테스트는 <code>HashEmbeddingProvider</code>나 가짜 <code>DocumentSource</code>를 env 오염 없이 갈아끼울 수 있다. 배치 CLI 는 <code>bootstrap_app_state()</code> + <code>build_services()</code> 로 같은 번들을 만들어 MCP 도구 계층만 건너뛴다 — 실시간 검색과 예약 동기화가 서로 다른 코드 경로를 타지 않는 이유다. 이 그림을 그리려고 실제 임포트 그래프를 훑다가 규칙을 벗어난 곳이 두 군데 나왔고, 그중 조립 지점 밖에서 세션을 직접 열던 <code>@mcp.resource</code> 경로는 고쳐서 없앴다(그 경로만 실패가 서버 로그에 남지 않고 있었다). 남은 하나는 되돌리면 스키마 모듈이 거꾸로 서비스 계층을 끌어오게 되는 임포트라, 지우는 대신 <code>TYPE_CHECKING</code> 으로 감싸 <b>런타임에는 존재하지 않는 의존</b>으로 좁히고 의도한 예외로 문서화해 남겼다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>3. MCP 표면 — 16 tools + 1 resource</h2>
+      <p class="s-sub">도구 함수는 얇다. 인자 검증 → 서비스 호출 → 페이로드 변환이 전부이고, 예외를 MCP 오류 응답 <code>{error, code, message}</code>로 바꾸는 일은 <code>run_bundle_tool</code> 하나가 전담해 16개 도구가 같은 실패 규약을 공유한다.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>표면</th><th>역할</th><th>주로 거치는 서비스</th></tr>
+        </thead>
+        <tbody>
+          <tr class="grp"><td colspan="3">documents — 협업 문서 (4 tools)</td></tr>
+          <tr><td class="mod">search_documents</td><td>Drive/Notion 문서를 자연어·키워드로 검색 (3-arm RRF)</td><td class="dim">DocumentSearchService</td></tr>
+          <tr><td class="mod">get_document</td><td>협업 문서 한 건의 전체 원문 조회</td><td class="dim">DocumentSearchService</td></tr>
+          <tr><td class="mod">list_documents</td><td>등록된 문서(Markdown/CSV/PDF/DOCX/OpenAPI) 요약 목록</td><td class="dim">DocumentRepository</td></tr>
+          <tr><td class="mod">register_document</td><td>신규 문서 등록 — URL 또는 원문 중 하나</td><td class="dim">SyncService</td></tr>
+
+          <tr class="grp"><td colspan="3">endpoints — API 명세 (4 tools + 1 resource)</td></tr>
+          <tr><td class="mod">search_endpoints</td><td>자연어·키워드로 엔드포인트 후보 검색 (2-arm RRF)</td><td class="dim">EndpointCandidateSearch</td></tr>
+          <tr><td class="mod">get_endpoint_details</td><td>파라미터 · 요청/응답 스펙 상세</td><td class="dim">EndpointDetailsService</td></tr>
+          <tr><td class="mod">resolve_ref</td><td><code>$ref</code> 컴포넌트 스키마를 실제 필드 목록으로 전개</td><td class="dim">SchemaRefResolver</td></tr>
+          <tr><td class="mod">list_tags</td><td>태그 목록과 태그별 엔드포인트 수</td><td class="dim">TagCatalogService</td></tr>
+          <tr><td class="mod">document://&#123;id&#125;/raw</td><td><b>resource</b> — OpenAPI 문서 원문(JSON/YAML) 반환</td><td class="dim">DocumentRepository</td></tr>
+
+          <tr class="grp"><td colspan="3">sources — 소스 등록 · 동기화 (8 tools)</td></tr>
+          <tr><td class="mod">refresh_index</td><td>협업 문서 메타 캐시(제목·수정일)를 원본과 동기화</td><td class="dim">DocumentIndexService</td></tr>
+          <tr><td class="mod">register_drive_source</td><td>프로젝트 → Google Drive 폴더 매핑 등록</td><td class="dim">ProjectSourceService</td></tr>
+          <tr><td class="mod">list_drive_sources</td><td>Drive 폴더 매핑 목록</td><td class="dim">ProjectSourceService</td></tr>
+          <tr><td class="mod">remove_drive_source</td><td>Drive 폴더 매핑 제거</td><td class="dim">ProjectSourceService</td></tr>
+          <tr><td class="mod">register_notion_source</td><td>프로젝트 → Notion 데이터베이스 매핑 등록</td><td class="dim">ProjectSourceService</td></tr>
+          <tr><td class="mod">register_notion_page</td><td>프로젝트 → Notion 허브 페이지 매핑 등록</td><td class="dim">ProjectSourceService</td></tr>
+          <tr><td class="mod">list_notion_sources</td><td>Notion 데이터베이스/페이지 매핑 목록</td><td class="dim">ProjectSourceService</td></tr>
+          <tr><td class="mod">remove_notion_source</td><td>Notion 매핑 제거</td><td class="dim">ProjectSourceService</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>4. 검색 파이프라인</h2>
+      <p class="s-sub">두 검색 표면 모두 RRF로 융합하지만 arm 구성이 다르다. 점수는 <code>score(d) = Σ 1/(K + rank(d))</code>이고 <code>K = 60</code>은 표준값으로 고정해 env로 노출하지 않는다 — 평가셋 없이 튜닝할 근거가 없기 때문이다.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>표면</th><th>arm 구성</th><th>융합 키</th><th>롤백 스위치</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mod">search_endpoints</td>
+            <td>2-arm — keyword(<code>to_tsquery</code> + <code>ts_rank</code>) · vector(코사인 · HNSW)</td>
+            <td class="dim"><code>ref_id</code></td>
+            <td class="dim"><code>rrf</code>(기본) / <code>fallback</code></td>
+          </tr>
+          <tr>
+            <td class="mod">search_documents</td>
+            <td>3-arm — title(제목·URL 토큰 매칭) · keyword · vector</td>
+            <td class="dim"><code>Document.id</code></td>
+            <td class="dim"><code>indexed</code>(기본) / <code>fetch</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">MECHANISM</span>
+        <h3>스케일이 다르면 더하지 않는다</h3>
+        <p><code>ts_rank</code>와 코사인 유사도는 단위가 달라 가중합할 근거가 없다. 그래서 점수 대신 각 arm 안에서의 <b>등수</b>만 쓴다. 동점은 키 오름차순으로 깨 결정적 결과를 보장한다 — 골든 회귀 테스트의 전제다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">MECHANISM</span>
+        <h3>미색인 문서도 죽지 않는다</h3>
+        <p>title arm의 키를 <code>deterministic_document_id()</code>로 순수 계산해, 본문이 아직 색인되지 않은 문서(<code>document_meta.document_id</code>가 NULL)도 keyword/vector arm과 <b>같은 키 공간</b>에서 만난다. 별도 폴백 분기 없이 제목 신호만으로 결과에 남는다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">MECHANISM</span>
+        <h3>의미 검색이 불가능하면 끈다</h3>
+        <p>임베딩 백엔드가 해시 폴백이면 벡터 arm에 의미 유사도가 없다. 이때는 무거운 모델을 로드해 판별하지 않고 <b>설정값만으로</b> vector arm을 비활성화한다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>5. 검색 품질 측정</h2>
+      <p class="s-sub">이 프로젝트에서 가장 값이 나간 작업은 튜닝이 아니라 <b>자기 수치를 반증한 것</b>이다. 초기 지표는 20개 엔드포인트짜리 합성 하네스에서 나온 값이었고, 실제 규모의 코퍼스를 프리즈해 다시 재면 절반 이하로 떨어졌다.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>측정 조건</th><th>코퍼스</th><th>Recall@1</th><th>Recall@3</th><th>Recall@10</th><th>MRR</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mod">합성 하네스 <span class="dim">(초기)</span></td>
+            <td class="dim">엔드포인트 20개</td>
+            <td class="dim">68%</td>
+            <td class="dim">88%</td>
+            <td class="dim">95%</td>
+            <td class="dim">0.788</td>
+          </tr>
+          <tr>
+            <td class="mod">실 코퍼스 <span class="dim">(현행)</span></td>
+            <td class="dim">Stripe 589 + GitHub 1,220</td>
+            <td>15%</td>
+            <td>25%</td>
+            <td>50%</td>
+            <td>0.248</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="s-sub">현행 값은 질의 변형 라우팅을 포함한 <code>rrf</code> 전략 기준이고, 질의 수는 <b>n = 20</b>이라 표준오차가 ±11%p대다 — 소수점을 다툴 수치가 아니라 <b>어느 축이 무너지는지</b>를 읽는 용도다. 코퍼스는 핀 SHA로 고정해 저장소에 프리즈했고, 재현 커맨드 한 줄로 다시 돌릴 수 있다.</p>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">FINDING</span>
+        <h3>합성 벤치는 포화됐던 것</h3>
+        <p>엔드포인트가 20개뿐이면 어떤 검색기도 상위권을 채운다. 589~1,220개로 늘리자 <b>변별력이 처음으로 드러났고</b>, 초기 88/95%는 성능이 아니라 벤치의 한계였음이 확인됐다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">FINDING</span>
+        <h3>무너지는 축 1 — 교차언어</h3>
+        <p>한글 질의로 영문 문서를 찾는 축(C2)이 사실상 0에 가깝다. 코퍼스가 커지며 타 언어권 decoy가 늘어난 영향으로, multilingual 임베딩 모델의 한계가 그대로 노출된다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">FINDING</span>
+        <h3>무너지는 축 2 — 512토큰 상한</h3>
+        <p>파라미터가 큰 엔드포인트의 세부 질의(C7)는 임베딩 입력 상한에 잘려 발견되지 않는다. 청크 분할이 적용되지 않는 엔드포인트 문서에서 구조적으로 생기는 실패다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>6. 저장과 색인</h2>
+      <p class="s-sub">별도 검색엔진·벡터 DB를 두지 않는다. 키워드 색인과 벡터 색인이 <b>같은 PostgreSQL 인스턴스, 같은 테이블</b>에 붙어 있어 두 신호가 어긋날 수 없다.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>인덱스</th><th>대상</th><th>방식</th><th>쓰이는 곳</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mod">ix_chunk_text_tsv</td>
+            <td class="dim"><code>chunk.text_tsv</code> — 생성 컬럼</td>
+            <td>GIN · Postgres FTS</td>
+            <td class="dim">keyword arm</td>
+          </tr>
+          <tr>
+            <td class="mod">ix_chunk_embedding_hnsw</td>
+            <td class="dim"><code>chunk.embedding</code> — pgvector</td>
+            <td>HNSW · <code>vector_cosine_ops</code></td>
+            <td class="dim">vector arm</td>
+          </tr>
+          <tr>
+            <td class="mod">document_meta title / url</td>
+            <td class="dim"><code>document_meta.title</code>, <code>.url</code></td>
+            <td>GIN · <code>gin_trgm_ops</code> (pg_trgm)</td>
+            <td class="dim">title arm</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">01</span>
+        <h3>tsvector는 생성 컬럼</h3>
+        <p><code>text_tsv</code>를 애플리케이션이 채우지 않고 DB 생성 컬럼으로 둔다. 인서트/업데이트 경로가 늘어도 색인이 빠질 여지가 없다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">02</span>
+        <h3>advisory lock으로 만든 안전한 배치</h3>
+        <p>메타 동기화 · 재색인 · 본문 색인을 서로 다른 주기로 돌리면서도, 새 의존성 없이 Postgres advisory lock만으로 중복 실행과 서로의 기아 상태를 막는다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">03</span>
+        <h3>SQL은 리포지토리 밖으로 안 나간다</h3>
+        <p><code>&lt;=&gt;</code> 연산자, <code>to_tsquery</code> 같은 Postgres 고유 문법이 전부 리포지토리 안에 갇혀 있어, 검색 로직을 읽을 때 DB 방언을 몰라도 된다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>7. 외부 통합</h2>
+      <p class="s-sub">외부 API는 전부 <code>DocumentSource</code> 프로토콜 뒤에 있다. 구현체 선택은 <code>ProjectSourceResolver</code>가 DB의 <code>project_source</code> 매핑을 읽어 <b>요청마다</b> 다시 하므로, 매핑을 바꿔도 서버 재시작이 필요 없다.</p>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>외부 시스템</th><th>인증</th><th>가져오는 것</th><th>파싱</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mod">Google Drive API</td>
+            <td class="dim">서비스 계정 토큰 (전역 공유)</td>
+            <td>프로젝트에 매핑된 폴더의 파일 · 수정 시각</td>
+            <td class="dim">docx · pdf · pptx · xlsx</td>
+          </tr>
+          <tr>
+            <td class="mod">Notion API</td>
+            <td class="dim">integration token (전역 공유)</td>
+            <td>매핑된 database 또는 허브 page의 하위 문서</td>
+            <td class="dim">블록 → 텍스트</td>
+          </tr>
+          <tr>
+            <td class="mod">OpenAPI spec (HTTP)</td>
+            <td class="dim">없음 / 명세 URL 직접 fetch</td>
+            <td>등록된 <code>source_url</code>의 명세 원문</td>
+            <td class="dim">swagger2 · openapi3 · <code>$ref</code> 해석</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="s-sub">Drive/Notion 자격증명은 전역 공유이고 프로젝트마다 달라지는 것은 폴더/DB 매핑뿐이다. 하나의 프로세스·DB가 여러 프로젝트를 함께 서비스하며, 격리는 <code>project</code> 태그로 한다 — 신규 프로젝트 온보딩 비용이 낮은 이유다.</p>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>8. 기술 스택</h2>
+    </div>
+    <div class="stack-grid">
+      <div class="stack-group">
+        <h4>Core</h4>
+        <ul>
+          <li><b>Python 3.11+</b></li>
+          <li><b>FastMCP</b> — MCP 서버</li>
+          <li><b>Pydantic v2</b> — DTO</li>
+        </ul>
+      </div>
+      <div class="stack-group">
+        <h4>Data</h4>
+        <ul>
+          <li><b>PostgreSQL</b> + pgvector</li>
+          <li><b>SQLAlchemy 2.0</b></li>
+          <li><b>Alembic</b> — 마이그레이션</li>
+        </ul>
+      </div>
+      <div class="stack-group">
+        <h4>Search</h4>
+        <ul>
+          <li>Postgres FTS + GIN</li>
+          <li>pgvector HNSW · cosine</li>
+          <li>Reciprocal Rank Fusion</li>
+        </ul>
+      </div>
+      <div class="stack-group">
+        <h4>Embedding</h4>
+        <ul>
+          <li>sentence-transformers</li>
+          <li>multilingual-e5-small</li>
+          <li>결정적 해시 폴백</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>docs-mcp — MCP RAG server</span>
+    <span>detailed architecture · 2026</span>
+  </footer>
+
+</div>

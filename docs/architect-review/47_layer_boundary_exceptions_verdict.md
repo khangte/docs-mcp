@@ -209,9 +209,29 @@ def resync_registered_documents(
 
 ---
 
-## 5. 문서 반영
+## 5. 문서 반영 — **완료** (커밋 `0d2f114` 확인 후 반영)
 
-수정 완료 후 `docs/portfolio-components.html` 인셋을 갱신한다.
+`docs/portfolio-components.html` 인셋 갱신 완료.
+
+### 5.1 반영 내역
+
+커밋 `0d2f114` 의 실제 코드를 먼저 확인했다 — `endpoints.py:191-206` 이 `_run_bundle` +
+`bundle.document_repo` 경로로 바뀌었고 `DocumentNotFoundError` 를 `_LOG.error(exc_info=e)`
+로 남긴 뒤 재전파한다. `registered_resync.py` 는 `session`/`document_repo`/`sync_service`
+명시 의존으로 바뀌었고 `app.composition` 임포트가 사라졌으며, `app.mcp.types` 유지 근거가
+모듈 docstring 에 남았다. 판정과 구현이 일치함을 확인한 뒤 문서에 반영했다.
+
+| 위치 | 변경 |
+|------|------|
+| `stats` | `2 계층 경계 예외` → `1 의도적 계층 예외` |
+| 인셋 제목 | `boundary exceptions — 실제 코드가 규칙을 벗어난 2곳` → `boundary exception — 규칙에서 면제한 단 한 곳` |
+| 인셋 1행 | `get_raw_document` 항목 **삭제**(해소됨) |
+| 인셋 2행 | `app.composition · app.mcp.types` → `app.mcp.types` 만 남기고, 라벨을 `하위 → 상위 역참조` → `타입 전용 역참조` 로 변경. 우측에 허용 근거 2줄(`typing 만 쓰는 leaf 모듈`, `런타임 결합 없음`) 추가 |
+| SVG `viewBox` | 높이 `1035` → `972`(한 행 제거분) |
+| hero tagline / 섹션 부제 / aria-label | "경계가 어디서 새는지" → "예외를 허용하는 단 한 지점" 어조로 수정 |
+| `figcaption` | 다이어그램 작업 중 위반 2건을 발견해 1건은 고쳐 없앴고 1건은 의도적 예외로 남겼다는 경위를 추가 |
+
+수정 후 SVG XML 파싱, 노드 박스 겹침, `viewBox` 경계 이탈을 재검사해 이상 없음을 확인했다.
 
 - 예외 1: 문구를 "세션을 조립 지점 밖에서 직접 연다" → **삭제**(해소됨). MCP 계층이
   번들의 리포지토리를 통과 읽기하는 구조만 남으므로, 표시하더라도 등급을 낮춘다.

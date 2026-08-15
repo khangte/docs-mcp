@@ -1,0 +1,407 @@
+<title>docs-mcp 아키텍처</title>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --surface-2: #eaeef4;
+    --border: #dbe1e9;
+    --text: #131922;
+    --text-dim: #59636f;
+    --accent: #2c58a0;
+    --accent-soft: #e5edf9;
+    --accent-2: #bd6a17;
+    --accent-2-soft: #fbecdc;
+    --shadow: 0 1px 2px rgba(20, 26, 34, 0.04), 0 12px 28px -14px rgba(20, 26, 34, 0.18);
+
+    --font-display: ui-monospace, "Cascadia Code", "JetBrains Mono", "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0f15;
+      --surface: #121924;
+      --surface-2: #17202c;
+      --border: #263241;
+      --text: #e9edf3;
+      --text-dim: #8d9aac;
+      --accent: #7ea6e8;
+      --accent-soft: #1a2941;
+      --accent-2: #f0a34a;
+      --accent-2-soft: #34260f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b0f15;
+    --surface: #121924;
+    --surface-2: #17202c;
+    --border: #263241;
+    --text: #e9edf3;
+    --text-dim: #8d9aac;
+    --accent: #7ea6e8;
+    --accent-soft: #1a2941;
+    --accent-2: #f0a34a;
+    --accent-2-soft: #34260f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.55;
+  }
+
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 72px 28px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 72px;
+  }
+
+  /* ---------- hero ---------- */
+  .hero { display: flex; flex-direction: column; gap: 18px; }
+  .kicker {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .kicker::before {
+    content: "";
+    width: 22px;
+    height: 1.5px;
+    background: var(--accent);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(38px, 6.4vw, 60px);
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .tagline {
+    max-width: 62ch;
+    font-size: 17.5px;
+    color: var(--text-dim);
+  }
+  .tagline b { color: var(--text); font-weight: 600; }
+
+  .nav-note {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    color: var(--text-dim);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    align-self: flex-start;
+  }
+  .nav-note a { color: var(--accent); }
+
+  /* ---------- stats ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .stat .n {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .l { font-size: 12.5px; color: var(--text-dim); }
+
+  /* ---------- section shell ---------- */
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .s-head { display: flex; flex-direction: column; gap: 6px; }
+  h2 {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .s-sub { color: var(--text-dim); font-size: 14.5px; max-width: 68ch; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 20px;
+    box-shadow: var(--shadow);
+  }
+  .svg-wrap { overflow-x: auto; }
+  svg { display: block; width: 100%; height: auto; max-width: 100%; }
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+
+  .node rect { fill: var(--surface); stroke: var(--border); stroke-width: 1.6; }
+  .node.compute rect { stroke: var(--accent); stroke-width: 2; }
+  .node.store rect { stroke: var(--accent); stroke-width: 2; fill: var(--accent-soft); }
+  .node.signal rect { stroke: var(--accent-2); stroke-width: 2.4; fill: var(--accent-2-soft); }
+  .node.group rect { fill: var(--surface-2); stroke: var(--border); stroke-dasharray: 5 4; stroke-width: 1.2; }
+  .node.plain rect { fill: var(--surface); stroke: var(--border); stroke-width: 1.4; }
+  .node text { font-family: var(--font-display); font-size: 15px; font-weight: 700; fill: var(--text); }
+  .node .sm { font-size: 13px; }
+  .node .sub { font-family: var(--font-body); font-weight: 400; font-size: 12.5px; fill: var(--text-dim); }
+  .edge { stroke: var(--text-dim); stroke-width: 2.6; fill: none; }
+  .edge-label { font-family: var(--font-body); font-size: 13px; fill: var(--text-dim); }
+  .lane-tag { font-family: var(--font-display); font-size: 12px; font-weight: 700; letter-spacing: 0.05em; fill: var(--text-dim); text-transform: uppercase; }
+
+  /* ---------- cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card .mark {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    color: var(--accent-2);
+    font-weight: 700;
+  }
+  .card h3 { font-family: var(--font-display); font-size: 16px; margin: 0; font-weight: 700; }
+  .card p { font-size: 14px; color: var(--text-dim); margin: 0; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  @media (max-width: 720px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="hero">
+    <span class="kicker">Architecture Overview &middot; 01</span>
+    <h1>docs-mcp</h1>
+    <p class="tagline">팀이 흩어놓은 문서를 한곳에 모아, AI가 <b>지어내지 않고 근거를 들고</b> 답하게 만드는 서버. 사람이 묻고, 서버가 관련 문서를 찾아 건네고, AI가 그 문서를 읽고 답한다.</p>
+    <div class="nav-note">기술 상세 &middot; API 표면 &middot; 색인 방식 &middot; 검색 품질 측정값 → <a href="./architecture-detailed.html">architecture-detailed.html</a></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span class="n">3</span><span class="l">연결된 문서 창고</span></div>
+    <div class="stat"><span class="n">2</span><span class="l">동시에 쓰는 검색 방식</span></div>
+    <div class="stat"><span class="n">1,809</span><span class="l">실제 API로 검증한 규모</span></div>
+    <div class="stat"><span class="n">0</span><span class="l">사람이 챙기는 동기화</span></div>
+  </div>
+
+  <section>
+    <div class="s-head">
+      <h2>전체 그림</h2>
+      <p class="s-sub">길은 두 갈래다. 문서를 <b>쌓는 길</b>은 오른쪽에서 아래로, 질문에 <b>답하는 길</b>은 왼쪽에서 아래로 내려와 같은 데이터베이스에서 만난다.</p>
+    </div>
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 1000 620" role="img" aria-label="전체 구성도. 사람이 Claude MCP 클라이언트로 질문하면 docs-mcp 서버가 받고, 검색이 데이터베이스를 찾아보고, 색인은 Google Drive와 Notion과 API 명세에서 문서를 가져와 같은 데이터베이스에 쌓는다.">
+          <defs>
+            <marker id="oa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <text class="lane-tag" x="40" y="318">답하는 길</text>
+          <text class="lane-tag" x="960" y="318" text-anchor="end">쌓는 길</text>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <!-- 질문 내려가고, 근거 올라온다 -->
+            <line x1="540" y1="108" x2="540" y2="170" marker-end="url(#oa)" />
+            <line x1="460" y1="170" x2="460" y2="108" marker-end="url(#oa)" />
+
+            <!-- 서버 → 검색 / 색인 -->
+            <path d="M400,250 L400,300 L185,300 L185,330" marker-end="url(#oa)" />
+            <path d="M600,250 L600,300 L700,300 L700,330" marker-end="url(#oa)" />
+
+            <!-- 외부 문서 → 색인 -->
+            <line x1="880" y1="280" x2="880" y2="330" marker-end="url(#oa)" />
+
+            <!-- 검색 / 색인 → DB -->
+            <path d="M185,414 L185,450 L400,450 L400,490" marker-end="url(#oa)" />
+            <path d="M815,414 L815,450 L600,450 L600,490" marker-end="url(#oa)" />
+          </g>
+
+          <text class="edge-label" x="552" y="146">질문</text>
+          <text class="edge-label" x="448" y="146" text-anchor="end">근거 문서</text>
+          <text class="edge-label" x="868" y="312" text-anchor="end">문서를 가져온다</text>
+          <text class="edge-label" x="300" y="442" text-anchor="end">찾아본다</text>
+          <text class="edge-label" x="700" y="442">쌓아둔다</text>
+
+          <!-- 사람 / 클라이언트 -->
+          <g class="node compute">
+            <rect x="355" y="32" width="290" height="76" rx="12" />
+            <text x="500" y="66" text-anchor="middle">Claude · MCP 클라이언트</text>
+            <text class="sub" x="500" y="88" text-anchor="middle">사람이 평소 말투로 묻는다</text>
+          </g>
+
+          <!-- 서버 -->
+          <g class="node signal">
+            <rect x="355" y="170" width="290" height="80" rx="12" />
+            <text x="500" y="204" text-anchor="middle" style="fill:var(--accent-2)">docs-mcp 서버</text>
+            <text class="sub" x="500" y="226" text-anchor="middle">답을 쓰지 않는다.</text>
+            <text class="sub" x="500" y="242" text-anchor="middle">근거가 될 문서를 골라 건넨다</text>
+          </g>
+
+          <!-- 검색 -->
+          <g class="node compute">
+            <rect x="40" y="330" width="290" height="84" rx="12" />
+            <text x="185" y="362" text-anchor="middle">검색</text>
+            <text class="sub" x="185" y="384" text-anchor="middle">단어가 겹치는 문서와</text>
+            <text class="sub" x="185" y="400" text-anchor="middle">뜻이 가까운 문서를 함께 찾는다</text>
+          </g>
+
+          <!-- 색인 -->
+          <g class="node compute">
+            <rect x="670" y="330" width="290" height="84" rx="12" />
+            <text x="815" y="362" text-anchor="middle">색인</text>
+            <text class="sub" x="815" y="384" text-anchor="middle">문서를 잘게 나눠 찾기 좋게 만든다</text>
+            <text class="sub" x="815" y="400" text-anchor="middle">정해진 주기로 알아서 다시 돈다</text>
+          </g>
+
+          <!-- 외부 문서 창고 -->
+          <g class="node group">
+            <rect x="670" y="140" width="290" height="140" rx="12" />
+          </g>
+          <g class="node plain">
+            <rect x="684" y="152" width="262" height="36" rx="8" />
+            <text class="sm" x="815" y="175" text-anchor="middle">Google Drive</text>
+          </g>
+          <g class="node plain">
+            <rect x="684" y="196" width="262" height="36" rx="8" />
+            <text class="sm" x="815" y="219" text-anchor="middle">Notion</text>
+          </g>
+          <g class="node plain">
+            <rect x="684" y="240" width="262" height="36" rx="8" />
+            <text class="sm" x="815" y="263" text-anchor="middle">API 명세 (OpenAPI)</text>
+          </g>
+
+          <!-- DB -->
+          <g class="node store">
+            <rect x="310" y="490" width="380" height="86" rx="12" />
+            <text x="500" y="524" text-anchor="middle">PostgreSQL + pgvector</text>
+            <text class="sub" x="500" y="546" text-anchor="middle">문서 조각과 그 의미를</text>
+            <text class="sub" x="500" y="562" text-anchor="middle">한 데이터베이스에 함께 보관</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>새 검색 엔진이나 벡터 전용 저장소를 따로 두지 않는다. 글자로 찾는 일과 의미로 찾는 일을 <b>하나의 PostgreSQL</b>이 함께 맡는다 — 운영해야 할 서버가 하나 줄고, 두 결과가 어긋날 일도 없다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>검색이 두 갈래인 이유</h2>
+      <p class="s-sub">사람이 문서에 적힌 것과 똑같은 단어로 묻는 경우는 드물다. 그래서 한 가지 방법만으로는 놓친다.</p>
+    </div>
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 900 320" role="img" aria-label="키워드로 찾기와 의미로 찾기 두 결과를 순위 합치기 단계에서 하나로 합친다.">
+          <defs>
+            <marker id="ob" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <line x1="205" y1="130" x2="330" y2="196" marker-end="url(#ob)" />
+            <line x1="695" y1="130" x2="570" y2="196" marker-end="url(#ob)" />
+          </g>
+
+          <g class="node compute">
+            <rect x="55" y="40" width="300" height="90" rx="12" />
+            <text x="205" y="74" text-anchor="middle">단어로 찾기</text>
+            <text class="sub" x="205" y="96" text-anchor="middle">질문에 나온 말이</text>
+            <text class="sub" x="205" y="112" text-anchor="middle">그대로 들어 있는 문서</text>
+          </g>
+          <g class="node compute">
+            <rect x="545" y="40" width="300" height="90" rx="12" />
+            <text x="695" y="74" text-anchor="middle">뜻으로 찾기</text>
+            <text class="sub" x="695" y="96" text-anchor="middle">쓴 단어는 달라도</text>
+            <text class="sub" x="695" y="112" text-anchor="middle">말하려는 바가 가까운 문서</text>
+          </g>
+
+          <g class="node signal">
+            <rect x="270" y="196" width="360" height="94" rx="12" />
+            <text x="450" y="230" text-anchor="middle" style="fill:var(--accent-2)">순위를 합친다</text>
+            <text class="sub" x="450" y="252" text-anchor="middle">두 목록에서 <tspan style="font-weight:600">각각 몇 등이었는지</tspan>만 보고 합산.</text>
+            <text class="sub" x="450" y="270" text-anchor="middle">점수 매기는 기준이 서로 달라도 안전하다</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>두 방식의 점수는 단위가 달라 그냥 더할 수 없다. 그래서 점수 대신 <b>등수</b>만 가지고 합친다 — 양쪽에서 고루 상위권인 문서가 자연스럽게 맨 앞으로 온다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>이 설계에서 중요한 것 세 가지</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">01</span>
+        <h3>서버는 답을 쓰지 않는다</h3>
+        <p>문장을 만드는 일은 AI 쪽에 맡기고, 서버는 근거가 될 문서를 고르는 일만 한다. 역할이 갈려 있어 답이 이상할 때 <b>문서를 잘못 찾은 것인지, 읽고 잘못 쓴 것인지</b>를 구분할 수 있다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">02</span>
+        <h3>흩어진 문서를 한 창구로</h3>
+        <p>Google Drive, Notion, API 명세는 서로 다른 곳에 있고 검색 방식도 제각각이다. 이 서버를 거치면 어디에 있든 <b>같은 방식으로 한 번에</b> 찾는다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">03</span>
+        <h3>사람이 챙기지 않아도 최신</h3>
+        <p>문서가 바뀌면 정해진 주기에 서버가 알아서 다시 읽어 온다. 여러 갱신 작업이 동시에 돌아도 서로 부딪히지 않도록 <b>순번을 지키게</b> 해 두었다.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>docs-mcp — MCP RAG server</span>
+    <span>architecture overview · 2026</span>
+  </footer>
+
+</div>
