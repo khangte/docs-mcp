@@ -162,7 +162,9 @@ class TagListResult(TypedDict):
 class DocumentSearchItemPayload(TypedDict):
     """search_documents 가 반환하는 결과 한 건.
 
-    score 는 제목 매칭(1단계)과 본문 매칭(2단계)을 합산한 0.0~1.0 값이다.
+    score 는 기본 indexed 전략에서는 RRF 점수(순서만 유의미)이고, 롤백
+    스위치인 fetch 전략에서는 제목·본문 매칭을 합산한 [0,1] 가중합이다 —
+    두 전략 간 score 절대값은 비교 불가하다.
     """
 
     title: str
@@ -172,6 +174,7 @@ class DocumentSearchItemPayload(TypedDict):
     snippet: str
     score: float
     version: str | None
+    snippet_as_of: str | None
 
 
 class DocumentSearchResponse(TypedDict):

@@ -135,21 +135,23 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Args:
             query: 검색할 자연어 또는 키워드 질의.
-            top_k: 반환할 최대 결과 수(1~50). 실시간으로 본문을 가져오는 문서
-                수의 상한이기도 하다.
+            top_k: 반환할 최대 결과 수(1~50).
             source: "drive" 또는 "notion" 으로 출처를 한정할 때 지정.
             project: 특정 프로젝트로 검색 범위를 제한하고 싶을 때 지정.
                 생략하면 등록된 모든 프로젝트에서 검색한다.
             query_variants: query 와 같은 의미의 동의어·영한 혼용·유사 표현
-                목록. 1단계 후보 필터만 넓히고 점수·순위 계산에는 영향을
+                목록. 후보 필터만 넓히고 점수·순위 계산에는 영향을
                 주지 않는다 — 여전히 query 원본 토큰과 가장 잘 맞는 문서가
                 상위에 온다. 결과 0건 또는 부족 시 재질의할 때 사용.
 
         Returns:
             items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
-            project, url, snippet, score 필드를 갖는다. 관련 문서가 없으면
-            빈 리스트다. 검색 중 도메인/외부 연동 오류가 발생하면
-            error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
+            project, url, snippet, score, version, snippet_as_of 필드를
+            갖는다. snippet_as_of 는 스니펫이 만들어진 본문 색인 시점(ISO8601)
+            이며, 본문 청크 없이 제목 매치만으로 걸린 항목은 null 이다.
+            관련 문서가 없으면 빈 리스트다. 검색 중 도메인/외부 연동 오류가
+            발생하면 error/code/message 필드를 담은 ErrorPayload를 대신
+            반환한다.
         """
         def _inner(bundle: ServiceBundle) -> DocumentSearchResponse:
             options = DocumentSearchOptions(

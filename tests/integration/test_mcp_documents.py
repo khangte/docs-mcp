@@ -327,7 +327,7 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
 
 @pytest.mark.asyncio()
 async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> None:
-    """결과 항목은 title/source/project/url/snippet/score/version 7개 필드를 갖는다."""
+    """결과 항목은 title/source/project/url/snippet/score/version/snippet_as_of 8개 필드를 갖는다."""
     items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
 
     assert items
@@ -340,7 +340,19 @@ async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> 
             "snippet",
             "score",
             "version",
+            "snippet_as_of",
         }
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_snippet_as_of_null_without_body_index(
+    seeded_mcp: FastMCP,
+) -> None:
+    """본문 청크가 색인되지 않은(fetch 폴백/제목 단독 매치) 결과는 snippet_as_of 가 null 이다."""
+    items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
+
+    assert items
+    assert all(i["snippet_as_of"] is None for i in items)
 
 
 @pytest.mark.asyncio()

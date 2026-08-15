@@ -127,6 +127,7 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
             "snippet": item.snippet,
             "score": item.score,
             "version": item.version,
+            "snippet_as_of": item.snippet_as_of.isoformat() if item.snippet_as_of else None,
         }
         for item in items
     ]
