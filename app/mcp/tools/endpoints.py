@@ -190,7 +190,12 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
 
     @mcp.resource("document://{document_id}/raw")
     async def get_raw_document(document_id: str) -> str:
-        """등록된 특정 OpenAPI 문서의 원문(JSON/YAML)을 반환한다."""
+        """등록된 문서 한 건의 원문을 반환한다.
+
+        doc_type 과 무관하게 저장된 원문(OpenAPI JSON/YAML, markdown/csv, Drive/Notion
+        동기화 본문 등)을 그대로 돌려준다. document_id 는 list_documents 또는
+        search_endpoints 에서 얻는다.
+        """
         def _inner(bundle: ServiceBundle) -> str:
             doc = bundle.document_repo.get(document_id)
             if not doc:
