@@ -57,7 +57,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project", default=None)
     parser.add_argument("--include-registered", action="store_true")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--index-bodies", action="store_true")
+    # 기본 검색 전략이 indexed 라 본문 색인이 꺼지면 제목 매칭만 남는다.
+    # 기본을 켜고 `--no-index-bodies` 로만 끌 수 있게 한다.
+    parser.add_argument(
+        "--index-bodies",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     return parser.parse_args(argv)
 
 

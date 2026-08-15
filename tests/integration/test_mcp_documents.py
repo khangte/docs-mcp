@@ -36,7 +36,9 @@ async def seeded_mcp(
     fake_drive_source.put("d1", "로그인 인증 설계서", "OAuth 로그인 흐름 상세", modified_at=_T1)
     fake_drive_source.put("d2", "배포 운영 가이드", "무중단 배포 절차", modified_at=_T1)
     fake_notion_source.put("n1", "로그인 회의록", "로그인 정책 논의 기록", modified_at=_T1)
-    await mcp_server.call_tool("refresh_index", arguments={})
+    # index_bodies=False: 이 fixture 를 쓰는 테스트들은 fetch 시점 후보 압축·
+    # snippet 폴백(2단계 fetch 전략)을 검증하므로 본문이 미리 색인되면 안 된다.
+    await mcp_server.call_tool("refresh_index", arguments={"index_bodies": False})
     fake_drive_source.reset_counts()
     fake_notion_source.reset_counts()
     return mcp_server

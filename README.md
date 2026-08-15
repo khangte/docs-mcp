@@ -220,15 +220,16 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 스케줄러(systemd timer 또는 cron)가 소유합니다.
 
 ```bash
-uv run python -m app.scripts.refresh_documents [--include-registered] [--index-bodies]
+uv run python -m app.scripts.refresh_documents [--include-registered] [--no-index-bodies]
 ```
 
 메타 캐시 동기화는 1시간마다, 등록 문서 재색인(`--include-registered`)은 1일 1회
 야간에 돌리기를 권장합니다. 중복 실행은 Postgres advisory lock 으로 막습니다.
 
-`--index-bodies` 는 협업 문서 본문을 fetch 해 섹션 청크로 색인합니다. 기본
-검색 전략(`indexed`)의 본문 신호가 여기서 채워지므로, 협업 문서 검색을 쓰면
-최소 1회는 실행해야 합니다(미색인 문서도 제목 신호로는 계속 검색됩니다).
+본문 색인(협업 문서를 fetch 해 섹션 청크로 색인)은 기본으로 켜져 있습니다.
+기본 검색 전략(`indexed`)의 keyword/vector arm 신호가 여기서 채워지므로,
+끄면 검색이 제목 매칭만으로 조용히 퇴화합니다. 비용(문서마다 fetch + 파싱 +
+임베딩)을 아껴야 하는 대량 초기 동기화에서만 `--no-index-bodies` 로 끕니다.
 - [`docs/operations.md`](docs/operations.md#자동-동기화-배치) — 타이머/크론 설정 예시, 실행 환경 함정, 종료코드 규약
 
 ## 테스트 실행

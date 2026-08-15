@@ -18,7 +18,12 @@ from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_NOTION
 from app.services.documents.sources.document_source import FetchedDocument, FileMeta
-from app.services.documents.sources.time_parsing import parse_rfc3339
+from app.services.documents.sources.notion_blocks import (
+    block_plain_text,
+    child_page_to_file_meta,
+    property_plain_text,
+    to_file_meta,
+)
 
 _LOG = get_logger("docs_mcp.documents.notion")
 
@@ -34,7 +39,24 @@ MAX_BLOCKS = 2000
 MAX_PAGE_DEPTH = 4
 #: 한 허브에서 수집할 하위 페이지 수 상한.
 MAX_PAGES = 500
-UNTITLED = "(제목 없음)"
+#: 하위 페이지 탐색 시 toggle/column 같은 컨테이너 블록을 몇 단계까지
+#: 통과할지. 페이지 중첩 깊이(MAX_PAGE_DEPTH)와 **별도로** 센다 — 같은
+#: 카운터를 쓰면 토글 두 겹만으로 페이지 깊이 예산이 소진된다.
+MAX_CONTAINER_DEPTH = 3
+#: 자식으로 하위 페이지/하위 DB 를 품을 수 있는 컨테이너 블록 타입.
+_CONTAINER_BLOCK_TYPES = frozenset(
+    {
+        "toggle",
+        "column_list",
+        "column",
+        "callout",
+        "synced_block",
+        "bulleted_list_item",
+        "numbered_list_item",
+        "to_do",
+        "quote",
+    }
+)
 
 
 class NotionSource:
@@ -88,36 +110,56 @@ class NotionSource:
         """설정된 범위 안의 Notion 페이지 메타데이터를 반환한다.
 
         `page_id` 가 설정돼 있으면 그 페이지 하위 트리 전체를 child_page 를
-        통해 재귀 탐색해 목록화한다(허브 페이지 하위 문서 탐색). 그 외에는
-        기존처럼 데이터베이스 쿼리 또는 워크스페이스 검색을 사용한다.
+        통해 재귀 탐색해 목록화한다(허브 페이지 하위 문서 탐색).
+        `database_id` 가 설정돼 있으면 DB 행을 목록화한 뒤 **각 행 하위
+        트리도 같은 방식으로 재귀 탐색**한다 — 행 페이지 안의 하위 페이지·
+        하위 DB 가 검색에서 빠지지 않게 한다(`docs/architect-review/50` §2.2).
+        둘 다 없으면 워크스페이스 검색 결과를 그대로 쓴다(그 응답 자체가 이미
+        중첩 페이지를 포함하므로 추가 재귀가 불필요하다).
 
         Raises:
             IntegrationError: 인증 실패·rate limit·네트워크 오류 시.
         """
-        if self._page_id:
-            acc: list[FileMeta] = []
-            visited: set[str] = set()
-            with self._client() as client:
-                self._collect_child_pages(client, self._page_id, acc, visited, 0)
-            return acc
-        path, body = self._list_request_spec()
+        acc: list[FileMeta] = []
+        visited: set[str] = set()
         with self._client() as client:
+            if self._page_id:
+                self._collect_child_pages(client, self._page_id, acc, visited, 0)
+                return acc
+
+            path, body = self._list_request_spec()
             raw_pages = self._paginate(client, path, body)
-        return [_to_file_meta(page) for page in raw_pages if page.get("id")]
+            if not self._database_id:
+                return [to_file_meta(page) for page in raw_pages if page.get("id")]
+
+            for page in raw_pages:
+                page_id = str(page.get("id") or "")
+                if not page_id or page_id in visited:
+                    continue
+                if not self._record_page(to_file_meta(page), page_id, acc, visited):
+                    _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
+                    return acc
+                self._collect_child_pages(client, page_id, acc, visited, 0)
+        return acc
 
     def list_files(self) -> list[FileMeta]:
         """`DocumentSource` Protocol 호환 별칭. `list_pages()` 와 동일하다."""
         return self.list_pages()
 
     def fetch(self, external_id: str) -> FetchedDocument:
-        """페이지 본문(블록 트리)을 평문 텍스트로 반환한다.
+        """페이지 속성 + 본문(블록 트리)을 평문 텍스트로 반환한다.
+
+        DB 행의 상태·태그·담당자 같은 속성은 블록이 아니라 페이지 객체에
+        있어 `/blocks/{id}/children` 만으로는 절대 잡히지 않는다. 그래서
+        `GET /pages/{id}` 를 1회 더 호출해 속성 줄을 본문 앞에 붙인다
+        (`docs/architect-review/50` §3 P0-3).
 
         Args:
             external_id: Notion page ID.
 
         Returns:
-            블록 순서대로 줄바꿈으로 이어 붙인 평문(최대 문자 수로 잘림)과
-            절단 여부.
+            속성 줄 + 블록 줄을 줄바꿈으로 이어 붙인 평문(최대 문자 수로
+            잘림)과 절단 여부.
 
         Raises:
             IntegrationError: 페이지가 없거나 외부 연동에 실패한 경우.
@@ -127,10 +169,37 @@ class NotionSource:
 
         lines: list[str] = []
         with self._client() as client:
+            lines.extend(self._page_property_lines(client, external_id))
             self._collect_block_text(client, external_id, lines, depth=0)
         text = "\n".join(lines)
         truncated = len(text) > self._max_chars
         return FetchedDocument(text[: self._max_chars], truncated)
+
+    def _page_property_lines(self, client: httpx.Client, page_id: str) -> list[str]:
+        """페이지 속성을 `"{속성명}: {값}"` 줄 목록으로 만든다.
+
+        조회 실패는 삼키고 빈 목록을 돌려준다 — 속성 하나 때문에 문서 1건의
+        본문 색인이 통째로 실패하면 안 된다(블록 본문만으로도 색인 가치가
+        있다).
+        """
+        try:
+            page = self._request_json(client, "GET", f"/pages/{page_id}")
+        except IntegrationError as exc:
+            _LOG.warning(
+                "notion 페이지 속성 조회 실패(본문만 색인): %s (%s)", page_id, exc
+            )
+            return []
+        properties = page.get("properties")
+        if not isinstance(properties, dict):
+            return []
+        lines: list[str] = []
+        for name, prop in properties.items():
+            if not isinstance(prop, dict):
+                continue
+            value = property_plain_text(prop)
+            if value:
+                lines.append(f"{name}: {value}")
+        return lines
 
     # --- 내부 헬퍼 --------------------------------------------------------
 
@@ -171,17 +240,28 @@ class NotionSource:
     def _collect_block_text(
         self, client: httpx.Client, block_id: str, lines: list[str], depth: int
     ) -> None:
-        """블록 트리를 재귀 순회하며 평문 줄을 lines 에 누적한다."""
+        """블록 트리를 재귀 순회하며 평문 줄을 lines 에 누적한다.
+
+        `child_page` 에서는 재귀를 멈춘다 — 하위 페이지는 `list_pages()` 가
+        독립 문서로 목록화하므로, 여기서 또 타고 들어가면 같은 텍스트가 부모·
+        자식 두 문서에 중복 색인되고 부모 히트의 스니펫·URL 이 실제 출처와
+        어긋난다(`docs/architect-review/50` §2.3). 제목은
+        `block_plain_text` 가 남기므로 부모에서도 하위 문서 이름은 검색된다.
+        """
         if depth > MAX_BLOCK_DEPTH or len(lines) >= MAX_BLOCKS:
             return
         for block in self._list_children(client, block_id):
             if len(lines) >= MAX_BLOCKS:
                 _LOG.warning("notion 블록 수 상한(%d) 도달: %s", MAX_BLOCKS, block_id)
                 return
-            text = _block_plain_text(block)
+            text = block_plain_text(block)
             if text:
                 lines.append(text)
-            if block.get("has_children") and block.get("id"):
+            if (
+                block.get("has_children")
+                and block.get("id")
+                and block.get("type") != "child_page"
+            ):
                 self._collect_block_text(client, str(block["id"]), lines, depth + 1)
 
     def _collect_child_pages(
@@ -191,12 +271,15 @@ class NotionSource:
         acc: list[FileMeta],
         visited: set[str],
         depth: int,
+        container_depth: int = 0,
     ) -> None:
         """page_id 하위 child_page/child_database 트리를 재귀 순회하며 acc 에 평탄 누적한다.
 
         child_database 를 만나면 그 database 를 query 해 얻은 행(페이지)들도
-        동일하게 재귀 대상에 포함한다 — 텍스트/토글 블록 안에 중첩된
-        child_page/child_database 는 이 목록에 포함되지 않는다(깊은 순회는 후속 스코프).
+        동일하게 재귀 대상에 포함한다. toggle/column 같은 컨테이너 블록은
+        하위 페이지를 품을 수 있으므로 `MAX_CONTAINER_DEPTH` 까지 통과해
+        내려간다 — 이때 페이지 중첩 깊이(`depth`)는 늘리지 않는다
+        (`docs/architect-review/50` §3 P1-2).
         """
         if depth > MAX_PAGE_DEPTH:
             return
@@ -204,25 +287,37 @@ class NotionSource:
             _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
             return
         for block in self._list_children(client, page_id):
+            if len(acc) >= MAX_PAGES:
+                _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
+                return
             block_type = block.get("type")
-            if block_type == "child_page" and block.get("id"):
-                child_id = str(block["id"])
-                if child_id in visited:
+            block_id = str(block.get("id") or "")
+            if not block_id:
+                continue
+            if block_type == "child_page":
+                if block_id in visited:
                     continue
-                if not self._record_page(_child_page_to_file_meta(block), child_id, acc, visited):
+                if not self._record_page(child_page_to_file_meta(block), block_id, acc, visited):
                     _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
                     return
-                self._collect_child_pages(client, child_id, acc, visited, depth + 1)
-            elif block_type == "child_database" and block.get("id"):
-                db_id = str(block["id"])
-                for row in self._paginate(client, f"/databases/{db_id}/query", {}):
+                self._collect_child_pages(client, block_id, acc, visited, depth + 1)
+            elif block_type == "child_database":
+                for row in self._paginate(client, f"/databases/{block_id}/query", {}):
                     row_id = str(row.get("id") or "")
                     if not row_id or row_id in visited:
                         continue
-                    if not self._record_page(_to_file_meta(row), row_id, acc, visited):
+                    if not self._record_page(to_file_meta(row), row_id, acc, visited):
                         _LOG.warning("notion 하위 페이지 수 상한(%d) 도달: %s", MAX_PAGES, page_id)
                         return
                     self._collect_child_pages(client, row_id, acc, visited, depth + 1)
+            elif (
+                block_type in _CONTAINER_BLOCK_TYPES
+                and block.get("has_children")
+                and container_depth < MAX_CONTAINER_DEPTH
+            ):
+                self._collect_child_pages(
+                    client, block_id, acc, visited, depth, container_depth + 1
+                )
 
     @staticmethod
     def _record_page(
@@ -297,65 +392,3 @@ def _notion_error_message(path: str, response: httpx.Response) -> str:
     if status == 429:
         return "notion rate limit exceeded; retry later"
     return f"notion request failed for {path} (status {status})"
-
-
-def _rich_text_to_plain(items: Any) -> str:
-    """Notion rich_text 배열을 평문으로 이어 붙인다."""
-    if not isinstance(items, list):
-        return ""
-    parts = [
-        str(item.get("plain_text") or "")
-        for item in items
-        if isinstance(item, dict)
-    ]
-    return "".join(parts).strip()
-
-
-def _block_plain_text(block: dict[str, Any]) -> str:
-    """블록 한 개에서 평문 텍스트를 추출한다(rich_text 를 갖는 모든 타입 지원)."""
-    block_type = str(block.get("type") or "")
-    payload = block.get(block_type)
-    if not isinstance(payload, dict):
-        return ""
-    return _rich_text_to_plain(payload.get("rich_text"))
-
-
-def _page_title(page: dict[str, Any]) -> str:
-    """페이지 properties 에서 title 타입 속성을 찾아 제목을 만든다."""
-    properties = page.get("properties")
-    if isinstance(properties, dict):
-        for prop in properties.values():
-            if isinstance(prop, dict) and prop.get("type") == "title":
-                title = _rich_text_to_plain(prop.get("title"))
-                if title:
-                    return title
-    return UNTITLED
-
-
-def _child_page_to_file_meta(block: dict[str, Any]) -> FileMeta:
-    """`child_page` 타입 블록 하나를 FileMeta 로 변환한다.
-
-    블록 자체의 id 가 하위 페이지의 page id 다(그대로 fetch 대상 external_id).
-    """
-    block_id = str(block.get("id") or "")
-    child_page = block.get("child_page")
-    title = UNTITLED
-    if isinstance(child_page, dict):
-        title = str(child_page.get("title") or "") or UNTITLED
-    return FileMeta(
-        external_id=block_id,
-        title=title,
-        url=f"https://www.notion.so/{block_id.replace('-', '')}",
-        modified_at=parse_rfc3339(block.get("last_edited_time")),
-    )
-
-
-def _to_file_meta(page: dict[str, Any]) -> FileMeta:
-    """Notion 페이지 응답 항목 하나를 FileMeta 로 변환한다."""
-    page_id = str(page.get("id") or "")
-    return FileMeta(
-        external_id=page_id,
-        title=_page_title(page),
-        url=str(page.get("url") or f"https://www.notion.so/{page_id.replace('-', '')}"),
-        modified_at=parse_rfc3339(page.get("last_edited_time")),
-    )

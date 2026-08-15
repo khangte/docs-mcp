@@ -586,3 +586,328 @@ def test_upsert_kind_omitted_leaves_kind_none(db_session) -> None:
     db_session.commit()
 
     assert row.kind is None
+
+
+def test_fetch_does_not_descend_into_child_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """본문 재귀는 child_page 에서 멈춘다(하위 페이지는 독립 문서로 색인되므로 중복 방지).
+
+    제목은 남고 하위 페이지 본문은 들어오지 않는다.
+    """
+    tree = {
+        "parent-page": [
+            {
+                "id": "para-1",
+                "type": "paragraph",
+                "has_children": False,
+                "paragraph": {"rich_text": [{"plain_text": "부모 본문"}]},
+            },
+            {
+                "id": "child-1",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "하위 문서"},
+            },
+        ],
+        "child-1": [
+            {
+                "id": "para-2",
+                "type": "paragraph",
+                "has_children": False,
+                "paragraph": {"rich_text": [{"plain_text": "하위 본문"}]},
+            },
+        ],
+    }
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        requested.append(block_id)
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="parent-page")
+    _patch_client(monkeypatch, source, handler)
+
+    fetched = source.fetch("parent-page")
+
+    assert "부모 본문" in fetched.text
+    assert "하위 문서" in fetched.text
+    assert "하위 본문" not in fetched.text
+    assert "child-1" not in requested
+
+
+def test_fetch_still_descends_into_toggle_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """child_page 가 아닌 컨테이너(toggle)에는 계속 재귀한다(회귀 방지)."""
+    tree = {
+        "parent-page": [
+            {
+                "id": "toggle-1",
+                "type": "toggle",
+                "has_children": True,
+                "toggle": {"rich_text": [{"plain_text": "접힌 제목"}]},
+            },
+        ],
+        "toggle-1": [
+            {
+                "id": "para-1",
+                "type": "paragraph",
+                "has_children": False,
+                "paragraph": {"rich_text": [{"plain_text": "접힌 안쪽 본문"}]},
+            },
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="parent-page")
+    _patch_client(monkeypatch, source, handler)
+
+    fetched = source.fetch("parent-page")
+
+    assert "접힌 안쪽 본문" in fetched.text
+
+
+def test_list_pages_with_database_id_recurses_into_row_children(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """database 모드에서도 각 행 페이지 하위의 child_page 가 독립 문서로 목록화된다."""
+    row = {
+        "id": "row-1",
+        "url": "https://www.notion.so/row-1",
+        "properties": {"이름": {"type": "title", "title": [{"plain_text": "장애 A"}]}},
+        "last_edited_time": "2026-07-05T00:00:00.000Z",
+    }
+    children = {
+        "row-1": [
+            {
+                "id": "child-1",
+                "type": "child_page",
+                "has_children": False,
+                "child_page": {"title": "원인 분석"},
+            },
+        ],
+        "child-1": [],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/databases/"):
+            return _json({"results": [row], "has_more": False})
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": children.get(block_id, [])})
+
+    source = NotionSource(token="t1", database_id="db-1")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["row-1", "child-1"]
+    assert [p.title for p in pages] == ["장애 A", "원인 분석"]
+
+
+def test_list_pages_with_database_id_does_not_duplicate_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """행이 자기 자신을 다시 참조해도 중복 목록화되지 않는다."""
+    row = {
+        "id": "row-1",
+        "url": "https://www.notion.so/row-1",
+        "properties": {"이름": {"type": "title", "title": [{"plain_text": "장애 A"}]}},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/databases/"):
+            return _json({"results": [row], "has_more": False})
+        return _json(
+            {
+                "results": [
+                    {
+                        "id": "row-1",
+                        "type": "child_page",
+                        "has_children": False,
+                        "child_page": {"title": "장애 A"},
+                    }
+                ]
+            }
+        )
+
+    source = NotionSource(token="t1", database_id="db-1")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["row-1"]
+
+
+def test_collect_child_pages_descends_through_toggle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """toggle 안에 중첩된 child_page 도 목록화된다."""
+    tree = {
+        "hub-page": [
+            {
+                "id": "toggle-1",
+                "type": "toggle",
+                "has_children": True,
+                "toggle": {"rich_text": [{"plain_text": "지난 장애"}]},
+            },
+        ],
+        "toggle-1": [
+            {
+                "id": "child-1",
+                "type": "child_page",
+                "has_children": False,
+                "child_page": {"title": "2026-07 타임아웃"},
+            },
+        ],
+        "child-1": [],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["child-1"]
+    assert [p.title for p in pages] == ["2026-07 타임아웃"]
+
+
+def test_collect_child_pages_stops_after_container_depth_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """컨테이너 하강은 MAX_CONTAINER_DEPTH 단계에서 멈춘다(호출 폭증 방지)."""
+    tree = {
+        "hub-page": [{"id": "c1", "type": "toggle", "has_children": True, "toggle": {}}],
+        "c1": [{"id": "c2", "type": "toggle", "has_children": True, "toggle": {}}],
+        "c2": [{"id": "c3", "type": "toggle", "has_children": True, "toggle": {}}],
+        "c3": [{"id": "c4", "type": "toggle", "has_children": True, "toggle": {}}],
+        "c4": [
+            {
+                "id": "deep-page",
+                "type": "child_page",
+                "has_children": False,
+                "child_page": {"title": "너무 깊음"},
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert pages == []
+
+
+def test_container_depth_does_not_consume_page_depth_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """토글을 여러 겹 지나도 페이지 중첩 깊이 예산은 줄지 않는다."""
+    tree = {
+        "hub-page": [{"id": "t1", "type": "toggle", "has_children": True, "toggle": {}}],
+        "t1": [{"id": "t2", "type": "toggle", "has_children": True, "toggle": {}}],
+        "t2": [
+            {
+                "id": "p1",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "1단계"},
+            }
+        ],
+        "p1": [
+            {
+                "id": "p2",
+                "type": "child_page",
+                "has_children": True,
+                "child_page": {"title": "2단계"},
+            }
+        ],
+        "p2": [
+            {
+                "id": "p3",
+                "type": "child_page",
+                "has_children": False,
+                "child_page": {"title": "3단계"},
+            }
+        ],
+        "p3": [],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        block_id = request.url.path.split("/")[2]
+        return _json({"results": tree.get(block_id, [])})
+
+    source = NotionSource(token="t1", page_id="hub-page")
+    _patch_client(monkeypatch, source, handler)
+
+    pages = source.list_pages()
+
+    assert [p.external_id for p in pages] == ["p1", "p2", "p3"]
+
+
+def test_fetch_prepends_page_properties(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DB 행 속성이 본문 앞에 '이름: 값' 줄로 붙는다."""
+    page = {
+        "id": "row-1",
+        "properties": {
+            "상태": {"type": "status", "status": {"name": "해결"}},
+            "태그": {"type": "multi_select", "multi_select": [{"name": "DB"}]},
+        },
+    }
+    blocks = [
+        {
+            "id": "para-1",
+            "type": "paragraph",
+            "has_children": False,
+            "paragraph": {"rich_text": [{"plain_text": "본문 한 줄"}]},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/pages/"):
+            return _json(page)
+        return _json({"results": blocks})
+
+    source = NotionSource(token="t1", database_id="db-1")
+    _patch_client(monkeypatch, source, handler)
+
+    text = source.fetch("row-1").text
+
+    assert text.splitlines()[:2] == ["상태: 해결", "태그: DB"]
+    assert "본문 한 줄" in text
+
+
+def test_fetch_survives_property_lookup_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """속성 조회가 실패해도 블록 본문만으로 색인을 계속한다."""
+    blocks = [
+        {
+            "id": "para-1",
+            "type": "paragraph",
+            "has_children": False,
+            "paragraph": {"rich_text": [{"plain_text": "본문 한 줄"}]},
+        },
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/pages/"):
+            return httpx.Response(403, json={"message": "denied"})
+        return _json({"results": blocks})
+
+    source = NotionSource(token="t1", database_id="db-1")
+    _patch_client(monkeypatch, source, handler)
+
+    text = source.fetch("row-1").text
+
+    assert text == "본문 한 줄"

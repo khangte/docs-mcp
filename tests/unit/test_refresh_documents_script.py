@@ -54,7 +54,7 @@ class _FakeBundle:
 
 
 def _args(
-    *, include_registered: bool = False, index_bodies: bool = False
+    *, include_registered: bool = False, index_bodies: bool = True
 ) -> argparse.Namespace:
     return argparse.Namespace(
         source=None,
@@ -142,12 +142,27 @@ def test_index_bodies_flag_passed_to_refresh() -> None:
     assert index_service.calls == [(None, None, True)]
 
 
-def test_index_bodies_defaults_to_false() -> None:
-    """--index-bodies 를 안 주면 refresh 가 index_bodies=False 로 호출된다."""
+def test_index_bodies_defaults_to_true() -> None:
+    """플래그를 안 주면 refresh 가 index_bodies=True 로 호출된다.
+
+    기본 검색 전략이 indexed(3-arm RRF)라, 본문 색인이 꺼진 채 갱신하면
+    keyword/vector arm 이 비어 제목 매칭만으로 조용히 퇴화한다.
+    """
     result = RefreshResult(synced=0, added=0, updated=0, removed=0, failed_sources=())
     index_service = _FakeDocumentIndexService(result=result)
     bundle = _FakeBundle(index_service)
 
     _execute(bundle, _args(), lock_acquire=lambda: True)
+
+    assert index_service.calls == [(None, None, True)]
+
+
+def test_no_index_bodies_flag_disables_body_indexing() -> None:
+    """--no-index-bodies 를 주면 refresh 가 index_bodies=False 로 호출된다."""
+    result = RefreshResult(synced=0, added=0, updated=0, removed=0, failed_sources=())
+    index_service = _FakeDocumentIndexService(result=result)
+    bundle = _FakeBundle(index_service)
+
+    _execute(bundle, _args(index_bodies=False), lock_acquire=lambda: True)
 
     assert index_service.calls == [(None, None, False)]

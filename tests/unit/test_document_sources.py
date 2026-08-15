@@ -727,7 +727,7 @@ def test_notion_fetch_flattens_block_tree(monkeypatch: pytest.MonkeyPatch) -> No
     source = NotionSource(token="t1")
     _patch_client(monkeypatch, source, handler)
 
-    assert source.fetch("p1").text == "제목\n부모 문단\n자식 항목"
+    assert source.fetch("p1").text == "# 제목\n부모 문단\n- 자식 항목"
 
 
 def test_notion_fetch_skips_blocks_without_text(monkeypatch: pytest.MonkeyPatch) -> None:

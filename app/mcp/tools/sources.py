@@ -30,12 +30,12 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         project: str | None = None,
         include_registered: bool = False,
         force: bool = False,
-        index_bodies: bool = False,
+        index_bodies: bool = True,
     ) -> RefreshIndexResult | ErrorPayload:
         """협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다.
 
-        문서 목록과 메타데이터만 갱신하고 본문은 저장하지 않는다. 새로 만든
-        문서가 search_documents 에 잡히지 않을 때 실행한다.
+        문서 목록·메타데이터를 갱신하고, 기본적으로 본문까지 색인한다. 새로
+        만든 문서가 search_documents 에 잡히지 않을 때 실행한다.
 
         Args:
             source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
@@ -52,11 +52,14 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
                 크므로 옵트인이다.
             force: include_registered=True 일 때, 해시가 같아도 강제
                 재색인할지 여부. include_registered=False 면 무시된다.
-            index_bodies: True 면 신규/변경된 Drive/Notion 문서의 본문을
-                fetch 해 document/chunk 에 색인한다(검색 랭킹용 벡터 생성).
-                기본 False — 문서마다 fetch + 파싱 + 임베딩이 필요해
-                비용이 크므로 옵트인이다. 원본에서 삭제된 문서의 청크·벡터
-                삭제는 이 플래그와 무관하게 항상 수행된다.
+            index_bodies: True(기본) 면 신규/변경된 Drive/Notion 문서의
+                본문을 fetch 해 document/chunk 에 색인한다(검색 랭킹용
+                벡터 생성). 기본 검색 전략이 indexed(제목+키워드+벡터
+                3-arm RRF)라 본문 색인이 없으면 keyword/vector arm 이 비어
+                검색이 제목 매칭만으로 조용히 퇴화한다. 비용(문서마다
+                fetch + 파싱 + 임베딩)을 아껴야 하는 대량 초기 동기화에서만
+                False 를 준다. 원본에서 삭제된 문서의 청크·벡터 삭제는 이
+                플래그와 무관하게 항상 수행된다.
 
         Returns:
             synced(조회 건수), added, updated, removed, failed_sources 를 담은
