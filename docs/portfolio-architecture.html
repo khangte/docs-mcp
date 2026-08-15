@@ -1,0 +1,429 @@
+<title>docs-mcp</title>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --surface-2: #eaeef4;
+    --border: #dbe1e9;
+    --text: #131922;
+    --text-dim: #59636f;
+    --accent: #2c58a0;
+    --accent-soft: #e5edf9;
+    --accent-2: #bd6a17;
+    --accent-2-soft: #fbecdc;
+    --shadow: 0 1px 2px rgba(20, 26, 34, 0.04), 0 12px 28px -14px rgba(20, 26, 34, 0.18);
+
+    --font-display: ui-monospace, "Cascadia Code", "JetBrains Mono", "Roboto Mono", "SFMono-Regular", Consolas, monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0f15;
+      --surface: #121924;
+      --surface-2: #17202c;
+      --border: #263241;
+      --text: #e9edf3;
+      --text-dim: #8d9aac;
+      --accent: #7ea6e8;
+      --accent-soft: #1a2941;
+      --accent-2: #f0a34a;
+      --accent-2-soft: #34260f;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b0f15;
+    --surface: #121924;
+    --surface-2: #17202c;
+    --border: #263241;
+    --text: #e9edf3;
+    --text-dim: #8d9aac;
+    --accent: #7ea6e8;
+    --accent-soft: #1a2941;
+    --accent-2: #f0a34a;
+    --accent-2-soft: #34260f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.55;
+  }
+
+  .page {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 72px 28px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 72px;
+  }
+
+  /* ---------- hero ---------- */
+  .hero { display: flex; flex-direction: column; gap: 18px; }
+  .kicker {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .kicker::before {
+    content: "";
+    width: 22px;
+    height: 1.5px;
+    background: var(--accent);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(38px, 6.4vw, 60px);
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .tagline {
+    max-width: 62ch;
+    font-size: 17.5px;
+    color: var(--text-dim);
+  }
+  .tagline b { color: var(--text); font-weight: 600; }
+
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .badge {
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    border-radius: 999px;
+    padding: 5px 12px;
+  }
+
+  /* ---------- stats ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .stat {
+    background: var(--surface);
+    padding: 22px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .stat .n {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat .l { font-size: 12.5px; color: var(--text-dim); }
+
+  /* ---------- section shell ---------- */
+  section { display: flex; flex-direction: column; gap: 18px; }
+  .s-head { display: flex; flex-direction: column; gap: 6px; }
+  h2 {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0;
+  }
+  .s-sub { color: var(--text-dim); font-size: 14.5px; max-width: 68ch; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 20px;
+    box-shadow: var(--shadow);
+  }
+  .svg-wrap { overflow-x: auto; }
+  svg { display: block; width: 100%; height: auto; max-width: 100%; }
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+  figcaption code { font-family: var(--font-display); font-size: 0.92em; background: var(--surface-2); padding: 0.1em 0.4em; border-radius: 4px; }
+
+  .node rect { fill: var(--surface); stroke: var(--border); stroke-width: 1.4; }
+  .node.compute rect { stroke: var(--accent); }
+  .node.store rect { stroke: var(--accent); fill: var(--accent-soft); }
+  .node.signal rect { stroke: var(--accent-2); stroke-width: 2; fill: var(--accent-2-soft); }
+  .node text { font-family: var(--font-display); font-size: 12.5px; font-weight: 700; fill: var(--text); }
+  .node .sub { font-family: var(--font-body); font-weight: 400; font-size: 11px; fill: var(--text-dim); }
+  .edge { stroke: var(--text-dim); stroke-width: 1.5; fill: none; }
+  .edge-label { font-family: var(--font-body); font-size: 11.5px; fill: var(--text-dim); }
+  .section-tag { font-family: var(--font-display); font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; fill: var(--text-dim); text-transform: uppercase; }
+  .divider-soft { stroke: var(--border); stroke-width: 1; }
+
+  /* ---------- highlight cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card .mark {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    color: var(--accent-2);
+    font-weight: 700;
+  }
+  .card h3 { font-family: var(--font-display); font-size: 15.5px; margin: 0; font-weight: 700; }
+  .card p { font-size: 13.5px; color: var(--text-dim); margin: 0; }
+
+  /* ---------- stack ---------- */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+  }
+  .stack-group { display: flex; flex-direction: column; gap: 8px; }
+  .stack-group h4 {
+    font-family: var(--font-display);
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    margin: 0;
+    font-weight: 700;
+  }
+  .stack-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .stack-group li { font-size: 14px; }
+  .stack-group li b { font-weight: 600; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  @media (max-width: 720px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .cards { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="page">
+
+  <div class="hero">
+    <span class="kicker">MCP Server &middot; Hybrid RAG &middot; PostgreSQL</span>
+    <h1>docs-mcp</h1>
+    <p class="tagline">API 명세(OpenAPI)와 팀 협업 문서(Drive/Notion)를 <b>키워드+벡터 하이브리드 검색(RRF)</b>으로 색인해, MCP 프로토콜을 통해 호출 LLM에 근거 문서를 공급하는 검색 서버. 최종 자연어 답변은 서버가 생성하지 않는다 — 서버는 <b>후보 피더</b>다.</p>
+    <div class="badges">
+      <span class="badge">Python 3.11+</span>
+      <span class="badge">PostgreSQL + pgvector</span>
+      <span class="badge">SQLAlchemy 2.0</span>
+      <span class="badge">FastMCP</span>
+      <span class="badge">Pydantic v2</span>
+      <span class="badge">sentence-transformers</span>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><span class="n">17</span><span class="l">MCP 도구</span></div>
+    <div class="stat"><span class="n">88 / 95%</span><span class="l">Recall@3 / @10</span></div>
+    <div class="stat"><span class="n">4+2</span><span class="l">문서 포맷 · 협업 소스</span></div>
+    <div class="stat"><span class="n">K=60</span><span class="l">RRF 하이브리드 융합</span></div>
+  </div>
+
+  <section>
+    <div class="s-head">
+      <h2>시스템 아키텍처</h2>
+      <p class="s-sub">두 진입점(MCP 서버 · 배치 스케줄러)이 하나의 서비스 계층을 공유하고, 검색은 항상 키워드(FTS)와 벡터(HNSW) 신호를 RRF로 융합한다.</p>
+    </div>
+    <figure>
+      <div class="svg-wrap">
+        <svg viewBox="0 0 920 660" role="img" aria-label="Claude MCP 클라이언트와 OS 스케줄러가 각각 MCP 서버와 배치 CLI로 들어와 하나의 서비스 계층을 거쳐, PostgreSQL과 pgvector에 색인하고 외부 소스에서 문서를 가져오며, 검색은 키워드와 벡터 신호를 RRF로 융합하는 전체 시스템 다이어그램">
+          <defs>
+            <marker id="pa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+            <marker id="pa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--accent-2)" />
+            </marker>
+          </defs>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <line x1="220" y1="76" x2="220" y2="148" marker-end="url(#pa)" />
+            <line x1="700" y1="76" x2="700" y2="148" marker-end="url(#pa)" />
+            <line x1="260" y1="204" x2="360" y2="278" marker-end="url(#pa)" />
+            <line x1="660" y1="204" x2="560" y2="278" marker-end="url(#pa)" />
+            <line x1="380" y1="336" x2="290" y2="406" marker-end="url(#pa)" />
+            <line x1="540" y1="336" x2="660" y2="406" marker-end="url(#pa)" />
+          </g>
+          <text class="edge-label" x="232" y="115">stdio · 도구 호출</text>
+          <text class="edge-label" x="712" y="115">cron / systemd</text>
+          <text class="edge-label" x="392" y="244">tools → services</text>
+          <text class="edge-label" x="528" y="244" text-anchor="end">서비스 함수 직접 호출</text>
+          <text class="edge-label" x="285" y="376" text-anchor="end">색인 · 하이브리드 검색</text>
+          <text class="edge-label" x="600" y="376">fetch (동기화 시점만)</text>
+
+          <g class="node compute">
+            <rect x="60" y="20" width="320" height="56" rx="9" />
+            <text x="220" y="44" text-anchor="middle">Claude / MCP Client</text>
+            <text class="sub" x="220" y="62" text-anchor="middle">자연어 질의 · 도구 호출</text>
+          </g>
+          <g class="node compute">
+            <rect x="540" y="20" width="320" height="56" rx="9" />
+            <text x="700" y="44" text-anchor="middle">OS Scheduler</text>
+            <text class="sub" x="700" y="62" text-anchor="middle">systemd timer / cron</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="60" y="150" width="320" height="56" rx="9" />
+            <text x="220" y="174" text-anchor="middle">MCP Server</text>
+            <text class="sub" x="220" y="192" text-anchor="middle">17 tools · stdio transport</text>
+          </g>
+          <g class="node compute">
+            <rect x="540" y="150" width="320" height="56" rx="9" />
+            <text x="700" y="174" text-anchor="middle">Batch Sync CLI</text>
+            <text class="sub" x="700" y="192" text-anchor="middle">refresh_documents.py</text>
+          </g>
+
+          <g class="node compute">
+            <rect x="230" y="280" width="460" height="58" rx="9" />
+            <text x="460" y="304" text-anchor="middle">Service Layer</text>
+            <text class="sub" x="460" y="322" text-anchor="middle">Ingest → Parse → Index → Hybrid Search</text>
+          </g>
+
+          <g class="node store">
+            <rect x="60" y="408" width="430" height="68" rx="9" />
+            <text x="275" y="434" text-anchor="middle">PostgreSQL + pgvector</text>
+            <text class="sub" x="275" y="452" text-anchor="middle">FTS keyword index + HNSW vector index</text>
+          </g>
+          <g class="node compute">
+            <rect x="530" y="408" width="330" height="68" rx="9" />
+            <text x="695" y="434" text-anchor="middle">External Sources</text>
+            <text class="sub" x="695" y="452" text-anchor="middle">OpenAPI specs · Google Drive · Notion</text>
+          </g>
+
+          <!-- signature: RRF fusion inset, anchored to the DB box -->
+          <line class="divider-soft" x1="60" y1="500" x2="490" y2="500" />
+          <text class="section-tag" x="60" y="522">signature mechanism — hybrid fusion</text>
+
+          <g class="edge" style="color:var(--text-dim)">
+            <line x1="150" y1="596" x2="150" y2="614" marker-end="url(#pa2)" style="color:var(--accent-2)" />
+            <line x1="400" y1="596" x2="400" y2="614" marker-end="url(#pa2)" style="color:var(--accent-2)" />
+          </g>
+
+          <g class="node compute">
+            <rect x="60" y="536" width="180" height="58" rx="9" />
+            <text x="150" y="560" text-anchor="middle">keyword arm</text>
+            <text class="sub" x="150" y="578" text-anchor="middle">to_tsquery + ts_rank</text>
+          </g>
+          <g class="node compute">
+            <rect x="310" y="536" width="180" height="58" rx="9" />
+            <text x="400" y="560" text-anchor="middle">vector arm</text>
+            <text class="sub" x="400" y="578" text-anchor="middle">cosine · HNSW</text>
+          </g>
+
+          <g class="node signal">
+            <rect x="60" y="616" width="430" height="40" rx="9" />
+            <text x="275" y="641" text-anchor="middle" style="fill:var(--accent-2)">Reciprocal Rank Fusion · K = 60</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>가중합이 아니라 <code>순위 융합</code>을 쓴다 — <code>ts_rank</code>와 코사인 유사도는 스케일이 달라 직접 더할 근거가 없기 때문이다. 배치는 <code>MCP</code> 계층을 우회해 같은 서비스 함수를 직접 호출해, 실시간 검색과 예약 동기화가 서로 다른 동작을 하지 않는다.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>주목할 설계 결정 3가지</h2>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">01</span>
+        <h3>미색인 문서도 죽지 않는 검색</h3>
+        <p>협업 문서 검색은 제목 arm의 키를 <code>deterministic_document_id()</code>로 순수 계산해, 본문이 아직 색인 안 된 문서도 제목 신호만으로 결과에 남는다 — 별도 폴백 분기 없이.</p>
+      </div>
+      <div class="card">
+        <span class="mark">02</span>
+        <h3>멀티 프로젝트, 격리는 태그로</h3>
+        <p>하나의 프로세스·DB가 여러 프로젝트를 함께 서비스한다. Drive/Notion 자격증명은 전역 공유, 프로젝트마다 달라지는 건 폴더/DB 매핑뿐이라 신규 프로젝트 온보딩 비용이 낮다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">03</span>
+        <h3>advisory lock으로 만든 안전한 배치</h3>
+        <p>메타 동기화·재색인·본문 색인 세 축을 다른 주기로 돌리면서도, 새 의존성 없이 Postgres advisory lock만으로 중복 실행과 서로의 기아 상태를 막는다.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="s-head">
+      <h2>기술 스택</h2>
+    </div>
+    <div class="stack-grid">
+      <div class="stack-group">
+        <h4>Core</h4>
+        <ul>
+          <li><b>Python 3.11+</b></li>
+          <li><b>FastMCP</b> — MCP 서버</li>
+          <li><b>Pydantic v2</b> — DTO</li>
+        </ul>
+      </div>
+      <div class="stack-group">
+        <h4>Data</h4>
+        <ul>
+          <li><b>PostgreSQL</b> + pgvector</li>
+          <li><b>SQLAlchemy 2.0</b></li>
+          <li><b>Alembic</b> — 마이그레이션</li>
+        </ul>
+      </div>
+      <div class="stack-group">
+        <h4>Search</h4>
+        <ul>
+          <li>Postgres FTS + GIN</li>
+          <li>pgvector HNSW · cosine</li>
+          <li>Reciprocal Rank Fusion</li>
+        </ul>
+      </div>
+      <div class="stack-group">
+        <h4>Embedding</h4>
+        <ul>
+          <li>sentence-transformers</li>
+          <li>multilingual-e5-small</li>
+          <li>결정적 해시 폴백</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>docs-mcp — MCP RAG server</span>
+    <span>system architecture · 2026</span>
+  </footer>
+
+</div>
