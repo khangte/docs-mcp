@@ -16,7 +16,6 @@ from fastmcp import FastMCP
 from app.mcp.server import create_mcp_server
 from app.models import DEFAULT_PROJECT
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
-from app.services.documents.document_search_service import _body_fetch_budget
 
 DOCUMENT_TOOL_NAMES = {"search_documents", "get_document", "refresh_index"}
 _T1 = datetime(2026, 7, 1, 9, 0, 0)
@@ -329,12 +328,14 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
 
 @pytest.mark.asyncio()
 async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> None:
-    """결과 항목은 title/source/project/url/snippet/score/version/snippet_as_of 8개 필드를 갖는다."""
+    """결과 항목은 external_id/title/source/project/url/snippet/score/version/
+    snippet_as_of 9개 필드를 갖는다."""
     items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
 
     assert items
     for item in items:
         assert set(item) == {
+            "external_id",
             "title",
             "source",
             "project",
@@ -390,11 +391,16 @@ async def test_search_documents_no_candidate_skips_fetch(
 
 
 @pytest.mark.asyncio()
-async def test_search_documents_fetch_count_respects_top_k(
+async def test_search_documents_indexed_strategy_does_not_fetch_bodies(
     mcp_server: FastMCP, seed_default_project_sources, fake_drive_source
 ) -> None:
-    """한 번의 검색이 fetch 하는 문서 수는 top_k 가 아니라 fetch 예산을 넘지 않고,
-    최종 결과 개수는 top_k 로 컷된다."""
+    """기본 전략(indexed)은 색인된 청크만 읽고 검색 시 라이브 fetch 를 하지 않으며,
+    최종 결과 개수는 top_k 로 컷된다.
+
+    2단계 라이브 fetch 예산(`_body_fetch_budget`) 자체의 가드는
+    `tests/unit/test_document_search_service.py:272` 에 살아 있다 — 이
+    통합 테스트가 fetch_call_count==0 을 단언해도 커버리지 손실은 없다.
+    """
     candidate_count = 8
     top_k = 2
     for index in range(candidate_count):
@@ -406,7 +412,7 @@ async def test_search_documents_fetch_count_respects_top_k(
         "search_documents", {"query": "로그인", "top_k": top_k}
     )
 
-    assert fake_drive_source.fetch_call_count == _body_fetch_budget(top_k, candidate_count)
+    assert fake_drive_source.fetch_call_count == 0
     assert len(result.structured_content["result"]["items"]) == top_k
 
 
