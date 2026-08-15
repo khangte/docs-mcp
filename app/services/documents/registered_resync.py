@@ -9,18 +9,23 @@
 `app.mcp.types.RegisteredResyncResult` 임포트는 응답 스키마(`RefreshIndexResult.registered`)를
 공유하기 위한 타입 전용 결합이며, 의도적으로 유지하는 계층 경계 예외다
 (`docs/architect-review/47_layer_boundary_exceptions_verdict.md` §2-b).
+TYPE_CHECKING 가드로 런타임 임포트는 없다.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import DomainError, IntegrationError
 from app.core.logging import get_logger
-from app.mcp.types import RegisteredResyncResult
 from app.repositories.document_repository import DocumentRepository
 from app.services.ingestor.sync_service import SyncService
+
+if TYPE_CHECKING:
+    from app.mcp.types import RegisteredResyncResult
 
 _LOG = get_logger("docs_mcp.services", level=get_settings().log_level)
 
