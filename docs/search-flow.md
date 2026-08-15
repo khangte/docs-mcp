@@ -138,7 +138,7 @@ flowchart TD
 12. **스니펫·점수** — `_build_indexed_item` (`:540`)
     - 승자 청크가 있으면 그 text(`chunk_repo.get_texts_by_ids` 로 **배치 1회** 조회, `chunk_repository.py:252`)로 `_build_snippet`, `snippet_as_of = row.last_synced_at`. keyword·vector 양쪽에 걸리면 **keyword 쪽 승자 청크가 이긴다**(`{**vector, **keyword}`, `:521`).
     - title arm 단독 문서는 `_fallback_snippet(row, query)` + `snippet_as_of=None`(스니펫이 본문 발췌가 아니므로).
-    - `snippet_as_of` 노출이 doc36 Phase0-2가 예고한 **유일한 겉면 계약 변경**이다 — 스니펫 출처가 라이브 원문이 아니라 **동기화 시점 캐시**가 된다.
+    - 스니펫 출처가 라이브 원문이 아니라 **동기화 시점 캐시**가 되는 것이 doc36 Phase0-2가 예고한 **유일한 겉면 계약 변경**이고, `snippet_as_of` 가 그것을 명시하는 필드다. 다만 이 필드는 아직 서비스 DTO(`DocumentSearchItem`)에만 있고 **MCP 응답 페이로드에는 실리지 않는다**(`app/mcp/payloads.py:119`) — 호출 LLM 은 현재 스니펫의 신선도를 알 수 없다.
     - `score` 는 RRF 점수 원본(`0.0x` 스케일)이다. `fetch` 전략의 `[0,1]` 가중합과 **절대값 비교가 불가능하고 순서 정보만 의미가 있다**(`docs/architect-review/39` §2.5). `match_type` 은 문서 검색 계약에 없어 추가하지 않았다.
 
 **이 경로에는 라이브 fetch가 없다.** 본문 신호는 전부 동기화 시점에 색인된 section 청크에서 온다(색인은 `refresh_documents --index-bodies`). 실시간 원문 조회는 `get_document`(`:268`) 전용이다.
@@ -231,5 +231,5 @@ flowchart TD
 - **variant는 후보를 넓히고, 점수는 원본이 정한다** — 두 경로의 키워드 신호(FTS OR / ILIKE)는 `query_variants`로 후보 필터만 넓히고 점수는 **원본 질의 토큰만으로** 계산한다. 엔드포인트 검색의 벡터 arm은 `query_variants`를 **받는다**(§2.2 5번, `docs/architect-review/30-search-quality-eval-real-corpus-results.md` §7.2) — 교차언어 질의에서는 벡터 arm이 유일한 신호인데 원본 질의만으로는 약해서다. 이때도 원본과 변형의 점수를 가중합하지 않고 **각 질의의 자체 등수 중 최솟값**만 취해 RRF에 순위로 넘기므로, "variant가 점수를 밀어 올리지 않는다"는 규약은 유지된다. **협업문서 검색의 벡터 arm은 아직 variant를 받지 않는다**(§3.2 7번) — 두 경로의 유일한 비대칭이며, 필요해지면 엔드포인트 경로의 등수 최솟값 병합을 그대로 이식하면 된다.
 - **RRF는 두 경로의 공통 랭킹 축이고, 다른 것은 융합 키뿐이다** — 엔드포인트는 `endpoint_id`(`ref_id`), 협업문서는 `Document.id`. 같은 `reciprocal_rank_fuse`·같은 `K=60`·같은 후보 폭 규칙(`max(top_k*4, 50)`)을 쓰고, 청크 저장소도 `chunk` 테이블 하나를 `chunk_type`(`endpoint`/`section`)으로 나눠 쓴다. 가중합을 쓰지 않는 이유는 두 경로가 같다 — `ts_rank`와 코사인 유사도는 정규화 기준이 없어 합칠 수 없다(`docs/architect-review/07-search-rrf-reevaluation.md` 3·5절, `docs/architect-review/39` §1.3).
 - **결정성** — 두 경로 모두 동점 tie-break를 고정 키(ref_id / document_id / external_id / title)로 못박아 결과가 결정적이다(엔드포인트 검색은 골든 회귀 테스트 전제).
-- **스니펫 신선도의 계약 차이** — `indexed` 협업문서 검색의 스니펫은 **동기화 시점 캐시 발췌**라 `snippet_as_of`(=`document_meta.last_synced_at`)를 함께 노출한다. `fetch` 전략과 title-only 매치는 캐시 발췌가 아니므로 `None`. 원문 자체는 어느 전략에서도 캐시하지 않는다 — `get_document`는 항상 fetch 시점의 최신 본문이다.
+- **스니펫 신선도의 계약 차이** — `indexed` 협업문서 검색의 스니펫은 **동기화 시점 캐시 발췌**라 `DocumentSearchItem.snippet_as_of`(=`document_meta.last_synced_at`)로 그 시점을 담는다(`fetch` 전략과 title-only 매치는 캐시 발췌가 아니므로 `None`). **이 필드는 아직 MCP 응답에 실리지 않아 호출 LLM 에는 보이지 않는다** — §3.2 12번. 원문 자체는 어느 전략에서도 캐시하지 않는다 — `get_document`는 항상 fetch 시점의 최신 본문이다.
 - **"없음"의 구분** — 미등록 document_id·미구성 소스는 빈 결과가 아니라 명시적 오류로 구분해, 호출 LLM이 "문서 없음"과 "결과 없음"을 혼동하지 않게 한다.

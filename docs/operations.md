@@ -101,11 +101,11 @@ Claude Desktop 의 설정 파일(`claude_desktop_config.json`)에 서버를 추�
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `list_documents`         | 등록된 문서(Markdown/CSV/PDF/DOCX/OpenAPI)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체)                                                                       | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at                                 |
 | `register_document`      | 신규 문서를 등록한다. `project`(필수)와 URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별)                            | document_id, title, version, doc_type, project, endpoints_count, sections_count, chunks_count, status                   |
-| `search_endpoints`       | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드 우선, 0건일 때만 벡터 보조). `project`/`document_id` 로 범위를 제한할 수 있다                                      | items[{endpoint_id, method, path, summary, match_type}]                                                                 |
+| `search_endpoints`       | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드+벡터 RRF 융합, 기본 전략 `rrf`). `project`/`document_id` 로 범위를 제한할 수 있다                                      | items[{endpoint_id, method, path, summary, match_type}]                                                                 |
 | `get_endpoint_details`   | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함)                                                                                            | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
 | `resolve_ref`            | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다                       | name, document_id, fields[{name, type, required, description}]                                                          |
 | `list_tags`              | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다                                                                        | tags[{name, endpoint_count}]                                                                                            |
-| `search_documents`       | 팀 협업 문서(Google Drive / Notion)를 검색한다 (메타 캐시로 후보를 추린 뒤 후보 본문만 실시간 조회). `project` 로 범위를 제한할 수 있다. 결과 0건/부족 시 `query_variants`(동의어·유사 표현 목록)로 후보 필터만 넓혀 재질의할 수 있다(점수·순위엔 영향 없음) | items[{title, source, project, url, snippet, score}]                                                                    |
+| `search_documents`       | 팀 협업 문서(Google Drive / Notion)를 검색한다 (제목·본문 청크 **3-arm RRF**: `document_meta` 제목 + 색인된 section 청크의 키워드(FTS)·벡터 순위를 융합, 기본 전략 `indexed`). `project`/`source` 로 범위를 제한할 수 있다. 결과 0건/부족 시 `query_variants`(동의어·유사 표현 목록)로 후보 필터만 넓혀 재질의할 수 있다(점수·순위엔 영향 없음) | items[{title, source, project, url, snippet, score, version}] — `score` 는 RRF 점수라 **절대값 비교 불가·순서만 유의미** |
 | `get_document`           | `source`("drive"/"notion")와 `external_id`(Drive file ID 또는 Notion page ID)로 협업 문서 한 건의 전체 원문을 조회한다 (항상 최신 원문, 캐시 아님)                               | title, source, url, content                                                                                             |
 | `refresh_index`          | 협업 문서 메타 캐시(제목·수정일)를 원본과 동기화한다 (본문은 저장하지 않음). `project` 로 특정 프로젝트만 갱신할 수 있다. `include_registered=true`(기본 false)면 URL로 등록한 Document 도 원본을 재fetch+재색인한다(`raw_document` 등록분은 자동 제외, `force=true` 로 해시 동일해도 강제 재색인) | synced, added, updated, removed, failed_sources, (include_registered=true 일 때만) registered{total, reindexed, skipped, failed} |
 | `register_drive_source`  | 프로젝트에 Google Drive 폴더를 매핑한다(upsert, 같은 project 재호출 시 폴더 교체)                                                                                                | project, folder_id, status                                                                                              |
@@ -116,9 +116,23 @@ Claude Desktop 의 설정 파일(`claude_desktop_config.json`)에 서버를 추�
 | `list_notion_sources`    | 등록된 프로젝트→Notion 데이터베이스/페이지 매핑 목록을 반환한다(project 오름차순). `project` 로 범위를 제한할 수 있다                                                            | items[{project, database_id, kind, created_at, updated_at}]                                                             |
 | `remove_notion_source`   | 프로젝트의 Notion 데이터베이스/페이지 매핑을 제거한다(멱등 — 미등록 project 도 오류 아님)                                                                                        | project, removed                                                                                                        |
 
-협업 문서(Drive/Notion)는 사전 색인하지 않고 `search_documents` 호출 시점에
-본문을 실시간 조회한다(캐시엔 제목·URL·수정일만 저장). 새로 만든 문서가
-검색되지 않으면 `refresh_index` 를 먼저 실행한다.
+협업 문서(Drive/Notion)의 검색 전략은 `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY` 로
+정한다(기본 `indexed`, 롤백용 `fetch`, 미인식 값은 `fetch` 로 degrade).
+
+- **`indexed`(기본)** — 제목(`document_meta`) + 동기화 시점에 색인된 본문 section
+  청크의 키워드·벡터 순위를 RRF 로 융합한다. **검색 경로에서 외부 API 를 호출하지
+  않으므로** 스니펫은 마지막 동기화 시점의 본문 발췌다. 본문 색인은
+  `refresh_documents --index-bodies`(아래 축 C)가 채운다 — 아직 색인되지 않은
+  문서도 제목 신호만으로는 계속 검색된다(색인 여부에 따른 분기가 없다).
+- **`fetch`(롤백 스위치)** — 제목으로 후보를 추린 뒤 후보 본문만 호출 시점에 실시간
+  조회해 가중합한다. 스니펫이 항상 최신인 대신 외부 API 비용이 크고, 텍스트를 못
+  뽑는 파일(이미지·영상 등)은 fetch 실패로 결과에서 통째로 빠진다.
+
+어느 전략이든 문서 목록·제목은 메타 캐시에서 오므로, 새로 만든 문서가 검색되지
+않으면 `refresh_index`(또는 배치)를 먼저 실행한다. 원문 전체 조회(`get_document`)는
+전략과 무관하게 항상 실시간이다.
+
+흐름 상세: [`search-flow.md`](search-flow.md) §3.
 
 Drive/Notion 자격증명이 없으면 협업 문서 도구(`search_documents`/`get_document`/
 `refresh_index`)는 등록은 되지만 호출 시 "미구성" `IntegrationError`
@@ -133,7 +147,8 @@ Drive/Notion 자격증명이 없으면 협업 문서 도구(`search_documents`/`
 search_documents(query="주문조회 API", query_variants=["결제 내역 조회", "order lookup"])
 ```
 
-`query_variants` 는 1단계 SQL 후보 필터만 넓히고 점수·순위에는 섞이지 않는다.
+`query_variants` 는 제목·키워드 arm 의 후보 필터만 넓히고 점수·순위에는 섞이지
+않는다(벡터 arm 은 원본 질의만 임베딩한다).
 
 모든 도구는 `DomainError`/`IntegrationError` 발생 시 스택트레이스 대신
 `{"error": true, "code": ..., "message": ...}` 형태의 에러 페이로드를 반환한다
@@ -155,11 +170,11 @@ search_documents(query="주문조회 API", query_variants=["결제 내역 조회
 
 ```bash
 uv run python -m app.scripts.refresh_documents \
-  [--source drive|notion] [--project PROJECT] [--include-registered] [--force]
+  [--source drive|notion] [--project PROJECT] [--include-registered] [--force] [--index-bodies]
 ```
 
-인자는 `refresh_index` 도구와 동일한 의미입니다. 두 축을 다른 주기로
-돌립니다:
+`--index-bodies` 를 뺀 인자는 `refresh_index` 도구와 동일한 의미입니다. 세 축을
+다른 주기로 돌립니다:
 
 - **축 A(메타 캐시 동기화)** — 문서 목록·제목·수정일만 갱신(본문 미조회).
   **1시간마다** 권장. 실측 1틱 **47초**(1시간 예산의 1.3%)라 여유가 큽니다. 단
@@ -170,8 +185,25 @@ uv run python -m app.scripts.refresh_documents \
   1회(야간)** 만 돌립니다. `--force` 는 배치에서 쓰지 않습니다(해시 동일 시 skip 이
   정상 경로).
 
-중복 실행은 Postgres advisory lock 으로 막습니다. 두 축은 락 키가 달라 축 B 실행
-중에도 축 A 틱이 굶지 않습니다.
+- **축 C(협업 문서 본문 색인, `--index-bodies`)** — 메타가 가리키는 문서의 본문을
+  fetch 해 section 청크로 색인합니다. 기본 검색 전략(`indexed`)의 키워드·벡터 신호가
+  여기서 채워지므로 **협업 문서 검색을 쓰면 최소 1회는 실행**해야 합니다(미색인
+  문서도 제목 신호로는 계속 검색됩니다). 축 A 와 같은 실행에 얹는 플래그이며, 문서당
+  본문 fetch + 임베딩이 들어가 축 A 단독보다 훨씬 비쌉니다 — 정기 실행이 필요하면
+  **축 B와 같은 야간 슬롯**에 두세요. 커밋 경계는 메타 변경 건수만이 아니라 본문
+  fetch 건수(`fetched_bodies`)까지 합산해 잡으므로, 메타가 하나도 안 바뀌는 소급
+  색인에서도 100건마다 중간 커밋이 일어납니다(마지막 한 건이 깨져도 앞의 색인이
+  롤백되지 않습니다).
+  - 지금은 실패를 기억하지 않아, **텍스트를 못 뽑는 파일(이미지·영상 등)과 빈 본문
+    문서는 실행할 때마다 다시 fetch** 됩니다. 1회성 백필에서는 무해하지만 정기
+    실행으로 돌릴 때는 이 비용을 감안하세요
+    (`architect-review/43_backfill_result_verification_and_indexed_default_gate.md` §3).
+
+중복 실행은 Postgres advisory lock 으로 막습니다. 축 A·축 B는 락 키가 달라 축 B 실행
+중에도 축 A 틱이 굶지 않습니다. 락 키는 `--include-registered` 여부로만 갈리므로
+(`_select_lock_key`), `--index-bodies` 만 준 실행은 **축 A 락을 씁니다** — 오래 도는
+본문 색인이 시간당 메타 틱을 굶기지 않게 하려면 `--include-registered` 와 함께(축 B
+슬롯에서) 돌리세요.
 
 ### systemd user timer (권장)
 
@@ -192,7 +224,8 @@ WantedBy=timers.target
 ```
 
 축 B는 같은 형태로 `docs-resync.service`(`ExecStart=... --include-registered`)
-+ `OnCalendar=daily` 타이머를 하나 더 둡니다.
++ `OnCalendar=daily` 타이머를 하나 더 둡니다. 축 C를 정기 실행하려면 이 서비스의
+`ExecStart` 에 `--index-bodies` 를 덧붙입니다.
 
 ```bash
 systemctl --user enable --now docs-refresh.timer docs-resync.timer
