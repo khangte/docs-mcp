@@ -5,8 +5,11 @@ SPEC 기능 1~4 의 도구 계약과 기능 9(OpenAPI 범위) 의 도구 구성�
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastmcp import FastMCP
+from fastmcp.exceptions import ResourceError
 
 from app.mcp.server import create_mcp_server
 
@@ -441,6 +444,40 @@ async def test_register_and_search(mcp_server: FastMCP, sample_openapi_3: str) -
 
     assert items
     assert any("pet" in i["path"].lower() or "pet" in i["summary"].lower() for i in items)
+
+
+@pytest.mark.asyncio()
+async def test_get_raw_document_returns_registered_raw_text(
+    mcp_server: FastMCP, sample_openapi_3: str
+) -> None:
+    """등록한 문서의 document://{id}/raw 리소스가 원문 그대로를 반환한다."""
+    reg_result = await mcp_server.call_tool(
+        "register_document", arguments={"project": "default", "raw_document": sample_openapi_3}
+    )
+    document_id = reg_result.structured_content["result"]["document_id"]
+
+    result = await mcp_server.read_resource(f"document://{document_id}/raw")
+
+    assert result.contents[0].content == sample_openapi_3
+
+
+@pytest.mark.asyncio()
+async def test_get_raw_document_unknown_id_raises(mcp_server: FastMCP) -> None:
+    """등록되지 않은 document_id 는 예외를 올린다(빈 문자열로 흘려보내지 않는다)."""
+    with pytest.raises(ResourceError, match="no-such-doc"):
+        await mcp_server.read_resource("document://no-such-doc/raw")
+
+
+@pytest.mark.asyncio()
+async def test_get_raw_document_unknown_id_logs_server_side_failure(
+    mcp_server: FastMCP, caplog
+) -> None:
+    """미등록 document_id 실패가 다른 도구들처럼 서버 로그에 남는다."""
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ResourceError):
+            await mcp_server.read_resource("document://no-such-doc/raw")
+
+    assert any("no-such-doc" in r.message for r in caplog.records)
 
 
 # --- 기능 4: 프로젝트→Drive/Notion 소스 매핑 도구 -----------------------------

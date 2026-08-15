@@ -92,7 +92,8 @@ def _execute(
     registered_result = None
     if args.include_registered:
         registered_result = resync_registered_documents(
-            bundle, project=args.project, force=args.force
+            bundle.session, bundle.document_repo, bundle.sync_service,
+            project=args.project, force=args.force,
         )
 
     if refresh_result.failed_sources:

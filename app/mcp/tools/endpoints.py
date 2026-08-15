@@ -6,10 +6,11 @@ import anyio
 from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
-from app.core.db import managed_session
+from app.core.config import get_settings
 from app.core.errors import DocumentNotFoundError
+from app.core.logging import get_logger
 from app.mcp.payloads import _to_endpoint_details_payload, _to_resolved_schema_payload, _to_tag_list_payload
-from app.mcp.tools._common import run_bundle_tool
+from app.mcp.tools._common import _run_bundle, run_bundle_tool
 from app.mcp.types import (
     EndpointCandidateItem,
     EndpointDetails,
@@ -18,13 +19,13 @@ from app.mcp.types import (
     ResolvedSchemaResult,
     TagListResult,
 )
-from app.repositories.document_repository import DocumentRepository
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
+
+_LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
 
 
 def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
     """엔드포인트 관련 MCP 도구(search/details/resolve_ref/list_tags)를 등록한다."""
-    session_factory = app_state.session_factory
 
     @mcp.tool()
     async def search_endpoints(
@@ -190,11 +191,16 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
     @mcp.resource("document://{document_id}/raw")
     async def get_raw_document(document_id: str) -> str:
         """등록된 특정 OpenAPI 문서의 원문(JSON/YAML)을 반환한다."""
+        def _inner(bundle: ServiceBundle) -> str:
+            doc = bundle.document_repo.get(document_id)
+            if not doc:
+                raise DocumentNotFoundError(document_id)
+            return doc.raw_text
+
         def _sync() -> str:
-            with managed_session(session_factory) as session:
-                repo = DocumentRepository(session)
-                doc = repo.get(document_id)
-                if not doc:
-                    raise DocumentNotFoundError(document_id)
-                return doc.raw_text
+            try:
+                return _run_bundle(app_state, _inner)
+            except DocumentNotFoundError as e:
+                _LOG.error("mcp resource error: document_not_found document_id=%s", document_id, exc_info=e)
+                raise
         return await anyio.to_thread.run_sync(_sync)

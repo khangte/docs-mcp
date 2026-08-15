@@ -78,7 +78,8 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             )
             if include_registered:
                 payload["registered"] = resync_registered_documents(
-                    bundle, project=project, force=force
+                    bundle.session, bundle.document_repo, bundle.sync_service,
+                    project=project, force=force,
                 )
             return payload
         return await run_bundle_tool(app_state, _inner)
