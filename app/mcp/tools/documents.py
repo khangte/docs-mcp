@@ -121,11 +121,12 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
     ) -> DocumentSearchResponse | ErrorPayload:
         """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
 
-        2단계로 동작한다. 먼저 메타 캐시의 제목으로 후보를 추리고, 그 후보
-        본문만 원본 API 에서 실시간으로 가져와 스니펫과 점수를 만든다. 따라서
-        캐시에 없는 신규 문서는 검색되지 않을 수 있으며, 그럴 때는
-        refresh_index 를 먼저 실행한다. OpenAPI 명세 검색은 이 도구가 아니라
-        search_endpoints 를 쓴다.
+        제목(title) + 본문 키워드(FTS) + 본문 벡터(임베딩) 3-arm 을 RRF 로
+        융합한다. 본문 신호는 실시간 fetch 가 아니라 동기화 시점에 색인된
+        section 청크에서 온다 — 이 검색 경로에는 라이브 fetch 가 없다. 따라서
+        본문이 아직 색인되지 않은 문서는 제목 매치로만 걸릴 수 있고, 최신
+        본문이 필요하면 refresh_index(--index-bodies) 를 먼저 실행한다.
+        OpenAPI 명세 검색은 이 도구가 아니라 search_endpoints 를 쓴다.
 
         결과가 0건이거나 기대보다 부족하면, 문서 제목이 질의와 다른 표현을
         쓰고 있을 가능성이 크다(예: "주문조회 API" 질의로 "결제 내역 조회"
