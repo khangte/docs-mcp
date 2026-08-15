@@ -21,10 +21,12 @@ class _FakeDocumentIndexService:
     def __init__(self, *, result: RefreshResult | None = None, error: Exception | None = None):
         self.result = result
         self.error = error
-        self.calls: list[tuple[str | None, str | None]] = []
+        self.calls: list[tuple[str | None, str | None, bool]] = []
 
-    def refresh(self, source: str | None, project: str | None) -> RefreshResult:
-        self.calls.append((source, project))
+    def refresh(
+        self, source: str | None, project: str | None, index_bodies: bool = False
+    ) -> RefreshResult:
+        self.calls.append((source, project, index_bodies))
         if self.error is not None:
             raise self.error
         assert self.result is not None
@@ -51,9 +53,15 @@ class _FakeBundle:
         self.session = _FakeSession()
 
 
-def _args(*, include_registered: bool = False) -> argparse.Namespace:
+def _args(
+    *, include_registered: bool = False, index_bodies: bool = False
+) -> argparse.Namespace:
     return argparse.Namespace(
-        source=None, project=None, include_registered=include_registered, force=False
+        source=None,
+        project=None,
+        include_registered=include_registered,
+        force=False,
+        index_bodies=index_bodies,
     )
 
 
@@ -121,3 +129,25 @@ def test_include_registered_adds_registered_summary_to_log(caplog) -> None:
 
     assert code == EXIT_OK
     assert any("registered(total=0" in r.message for r in caplog.records)
+
+
+def test_index_bodies_flag_passed_to_refresh() -> None:
+    """--index-bodies 주면 refresh 가 index_bodies=True 로 호출된다."""
+    result = RefreshResult(synced=0, added=0, updated=0, removed=0, failed_sources=())
+    index_service = _FakeDocumentIndexService(result=result)
+    bundle = _FakeBundle(index_service)
+
+    _execute(bundle, _args(index_bodies=True), lock_acquire=lambda: True)
+
+    assert index_service.calls == [(None, None, True)]
+
+
+def test_index_bodies_defaults_to_false() -> None:
+    """--index-bodies 를 안 주면 refresh 가 index_bodies=False 로 호출된다."""
+    result = RefreshResult(synced=0, added=0, updated=0, removed=0, failed_sources=())
+    index_service = _FakeDocumentIndexService(result=result)
+    bundle = _FakeBundle(index_service)
+
+    _execute(bundle, _args(), lock_acquire=lambda: True)
+
+    assert index_service.calls == [(None, None, False)]

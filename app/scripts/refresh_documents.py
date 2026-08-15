@@ -49,7 +49,7 @@ _LOCK_KEY_REGISTERED_RESYNC = 733100502
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """MCP 도구 `refresh_index` 와 같은 의미의 인자 4종을 파싱한다."""
+    """MCP 도구 `refresh_index` 와 같은 의미의 인자 5종을 파싱한다."""
     parser = argparse.ArgumentParser(
         description="문서 소스 메타 캐시(+선택적 등록 문서) 동기화 배치"
     )
@@ -57,6 +57,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--project", default=None)
     parser.add_argument("--include-registered", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--index-bodies", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -82,7 +83,7 @@ def _execute(
 
     try:
         refresh_result = bundle.document_index_service.refresh(
-            source=args.source, project=args.project
+            source=args.source, project=args.project, index_bodies=args.index_bodies
         )
     except IntegrationError as exc:
         logger.error("문서 소스 갱신 전체 실패: %s", exc)
