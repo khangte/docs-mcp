@@ -91,7 +91,8 @@ uv run alembic upgrade head
 | ------------------------------------------ | ---------------------------------------------------------------------------------------- | -------------------------------- |
 | `DOCS_MCP_EMBEDDING_MODEL`                 | 로컬 CPU 임베딩 모델(sentence-transformers). 384차원 고정                                | `intfloat/multilingual-e5-small` |
 | `DOCS_MCP_EMBEDDING_BACKEND`               | `local`(실제 의미 유사도) \| `hash`(결정적 해시, 모델 다운로드 없음)                     | `local`                          |
-| `DOCS_MCP_SEARCH_STRATEGY`                 | `search_endpoints` 검색 전략. `rrf`(키워드+벡터 순위 융합) \| `fallback`(롤백 스위치)    | `rrf`                            |
+| `DOCS_MCP_SEARCH_STRATEGY`                 | **`search_endpoints` 전용** 검색 전략. `rrf`(키워드+벡터 순위 융합) \| `fallback`(롤백 스위치) | `rrf`                            |
+| `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`        | **`search_documents` 전용** 검색 전략. `indexed`(색인된 본문 청크 + 제목 3-arm 순위 융합) \| `fetch`(본문 실시간 조회 후 가중합, 롤백 스위치). 미인식 값은 `fetch` 로 degrade | `indexed`                        |
 | `DOCS_MCP_LOG_LEVEL`                       | 로그 레벨                                                                                | `INFO`                           |
 | `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | Drive/Notion HTTP 타임아웃(초)                                                           | `15.0`                           |
 | `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS`        | 문서 본문 fetch 시 잘라낼 최대 문자 수                                                   | `200000`                         |
@@ -154,7 +155,7 @@ MCP 도구 17개를 제공합니다. 대표 도구는 다음과 같습니다.
 | 도구                   | 설명                                                                                   |
 | ---------------------- | ---------------------------------------------------------------------------------------- |
 | `register_document`    | 신규 문서를 등록한다(URL 또는 원문, `doc_type` 생략 시 자동 판별)                          |
-| `search_documents`     | 팀 협업 문서(Google Drive / Notion)를 검색한다(메타 캐시로 후보를 추린 뒤 본문 실시간 조회) |
+| `search_documents`     | 팀 협업 문서(Google Drive / Notion)를 검색한다(제목·색인 본문 청크 3-arm 순위 융합)         |
 | `search_endpoints`     | 자연어/키워드로 OpenAPI 엔드포인트 후보를 검색한다                                         |
 | `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다(`curl` 예시 생성 포함)                              |
 | `refresh_index`        | 협업 문서 메타 캐시를 원본과 동기화한다                                                    |
@@ -219,11 +220,15 @@ register_notion_page(project="my-api", page_id="<Notion 페이지 ID>")
 스케줄러(systemd timer 또는 cron)가 소유합니다.
 
 ```bash
-uv run python -m app.scripts.refresh_documents [--include-registered]
+uv run python -m app.scripts.refresh_documents [--include-registered] [--index-bodies]
 ```
 
 메타 캐시 동기화는 1시간마다, 등록 문서 재색인(`--include-registered`)은 1일 1회
 야간에 돌리기를 권장합니다. 중복 실행은 Postgres advisory lock 으로 막습니다.
+
+`--index-bodies` 는 협업 문서 본문을 fetch 해 섹션 청크로 색인합니다. 기본
+검색 전략(`indexed`)의 본문 신호가 여기서 채워지므로, 협업 문서 검색을 쓰면
+최소 1회는 실행해야 합니다(미색인 문서도 제목 신호로는 계속 검색됩니다).
 - [`docs/operations.md`](docs/operations.md#자동-동기화-배치) — 타이머/크론 설정 예시, 실행 환경 함정, 종료코드 규약
 
 ## 테스트 실행
