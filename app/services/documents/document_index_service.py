@@ -86,11 +86,19 @@ class _SourceCounts:
     added: int = 0
     updated: int = 0
     removed: int = 0
+    fetched_bodies: int = 0
 
     @property
     def total_changes(self) -> int:
-        """커밋 경계 판정에 쓰는 실제 변경 건수(`synced` 는 조회 수라 제외)."""
-        return self.added + self.updated + self.removed
+        """커밋 경계 판정에 쓰는 실제 변경 건수(`synced` 는 조회 수라 제외).
+
+        `fetched_bodies` 를 빼면, 메타가 안 바뀐 백필(added=updated=0)에서
+        본문 fetch(빈 본문 스킵의 구 Document 삭제 포함, DB 쓰기가 있는 매
+        fetch 성공)가 아무리 쌓여도 이 값이 0 이라 커밋 경계에 영영 도달하지
+        못한다. 그러면 소스 하나를 끝까지 처리해야 커밋되고, 그 전에 문서
+        1건이라도 실패하면 이미 처리한 본문까지 통째로 롤백된다.
+        """
+        return self.added + self.updated + self.removed + self.fetched_bodies
 
 
 class _PartialRefreshError(Exception):
@@ -299,13 +307,15 @@ class DocumentIndexService:
 
         self._commit_batch(committed, pending)
         _LOG.info(
-            "메타 캐시 갱신 완료: project=%s source=%s synced=%d added=%d updated=%d removed=%d",
+            "메타 캐시 갱신 완료: project=%s source=%s synced=%d added=%d updated=%d "
+            "removed=%d fetched_bodies=%d",
             project,
             source_name,
             committed.synced,
             committed.added,
             committed.updated,
             committed.removed,
+            committed.fetched_bodies,
         )
         return committed
 
@@ -339,7 +349,8 @@ class DocumentIndexService:
         # 신호이므로, 색인 성공 시 채워지는 document_id 가 다음 실행부터 이 조건을
         # 자동으로 다시 좁힌다(비용 자기 종료, doc36 §6-2 백필 회귀 수정).
         if index_bodies and (needs_body_index or row.document_id is None):
-            self._index_body(project, source_name, meta, document_source, row)
+            if self._index_body(project, source_name, meta, document_source, row):
+                pending.fetched_bodies += 1
 
     def _index_body(
         self,
@@ -348,7 +359,7 @@ class DocumentIndexService:
         meta: FileMeta,
         document_source: DocumentSource,
         row: DocumentMeta,
-    ) -> None:
+    ) -> bool:
         """문서 한 건의 본문을 fetch 해 색인하고 메타 행에 document_id 를 기록한다.
 
         fetch 실패는 이 문서만 건너뛰고 로그로만 남긴다. fetch 는 DB 쓰기
@@ -357,6 +368,18 @@ class DocumentIndexService:
         삭제/삽입이 이미 세션에 올라간 뒤라 다음 `_commit_batch` 에 반쯤 쓰인
         상태로 실려 커밋된다). document_id 가 NULL 로 남으므로 다음 실행에서
         자동 재시도된다.
+
+        본문이 공백뿐이면 오류가 아니라 정상적인 "색인할 게 없음"이므로
+        `index_document_body`(가 던질 `ParserError("empty document")`) 를
+        타기 전에 선검사로 건너뛴다. 이전에 색인된 적이 있었다면(원문이
+        빈 문서로 바뀐 경우) 그 `Document` 를 지워 옛 스니펫이 검색에 계속
+        나가는 걸 막는다.
+
+        Returns:
+            fetch 성공 여부(색인/스킵/빈 문서 처리 결과와 무관). 셋 다 DB
+            쓰기를 동반하므로, 커밋 경계 카운터(`pending.fetched_bodies`)에
+            반영할지 호출자가 판단하는 데 쓴다. "색인 건수"가 아니다 — 빈
+            본문 스킵도 True 를 반환한다.
         """
         assert self._document_repo is not None
         assert self._endpoint_repo is not None
@@ -373,7 +396,22 @@ class DocumentIndexService:
                 meta.external_id,
                 exc,
             )
-            return
+            return False
+
+        document_id = deterministic_document_id(project, source_name, meta.external_id)
+        if not fetched.text.strip():
+            _LOG.warning(
+                "본문이 비어 있어 색인을 건너뜀: project=%s source=%s external_id=%s",
+                project,
+                source_name,
+                meta.external_id,
+            )
+            document = self._document_repo.get(document_id)
+            if document is not None:
+                self._document_repo.delete(document)
+            row.document_id = None
+            return True
+
         index_document_body(
             self._session,
             self._document_repo,
@@ -386,7 +424,8 @@ class DocumentIndexService:
             title=meta.title,
             raw=fetched.text,
         )
-        row.document_id = deterministic_document_id(project, source_name, meta.external_id)
+        row.document_id = document_id
+        return True
 
     def _delete_removed(self, row: DocumentMeta) -> None:
         """원본에서 사라진 메타 행과, 본문이 색인돼 있었다면 대응 Document 도 지운다.
@@ -415,6 +454,7 @@ class DocumentIndexService:
         committed.added += pending.added
         committed.updated += pending.updated
         committed.removed += pending.removed
+        committed.fetched_bodies += pending.fetched_bodies
         return _SourceCounts()
 
 
@@ -424,6 +464,7 @@ def _merge_counts(totals: _SourceCounts, counts: _SourceCounts) -> None:
     totals.added += counts.added
     totals.updated += counts.updated
     totals.removed += counts.removed
+    totals.fetched_bodies += counts.fetched_bodies
 
 
 def _new_row(project: str, source_name: str, meta: FileMeta, now: datetime) -> DocumentMeta:

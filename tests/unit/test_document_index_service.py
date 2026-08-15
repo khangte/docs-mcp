@@ -797,3 +797,82 @@ def test_index_bodies_one_fetch_failure_does_not_block_other_documents(
     document_id_d2 = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d2")
     assert row_d2.document_id == document_id_d2
     assert body_index_deps["document_repo"].get(document_id_d2) is not None
+
+
+# --- index_bodies 백필 크래시 3건 수정 (doc42) ------------------------------------
+
+
+def test_index_bodies_empty_body_is_skipped_without_error(
+    body_index_service, meta_repo, fake_drive_source
+) -> None:
+    """본문이 공백뿐이면 오류 없이 건너뛴다(빈 본문은 오류가 아니다)."""
+    fake_drive_source.put("d1", "빈 문서", "   \n\n  ", modified_at=_T1)
+
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.failed_sources == ()
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row is not None
+    assert row.document_id is None
+
+
+def test_index_bodies_becoming_empty_deletes_previously_indexed_document(
+    body_index_service, body_index_deps, meta_repo, fake_drive_source
+) -> None:
+    """이미 색인된 문서의 원문이 빈 문서로 바뀌면 옛 Document/청크가 삭제된다."""
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=True)
+    document_id = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert body_index_deps["document_repo"].get(document_id) is not None
+
+    fake_drive_source.put("d1", "설계서", "   ", modified_at=_T2)
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.failed_sources == ()
+    assert body_index_deps["document_repo"].get(document_id) is None
+    assert body_index_deps["chunk_repo"].list_by_document(document_id) == []
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row.document_id is None
+
+
+def test_index_bodies_commits_mid_source_when_only_body_indexing_changes(
+    db_session, meta_repo, fake_drive_source, make_project_resolver, body_index_deps
+) -> None:
+    """본문 색인만 쌓이고 메타 변경이 0건이어도 BATCH_SIZE 경계에서 중간 커밋된다.
+
+    doc36 §6-2 백필 회귀: 커밋 경계가 added/updated/removed 로만 판정되면,
+    이번 백필처럼 메타가 전부 무변경(0)인 상태에서는 본문 색인이 아무리
+    쌓여도 커밋되지 않고 소스 전체가 끝나야 커밋된다. 그러면 문서 1건이라도
+    도중에(list 순회 중단 등으로) 실패할 때 이미 색인한 본문까지 통째로
+    롤백된다.
+    """
+    from app.services.documents.document_body_indexer import deterministic_document_id
+
+    resolver = make_project_resolver(
+        drive_mapping={DEFAULT_PROJECT: ("folder-default", fake_drive_source)}
+    )
+    service = DocumentIndexService(
+        session=db_session, meta_repo=meta_repo, resolver=resolver, **body_index_deps
+    )
+    total = BATCH_SIZE + 5
+    for index in range(total):
+        fake_drive_source.put(
+            f"d{index}", f"문서 {index}", f"# 문서 {index}\n\n본문 내용.", modified_at=_T1
+        )
+    service.refresh(index_bodies=False)  # 메타 행만 생성, document_id 는 전부 NULL
+
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE + 2
+    result = service.refresh(index_bodies=True)
+
+    assert result.failed_sources == (f"{DEFAULT_PROJECT}/{SOURCE_DRIVE}",)
+    db_session.expire_all()
+    first_committed_id = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, "d0")
+    last_committed_id = deterministic_document_id(
+        DEFAULT_PROJECT, SOURCE_DRIVE, f"d{BATCH_SIZE - 1}"
+    )
+    rolled_back_id = deterministic_document_id(DEFAULT_PROJECT, SOURCE_DRIVE, f"d{BATCH_SIZE}")
+    assert body_index_deps["document_repo"].get(first_committed_id) is not None
+    assert body_index_deps["document_repo"].get(last_committed_id) is not None
+    assert body_index_deps["document_repo"].get(rolled_back_id) is None

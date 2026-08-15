@@ -41,13 +41,20 @@ class FetchedDocument:
     """`fetch()` 가 반환하는 본문 한 건.
 
     Attributes:
-        text: 최대 문자 수(`max_chars`)로 잘린 평문 본문.
+        text: 최대 문자 수(`max_chars`)로 잘린 평문 본문. NUL(``\\x00``) 바이트는
+            PostgreSQL 텍스트 컬럼에 저장할 수 없어 여기서 제거된다(다른 제어
+            문자는 저장 가능하므로 건드리지 않는다).
         truncated: 원본이 `max_chars` 를 초과해 잘렸으면 True. 정확히
             `max_chars` 길이인 원본은 잘린 게 아니므로 False.
     """
 
     text: str
     truncated: bool
+
+    def __post_init__(self) -> None:
+        """text 에 섞인 NUL 바이트를 제거한다(모든 `DocumentSource.fetch()` 구현 공통 경계)."""
+        if "\x00" in self.text:
+            object.__setattr__(self, "text", self.text.replace("\x00", ""))
 
 
 @runtime_checkable

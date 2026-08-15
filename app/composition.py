@@ -57,9 +57,9 @@ class AppState:
     #: "rrf"(기본) | "fallback"(롤백 스위치). `EndpointCandidateSearch` 로 그대로
     #: 전달된다.
     search_strategy: str = "rrf"
-    #: "fetch"(기본) | "indexed"(doc36 Phase3 RRF). `DocumentSearchService` 로
+    #: "indexed"(기본, doc36 Phase3 RRF) | "fetch"(롤백 스위치). `DocumentSearchService` 로
     #: 그대로 전달된다.
-    document_search_strategy: str = "fetch"
+    document_search_strategy: str = "indexed"
     #: Drive 서비스 계정 토큰 발급기. 자격증명이 없으면 None. project 마다
     #: 새로 만들지 않고 재사용해 credentials 캐싱 중복을 막는다.
     drive_token_provider: ServiceAccountTokenProvider | None = None

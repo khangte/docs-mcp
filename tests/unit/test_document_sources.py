@@ -842,3 +842,21 @@ def test_notion_database_query_400_hints_multi_data_source(
             source.list_pages()
 
     assert any("ds-1" in record.message for record in caplog.records)
+
+
+# --- FetchedDocument: NUL 바이트 정규화 (doc42) ----------------------------------
+
+
+def test_fetched_document_strips_nul_bytes() -> None:
+    """text 에 섞인 NUL(\\x00) 바이트는 생성 시점에 제거된다(PostgreSQL 저장 불가)."""
+    doc = FetchedDocument(text="제목\x00본문\x00내용", truncated=False)
+
+    assert "\x00" not in doc.text
+    assert doc.text == "제목본문내용"
+
+
+def test_fetched_document_keeps_other_control_characters() -> None:
+    """NUL 이외의 제어 문자는 건드리지 않는다(PostgreSQL 이 저장 가능)."""
+    doc = FetchedDocument(text="줄1\n줄2\t탭", truncated=False)
+
+    assert doc.text == "줄1\n줄2\t탭"

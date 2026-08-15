@@ -37,12 +37,12 @@ class Settings:
     search_strategy: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_STRATEGY", "rrf")
     )
-    #: "fetch"(기본, 실시간 fetch+토큰겹침 가중합) | "indexed"(색인된 section
-    #: 청크 title+keyword+vector 3-arm RRF, doc36 Phase3). search_documents
-    #: 전용. 미인식 값은 안전하게 "fetch"로 degrade한다(롤아웃 스위치,
-    #: `docs/architect-review/39` §2.7).
+    #: "indexed"(기본, 색인된 section 청크 title+keyword+vector 3-arm RRF,
+    #: doc36 Phase3) | "fetch"(실시간 fetch+토큰겹침 가중합, 백필 이전 기본값).
+    #: search_documents 전용. 미인식 값은 안전하게 "fetch"로 degrade한다
+    #: (롤백 스위치, `docs/architect-review/43` §2).
     document_search_strategy: str = field(
-        default_factory=lambda: os.environ.get("DOCS_MCP_DOCUMENT_SEARCH_STRATEGY", "fetch")
+        default_factory=lambda: os.environ.get("DOCS_MCP_DOCUMENT_SEARCH_STRATEGY", "indexed")
     )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")

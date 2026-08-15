@@ -136,10 +136,10 @@ class DocumentSearchOptions:
 class DocumentSearchItem:
     """검색 결과 한 건.
 
-    `score`: `document_search_strategy="fetch"`(기본)에서는 기존 가중합
-    점수(`TITLE_SCORE_WEIGHT*title_score + BODY_SCORE_WEIGHT*body_score`,
-    [0,1] 스케일)다. `"indexed"`에서는 RRF 점수(`0.0x` 스케일)를 그대로
-    담는다 — 두 전략의 절대값은 서로 비교 불가하며, **순서 정보만
+    `score`: `document_search_strategy="indexed"`(기본)에서는 RRF 점수
+    (`0.0x` 스케일)를 그대로 담는다. `"fetch"`(롤백 스위치)에서는 기존
+    가중합 점수(`TITLE_SCORE_WEIGHT*title_score + BODY_SCORE_WEIGHT*body_score`,
+    [0,1] 스케일)다 — 두 전략의 절대값은 서로 비교 불가하며, **순서 정보만
     의미가 있다**(`docs/architect-review/39` §2.5).
     """
 
@@ -189,27 +189,28 @@ class DocumentSearchService:
         chunk_repo: ChunkRepository | None = None,
         embedding_provider: EmbeddingProvider | None = None,
         vector_fallback_enabled: bool = True,
-        document_search_strategy: str = "fetch",
+        document_search_strategy: str = "indexed",
     ) -> None:
         """저장소와 프로젝트 소스 리졸버를 보관한다.
 
         Args:
             meta_repo: `document_meta` 저장소(1단계/title arm 후보 조회용).
             resolver: project → Drive/Notion 어댑터 요청 시점 팩토리.
-            chunk_repo: `document_search_strategy="indexed"` 의 keyword/vector
-                arm 이 section 청크를 조회하는 저장소. `"fetch"`(기본)에서는
-                쓰이지 않아 생략 가능하다.
+            chunk_repo: `document_search_strategy="indexed"`(기본) 의
+                keyword/vector arm 이 section 청크를 조회하는 저장소. 생략하면
+                `"indexed"` 를 요청해도 `"fetch"` 로 degrade한다(아래 참조).
             embedding_provider: `"indexed"` 의 벡터 arm이 질의를 임베딩할 때
                 쓴다. 후보마다 재호출하지 않고 요청당 1회만 호출한다
                 (`docs/architect-review/39` §1.2 — (A)안이 반려된 이유 중
                 하나가 후보마다 임베딩 API를 부르는 N+1 이었다).
             vector_fallback_enabled: False 면 `"indexed"` 의 벡터 arm을
                 통째로 생략한다(해시 임베딩 등 `is_semantic=False` 배포).
-            document_search_strategy: `"fetch"`(기본, 실시간 fetch+가중합) |
-                `"indexed"`(색인된 section 청크 title+keyword+vector 3-arm
-                RRF). 미인식 값은 안전하게 `"fetch"`로 degrade한다
-                (`docs/architect-review/39` §2.7 — 롤아웃 중에는 검증된
-                경로가 안전한 쪽).
+            document_search_strategy: `"indexed"`(기본, 색인된 section 청크
+                title+keyword+vector 3-arm RRF) | `"fetch"`(실시간 fetch+
+                가중합, 롤백 스위치). `chunk_repo`/`embedding_provider` 가
+                없거나 미인식 값이면 안전하게 `"fetch"`로 degrade한다
+                (`docs/architect-review/43` §2 — doc36 §6-2 백필 완료로
+                기본을 전환).
         """
         self._meta_repo = meta_repo
         self._resolver = resolver
