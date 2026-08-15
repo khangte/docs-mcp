@@ -151,6 +151,9 @@ class DocumentSearchItem:
     score: float
     #: title 에서 파싱한 버전 표기(예: "v1.0"). 없으면 None — 순위엔 영향 없다.
     version: str | None
+    #: get_document(source, external_id) 에 그대로 넘기는 값(45번 리뷰 §3.1 —
+    #: 이 필드 없이는 호출자가 url 을 파싱해 external_id 를 역산해야 했다).
+    external_id: str = ""
     #: 스니펫이 만들어진 시점(협업 문서의 `document_meta.last_synced_at`).
     #: `"fetch"` 전략(라이브 fetch, 스니펫이 항상 최신)과 title-only 매치는
     #: 캐시 발췌가 아니므로 None이다. doc36 Phase0-2 가 예고한 유일한 겉면
@@ -466,6 +469,7 @@ class DocumentSearchService:
             snippet=_build_snippet(body, query_tokens) or _fallback_snippet(row, query),
             score=round(TITLE_SCORE_WEIGHT * title_score + BODY_SCORE_WEIGHT * body_score, 4),
             version=parse_version(row.title),
+            external_id=row.external_id,
         )
 
     # --- indexed 전략: title+keyword+vector 3-arm RRF ---------------------
@@ -497,16 +501,21 @@ class DocumentSearchService:
             filter_tokens, query_tokens, query, source, project, options.query_variants, width
         )
 
+        #: keyword/vector arm 이 도는 section 청크는 협업 문서와 등록형 문서가
+        #: 공유하므로, doc_type 으로 협업 문서(drive/notion)만 남긴다 —
+        #: source 지정 시엔 그 소스로 더 좁힌다(45번 리뷰 §3.2/3.3).
+        doc_types = [source] if source is not None else list(ALLOWED_SOURCES)
+
         keyword_ids: list[str] = []
         vector_ids: list[str] = []
         keyword_chunk_by_doc: dict[str, str] = {}
         vector_chunk_by_doc: dict[str, str] = {}
         if self._chunk_repo.has_endpoint_chunks(project=project, chunk_type="section"):
             keyword_ids, keyword_chunk_by_doc = self._keyword_arm(
-                filter_tokens, query_tokens, project, width
+                filter_tokens, query_tokens, project, width, doc_types
             )
             if self._vector_fallback_enabled:
-                vector_ids, vector_chunk_by_doc = self._vector_arm(query, project, width)
+                vector_ids, vector_chunk_by_doc = self._vector_arm(query, project, width, doc_types)
 
         fused = reciprocal_rank_fuse(keyword_ids, vector_ids, top_k=width, title_ref_ids=title_ids)
         if not fused:
@@ -563,6 +572,7 @@ class DocumentSearchService:
             snippet=snippet,
             score=score,
             version=parse_version(row.title),
+            external_id=row.external_id,
             snippet_as_of=snippet_as_of,
         )
 
@@ -601,7 +611,12 @@ class DocumentSearchService:
         return ordered_ids, meta_by_id
 
     def _keyword_arm(
-        self, filter_tokens: set[str], score_tokens: set[str], project: str | None, width: int
+        self,
+        filter_tokens: set[str],
+        score_tokens: set[str],
+        project: str | None,
+        width: int,
+        doc_types: Sequence[str],
     ) -> tuple[list[str], dict[str, str]]:
         """section 청크를 FTS 로 검색해 문서 ID 순위 + 문서별 승자 청크 ID 를 만든다."""
         assert self._chunk_repo is not None
@@ -611,11 +626,12 @@ class DocumentSearchService:
             project=project,
             score_terms=list(score_tokens),
             chunk_type="section",
+            doc_types=doc_types,
         )
         return _dedupe_first_with_chunk(hits)
 
     def _vector_arm(
-        self, query: str, project: str | None, width: int
+        self, query: str, project: str | None, width: int, doc_types: Sequence[str]
     ) -> tuple[list[str], dict[str, str]]:
         """section 청크를 벡터 검색해 문서 ID 순위 + 문서별 승자 청크 ID 를 만든다.
 
@@ -626,7 +642,7 @@ class DocumentSearchService:
         assert self._embedding_provider is not None
         query_vec = self._embedding_provider.embed_query(query)
         hits = self._chunk_repo.search_by_vector(
-            query_vec, top_k=width, project=project, chunk_type="section"
+            query_vec, top_k=width, project=project, chunk_type="section", doc_types=doc_types
         )
         positive_hits = [h for h in hits if h.score > 0.0]
         return _dedupe_first_with_chunk(positive_hits)

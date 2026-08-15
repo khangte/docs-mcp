@@ -175,6 +175,8 @@ class DocumentSearchItemPayload(TypedDict):
     score: float
     version: str | None
     snippet_as_of: str | None
+    #: get_document(source, external_id) 에 그대로 넘기는 값(45번 리뷰 §3.1).
+    external_id: str
 
 
 class DocumentSearchResponse(TypedDict):

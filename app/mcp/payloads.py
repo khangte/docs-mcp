@@ -128,6 +128,7 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
             "score": item.score,
             "version": item.version,
             "snippet_as_of": item.snippet_as_of.isoformat() if item.snippet_as_of else None,
+            "external_id": item.external_id,
         }
         for item in items
     ]

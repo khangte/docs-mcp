@@ -141,6 +141,35 @@ def test_refresh_does_not_fetch_document_bodies(index_service, fake_drive_source
     assert fake_drive_source.fetch_call_count == 0
 
 
+def test_index_bodies_false_logs_warning(
+    index_service, fake_drive_source, caplog
+) -> None:
+    """index_bodies=False(기본값)면 검색이 title 매칭만으로 퇴화할 수 있음을 경고한다(45번 리뷰 §3.4).
+
+    검색 기본 전략은 indexed(3-arm RRF)인데 refresh 기본은 본문을 색인하지
+    않으므로, 이 경고 없이는 section 청크가 비거나 낡은 채 남는 실패가
+    조용히 지나간다.
+    """
+    fake_drive_source.put("d1", "설계서", "본문", modified_at=_T1)
+
+    with caplog.at_level("WARNING"):
+        index_service.refresh(index_bodies=False)
+
+    assert "본문 색인을 건너뜀" in caplog.text
+
+
+def test_index_bodies_true_does_not_log_skip_warning(
+    body_index_service, fake_drive_source, caplog
+) -> None:
+    """index_bodies=True 면 본문 색인을 건너뛴다는 경고를 찍지 않는다."""
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+
+    with caplog.at_level("WARNING"):
+        body_index_service.refresh(index_bodies=True)
+
+    assert "본문 색인을 건너뜀" not in caplog.text
+
+
 def test_duplicate_external_ids_are_deduplicated(index_service, fake_drive_source) -> None:
     """소스가 같은 external_id 를 중복해서 돌려줘도 행은 하나만 생긴다."""
     fake_drive_source.put("d1", "설계서", "본문", modified_at=_T1)

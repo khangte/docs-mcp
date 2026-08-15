@@ -227,6 +227,18 @@ def test_search_item_version_is_none_without_version_marker(
     assert [i.version for i in items] == [None]
 
 
+def test_search_item_includes_external_id_for_get_document_handoff(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """검색 결과에 external_id 가 실려 get_document(source, external_id) 로 그대로 넘길 수 있다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 설계서")
+    fake_drive_source.bodies["d1"] = "로그인 흐름 설명"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert [i.external_id for i in items] == ["d1"]
+
+
 def test_search_ranking_is_unaffected_by_version_presence(
     db_session, search_service, fake_drive_source
 ) -> None:
@@ -1136,6 +1148,7 @@ def test_indexed_strategy_finds_body_only_match_absent_from_title(
     assert [i.title for i in items] == ["완전히 무관한 제목"]
     assert "리프레시토큰회전" in items[0].snippet
     assert items[0].snippet_as_of is not None
+    assert items[0].external_id == "body-only"
 
 
 def test_indexed_strategy_collapses_multiple_section_hits_into_one_result(
@@ -1181,6 +1194,7 @@ def test_indexed_strategy_unindexed_document_survives_via_title_arm(
 
     assert [i.title for i in items] == ["미색인 특수문서 제목"]
     assert items[0].snippet_as_of is None
+    assert items[0].external_id == "unindexed"
 
 
 def test_indexed_strategy_source_filter_excludes_other_source_body_match(
@@ -1203,6 +1217,129 @@ def test_indexed_strategy_source_filter_excludes_other_source_body_match(
     )
 
     assert items == []
+
+
+def test_indexed_strategy_excludes_registered_document_section_chunks(
+    db_session, indexed_search_service, caplog
+) -> None:
+    """등록형 문서(doc_type=markdown 등)의 section 청크는 keyword/vector arm 후보에서 제외된다.
+
+    register_document 경로도 doc_type=drive/notion 이 아닌 채로
+    chunk_type="section" 청크를 만든다(45번 리뷰 §3.2). 이 청크가 후보에
+    섞이면 document_meta 에 대응 행이 없어 "메타를 찾을 수 없음" WARNING이
+    찍히고 recall 이 깎인다 — doc_type 푸시다운이 있으면 둘 다 발생하지 않는다.
+    """
+    db_session.add(
+        Document(
+            id="registered-doc",
+            project=DEFAULT_PROJECT,
+            source_url=None,
+            title="등록형 문서",
+            content_hash="hash",
+            raw_text="본문",
+            doc_type="markdown",
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            id="registered-doc-c0",
+            document_id="registered-doc",
+            chunk_type="section",
+            ref_id="registered-doc-sec0",
+            text="등록형문서전용검색어 가 여기 있다.",
+        )
+    )
+    db_session.commit()
+
+    with caplog.at_level("WARNING"):
+        items = indexed_search_service.search("등록형문서전용검색어", DocumentSearchOptions())
+
+    assert items == []
+    assert "메타를 찾을 수 없음" not in caplog.text
+
+
+def test_indexed_strategy_recall_survives_alongside_registered_document(
+    db_session, indexed_search_service
+) -> None:
+    """등록형 문서 청크가 같은 project 에 섞여 있어도 협업 문서 body-only 매치는 살아남는다."""
+    db_session.add(
+        Document(
+            id="registered-doc-2",
+            project=DEFAULT_PROJECT,
+            source_url=None,
+            title="등록형 문서2",
+            content_hash="hash",
+            raw_text="본문",
+            doc_type="markdown",
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            id="registered-doc-2-c0",
+            document_id="registered-doc-2",
+            chunk_type="section",
+            ref_id="registered-doc-2-sec0",
+            text="공용검색어 가 여기도 있다.",
+        )
+    )
+    db_session.commit()
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-shared-term",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="shared-term",
+        title="무관 제목",
+        url="https://example.test/drive/shared-term",
+        chunk_texts=["여기도 공용검색어 가 등장한다."],
+    )
+
+    items = indexed_search_service.search("공용검색어", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["무관 제목"]
+
+
+def test_indexed_strategy_source_filter_does_not_starve_top_k(
+    db_session, indexed_search_service, monkeypatch
+) -> None:
+    """source 필터를 걸어도, 다른 source 문서가 fused 후보 폭을 다 차지해 top_k 를
+    못 채우는 일이 없다(45번 리뷰 §3.3) — keyword/vector arm 자체가 source 로
+    좁혀야 한다. width 를 인위적으로 1로 낮춰, 다른 source 문서가 유일한
+    후보 슬롯을 차지하면 즉시 재현되는 회귀를 검증한다.
+    """
+    import app.services.documents.document_search_service as service_module
+
+    monkeypatch.setattr(service_module, "_RRF_MIN_CANDIDATE_WIDTH", 1)
+    monkeypatch.setattr(service_module, "_RRF_CANDIDATE_WIDTH_MULTIPLIER", 1)
+
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-other-source",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="other-source",
+        title="드라이브 문서",
+        url="https://example.test/drive/other-source",
+        chunk_texts=["폭독점검색어 가 드라이브 문서에도 있다."],
+    )
+    _seed_indexed_document(
+        db_session,
+        document_id="notion:doc-target-source",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_NOTION,
+        external_id="target-source",
+        title="노션 문서",
+        url="https://example.test/notion/target-source",
+        chunk_texts=["폭독점검색어 가 노션 문서에도 있다."],
+    )
+
+    items = indexed_search_service.search(
+        "폭독점검색어", DocumentSearchOptions(top_k=1, source=SOURCE_NOTION)
+    )
+
+    assert [i.title for i in items] == ["노션 문서"]
 
 
 def test_unrecognized_document_search_strategy_degrades_to_fetch(

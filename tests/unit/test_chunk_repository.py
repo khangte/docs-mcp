@@ -9,7 +9,9 @@ from app.models import EMBEDDING_DIM, Chunk, Document
 from app.repositories.chunk_repository import ChunkRepository
 
 
-def _seed_document(session, doc_id: str, project: str = "default") -> None:
+def _seed_document(
+    session, doc_id: str, project: str = "default", doc_type: str = "openapi"
+) -> None:
     """`Document` 한 건을 저장한다(이미 있으면 건드리지 않는다)."""
     if session.get(Document, doc_id) is not None:
         return
@@ -21,6 +23,7 @@ def _seed_document(session, doc_id: str, project: str = "default") -> None:
             title=f"문서 {doc_id}",
             content_hash="hash",
             raw_text="{}",
+            doc_type=doc_type,
         )
     )
     session.flush()
@@ -34,9 +37,10 @@ def _seed_chunk(
     ref_id: str | None = None,
     chunk_type: str = "endpoint",
     project: str = "default",
+    doc_type: str = "openapi",
 ) -> None:
     """청크 한 건을 저장한다(`text_tsv` 는 DB 가 자동 채운다)."""
-    _seed_document(session, document_id, project=project)
+    _seed_document(session, document_id, project=project, doc_type=doc_type)
     session.add(
         Chunk(
             id=chunk_id,
@@ -196,6 +200,23 @@ def test_search_endpoint_by_text_project_scopes_results(db_session) -> None:
     repo = ChunkRepository(db_session)
 
     hits = repo.search_endpoint_by_text(["pet"], top_k=10, project="A")
+
+    assert [h.chunk_id for h in hits] == ["c1"]
+
+
+def test_search_endpoint_by_text_doc_types_excludes_other_doc_types(db_session) -> None:
+    """doc_types 를 지정하면 그 doc_type 이 아닌 문서의 청크는 후보에서 빠진다.
+
+    등록형 문서(markdown/csv 등)와 협업 문서(drive/notion)가 같은
+    chunk_type="section" 을 공유하므로, 문서 검색 arm 이 이 필터로
+    등록형 문서를 걸러낸다(45번 리뷰 §3.2).
+    """
+    _seed_chunk(db_session, "c1", "doc-drive", "find pet by id", ref_id="ep1", doc_type="drive")
+    _seed_chunk(db_session, "c2", "doc-markdown", "find pet again", ref_id="ep2", doc_type="markdown")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(["pet"], top_k=10, doc_types=["drive", "notion"])
 
     assert [h.chunk_id for h in hits] == ["c1"]
 
@@ -403,6 +424,40 @@ def test_search_by_vector_excludes_non_endpoint_chunks_without_candidate_ids(
     hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
 
     assert [h.chunk_id for h in hits] == ["chunk-endpoint"]
+
+
+def test_search_by_vector_doc_types_excludes_other_doc_types(db_session) -> None:
+    """doc_types 를 지정하면 그 doc_type 이 아닌 문서의 청크는 벡터 검색에서도 빠진다."""
+    _seed_document(db_session, "doc-drive", doc_type="drive")
+    _seed_document(db_session, "doc-markdown", doc_type="markdown")
+    db_session.add(
+        Chunk(
+            id="chunk-drive",
+            document_id="doc-drive",
+            chunk_type="section",
+            ref_id="ref-drive",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.add(
+        Chunk(
+            id="chunk-markdown",
+            document_id="doc-markdown",
+            chunk_type="section",
+            ref_id="ref-markdown",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector(
+        [0.1] * EMBEDDING_DIM, top_k=5, chunk_type="section", doc_types=["drive", "notion"]
+    )
+
+    assert [h.chunk_id for h in hits] == ["chunk-drive"]
 
 
 # --- P6: search_by_vector 의 hnsw.ef_search 세션 GUC 설정 ---------------------

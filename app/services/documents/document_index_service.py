@@ -182,6 +182,12 @@ class DocumentIndexService:
             raise ValueError(
                 "index_bodies=True requires document_repo/endpoint_repo/chunk_repo/indexer"
             )
+        if not index_bodies:
+            # 검색 기본 전략은 indexed(3-arm RRF)라 본문 색인 없이는 keyword/
+            # vector arm 이 비어 title 매칭만으로 조용히 퇴화한다(45번 리뷰 §3.4).
+            _LOG.warning(
+                "index_bodies=False — 본문 색인을 건너뜀: 검색은 제목 매칭만 사용"
+            )
         targets = self._resolve_targets(source, project)
 
         totals = _SourceCounts()

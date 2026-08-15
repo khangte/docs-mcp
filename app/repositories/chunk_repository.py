@@ -134,6 +134,7 @@ class ChunkRepository:
         project: str | None = None,
         score_terms: Sequence[str] | None = None,
         chunk_type: str = "endpoint",
+        doc_types: Sequence[str] | None = None,
     ) -> list[ChunkTextHit]:
         """`chunk_type` 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
 
@@ -152,6 +153,11 @@ class ChunkRepository:
         원본+variant term 으로 넓히되, 점수는 원본 term(`score_terms`)만으로
         계산해 variant 매칭만 있는 후보가 원본 매칭 후보보다 부당하게 높은
         순위를 받지 않게 한다(문서 검색과 동일 규약).
+
+        `doc_types` 는 `Document.doc_type` 으로 후보를 좁힌다(45번 리뷰
+        §3.2/3.3) — `chunk_type="section"` 은 협업 문서(drive/notion)와
+        등록형 문서(markdown/csv 등)가 공유하므로, 문서 검색 경로는 이
+        인자로 등록형 문서 청크가 섞이는 것을 SQL 단에서 막는다.
 
         정렬은 `ts_rank` 내림차순, 동점이면 `id` 오름차순이라 결과가 결정적이다.
         `text_tsv` 컬럼 자체는 필터 전용이라 select 하지 않는다.
@@ -179,10 +185,12 @@ class ChunkRepository:
         )
         if document_id is not None:
             stmt = stmt.where(Chunk.document_id == document_id)
-        if project is not None:
-            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
-                Document.project == project
-            )
+        if project is not None or doc_types is not None:
+            stmt = stmt.join(Document, Chunk.document_id == Document.id)
+            if project is not None:
+                stmt = stmt.where(Document.project == project)
+            if doc_types is not None:
+                stmt = stmt.where(Document.doc_type.in_(doc_types))
         stmt = stmt.order_by(rank.desc(), Chunk.id.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
@@ -198,6 +206,7 @@ class ChunkRepository:
         chunk_type: str = "endpoint",
         document_id: str | None = None,
         project: str | None = None,
+        doc_types: Sequence[str] | None = None,
     ) -> list[ChunkVectorHit]:
         """pgvector 코사인 거리(`<=>`)로 top_k 를 유사도 내림차순으로 반환한다.
 
@@ -212,7 +221,8 @@ class ChunkRepository:
         (`docs/architect-review/39` §2.6) — section 청크는 문서 수 × 섹션
         수라 `candidate_ids` 로 만든 ID 집합이 커질 수 있어, 문서 검색
         경로는 이 인자들을 쓴다. `candidate_ids` 와 동시에 줄 수도 있다
-        (둘 다 AND 로 결합).
+        (둘 다 AND 로 결합). `doc_types` 는 같은 조인에 `Document.doc_type`
+        조건을 얹는다(45번 리뷰 §3.2/3.3 — 등록형 문서의 section 청크 배제).
 
         코사인 거리는 [0, 2] 범위이므로 유사도 = 1 - 거리 로 변환한다.
         `ref_id`/`document_id` 를 함께 SQL 로 프로젝션해(조인 불필요),
@@ -238,10 +248,12 @@ class ChunkRepository:
             stmt = stmt.where(Chunk.id.in_(candidate_ids))
         if document_id is not None:
             stmt = stmt.where(Chunk.document_id == document_id)
-        if project is not None:
-            stmt = stmt.join(Document, Chunk.document_id == Document.id).where(
-                Document.project == project
-            )
+        if project is not None or doc_types is not None:
+            stmt = stmt.join(Document, Chunk.document_id == Document.id)
+            if project is not None:
+                stmt = stmt.where(Document.project == project)
+            if doc_types is not None:
+                stmt = stmt.where(Document.doc_type.in_(doc_types))
         stmt = stmt.order_by(distance.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
