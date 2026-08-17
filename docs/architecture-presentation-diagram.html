@@ -1,0 +1,417 @@
+<title>docs-mcp 발표용 아키텍처 다이어그램</title>
+<style>
+  :root {
+    --bg: #f3f5f8;
+    --surface: #ffffff;
+    --surface-2: #eaeef4;
+    --border: #dbe1e9;
+    --text: #131922;
+    --text-dim: #59636f;
+    --accent: #2c58a0;
+    --accent-soft: #e5edf9;
+    --accent-2: #bd6a17;
+    --accent-2-soft: #fbecdc;
+    --shadow:
+      0 1px 2px rgba(20, 26, 34, 0.04), 0 12px 28px -14px rgba(20, 26, 34, 0.18);
+
+    --font-display:
+      ui-monospace, "Cascadia Code", "JetBrains Mono", "Roboto Mono",
+      "SFMono-Regular", Consolas, monospace;
+    --font-body:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+      sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0f15;
+      --surface: #121924;
+      --surface-2: #17202c;
+      --border: #263241;
+      --text: #e9edf3;
+      --text-dim: #8d9aac;
+      --accent: #7ea6e8;
+      --accent-soft: #1a2941;
+      --accent-2: #f0a34a;
+      --accent-2-soft: #34260f;
+      --shadow:
+        0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b0f15;
+    --surface: #121924;
+    --surface-2: #17202c;
+    --border: #263241;
+    --text: #e9edf3;
+    --text-dim: #8d9aac;
+    --accent: #7ea6e8;
+    --accent-soft: #1a2941;
+    --accent-2: #f0a34a;
+    --accent-2-soft: #34260f;
+    --shadow:
+      0 1px 2px rgba(0, 0, 0, 0.3), 0 20px 40px -18px rgba(0, 0, 0, 0.55);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    line-height: 1.55;
+  }
+
+  .page {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 64px 28px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .hero {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .kicker {
+    font-family: var(--font-display);
+    font-size: 12.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .kicker::before {
+    content: "";
+    width: 22px;
+    height: 1.5px;
+    background: var(--accent);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(28px, 4.4vw, 40px);
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .tagline {
+    max-width: 74ch;
+    font-size: 15.5px;
+    color: var(--text-dim);
+  }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 20px;
+    box-shadow: var(--shadow);
+  }
+  .svg-wrap {
+    overflow-x: auto;
+  }
+  svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-width: 100%;
+  }
+  figcaption {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+
+  .node rect {
+    fill: var(--surface);
+    stroke: var(--border);
+    stroke-width: 1.6;
+  }
+  .node.compute rect {
+    stroke: var(--accent);
+    stroke-width: 2;
+  }
+  .node.store rect {
+    stroke: var(--accent);
+    stroke-width: 2;
+    fill: var(--accent-soft);
+  }
+  .node.signal rect {
+    stroke: var(--accent-2);
+    stroke-width: 2.4;
+    fill: var(--accent-2-soft);
+  }
+  .node.group rect {
+    fill: var(--surface-2);
+    stroke: var(--border);
+    stroke-dasharray: 5 4;
+    stroke-width: 1.2;
+  }
+  .node.plain rect {
+    fill: var(--surface);
+    stroke: var(--border);
+    stroke-width: 1.4;
+  }
+  .node.legend rect {
+    fill: var(--surface-2);
+    stroke: var(--border);
+    stroke-width: 1.2;
+  }
+  .node text {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    fill: var(--text);
+  }
+  .node .sm {
+    font-size: 13px;
+  }
+  .node .sub {
+    font-family: var(--font-body);
+    font-weight: 400;
+    font-size: 12.5px;
+    fill: var(--text-dim);
+  }
+  .edge {
+    stroke: var(--text-dim);
+    stroke-width: 2.6;
+    fill: none;
+  }
+  .edge.dashed {
+    stroke-dasharray: 7 6;
+  }
+  .edge-label {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    fill: var(--text-dim);
+  }
+  .legend-label {
+    font-family: var(--font-body);
+    font-size: 13px;
+    fill: var(--text);
+  }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 22px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+</style>
+
+<div class="page">
+  <div class="hero">
+    <span class="kicker">Architecture &middot; Presentation Slide</span>
+    <h1>docs-mcp 전체 구성 (발표용)</h1>
+    <p class="tagline">
+      외부 소스는 전부 서버를 거쳐야 PostgreSQL 에 들어간다 — 직결 경로는 없다.
+      실선은 항상 도는 경로, 점선은 갱신·실시간 조회 시에만 도는 경로다.
+    </p>
+  </div>
+
+  <figure>
+    <div class="svg-wrap">
+      <svg
+        viewBox="0 0 1160 700"
+        role="img"
+        aria-label="사람이 Claude MCP 클라이언트를 통해 docs-mcp 서버에 질문한다. 서버는 실시간 조회나 갱신이 필요할 때만 점선 경로로 Google Drive, Notion, API 명세를 조회해 원문을 가져오고, OS 스케줄러의 refresh_documents.py 배치도 같은 점선 경로를 탄다. 가져온 원문은 다시 점선으로 서버에 돌아와 파싱, 섹션 분할, 임베딩을 거친 뒤 실선으로 PostgreSQL 에 적재된다. PostgreSQL 은 FTS와 pgvector 를 RRF 로 융합해 검색한다."
+      >
+        <defs>
+          <marker
+            id="pa"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="5.5"
+            markerHeight="5.5"
+            orient="auto-start-reverse"
+          >
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+          </marker>
+        </defs>
+
+        <!-- row 1 arrows (solid) -->
+        <g class="edge" style="color: var(--text-dim)">
+          <line x1="120" y1="90" x2="160" y2="90" marker-end="url(#pa)" />
+          <line x1="400" y1="90" x2="440" y2="90" marker-end="url(#pa)" />
+        </g>
+        <text class="edge-label" x="140" y="78" text-anchor="middle">질문</text>
+        <text class="edge-label" x="420" y="78" text-anchor="middle">
+          도구 호출
+        </text>
+
+        <!-- dashed: 서버/OS스케줄러 → 소스 클러스터 -->
+        <g class="edge dashed" style="color: var(--text-dim)">
+          <path d="M500,140 L500,210" />
+          <path d="M870,140 L870,210" />
+          <path d="M500,210 L870,210" />
+          <path d="M500,210 L500,280" marker-end="url(#pa)" />
+        </g>
+        <text class="edge-label" x="560" y="203">
+          케이스 3·5 — get_document 실시간 조회 / 배치 재색인
+        </text>
+        <text class="edge-label" x="700" y="225" text-anchor="middle">
+          케이스 2c — fetch degrade (롤백 스위치 켰을 때만)
+        </text>
+
+        <!-- dashed: 소스 클러스터 → 서버, 리턴 경로 -->
+        <g class="edge dashed" style="color: var(--text-dim)">
+          <path
+            d="M350,320 L300,320 L300,150 L460,150 L460,140"
+            marker-end="url(#pa)"
+          />
+        </g>
+        <text class="edge-label" x="380" y="168" text-anchor="middle">
+          가져온 원문
+        </text>
+
+        <!-- solid: 서버 → PostgreSQL, 우회 경로 -->
+        <g class="edge" style="color: var(--text-dim)">
+          <path d="M650,140 L650,180 L950,180 L950,520" marker-end="url(#pa)" />
+        </g>
+        <text class="edge-label" x="760" y="172">
+          파싱 → 섹션 분할 → 임베딩 → 저장
+        </text>
+
+        <!-- 사람 -->
+        <g class="node plain">
+          <rect x="20" y="40" width="100" height="100" rx="12" />
+          <text x="70" y="96" text-anchor="middle">사람</text>
+        </g>
+
+        <!-- Claude · MCP 클라이언트 -->
+        <g class="node compute">
+          <rect x="160" y="40" width="240" height="100" rx="12" />
+          <text x="280" y="80" text-anchor="middle">
+            Claude · MCP 클라이언트
+          </text>
+          <text class="sub" x="280" y="104" text-anchor="middle">
+            stdio 로 서버 프로세스를 띄운다
+          </text>
+        </g>
+
+        <!-- docs-mcp 서버 -->
+        <g class="node signal">
+          <rect x="440" y="40" width="260" height="100" rx="12" />
+          <text
+            x="570"
+            y="74"
+            text-anchor="middle"
+            style="fill: var(--accent-2)"
+          >
+            docs-mcp 서버
+          </text>
+          <text class="sub" x="570" y="96" text-anchor="middle">
+            답을 쓰지 않는다 — 근거만 건넨다
+          </text>
+          <text class="sub" x="570" y="116" text-anchor="middle">
+            임베딩(로컬 CPU)
+          </text>
+        </g>
+
+        <!-- OS 스케줄러 -->
+        <g class="node plain">
+          <rect x="740" y="40" width="260" height="100" rx="12" />
+          <text x="870" y="76" text-anchor="middle">OS 스케줄러</text>
+          <text class="sub" x="870" y="98" text-anchor="middle">
+            (systemd timer / cron)
+          </text>
+          <text class="sub" x="870" y="118" text-anchor="middle">
+            refresh_documents.py
+          </text>
+        </g>
+
+        <!-- 소스 클러스터 -->
+        <g class="node group">
+          <rect x="350" y="280" width="300" height="170" rx="12" />
+        </g>
+        <g class="node plain">
+          <rect x="364" y="294" width="272" height="40" rx="8" />
+          <text class="sm" x="500" y="319" text-anchor="middle">
+            Google Drive
+          </text>
+        </g>
+        <g class="node plain">
+          <rect x="364" y="340" width="272" height="40" rx="8" />
+          <text class="sm" x="500" y="365" text-anchor="middle">Notion</text>
+        </g>
+        <g class="node plain">
+          <rect x="364" y="386" width="272" height="40" rx="8" />
+          <text class="sm" x="500" y="411" text-anchor="middle">
+            API 명세 (OpenAPI / Swagger)
+          </text>
+        </g>
+        <text class="edge-label" x="500" y="468" text-anchor="middle">
+          register_*_source = 포인터 등록뿐, 적재는 리턴 경로에서
+        </text>
+
+        <!-- PostgreSQL -->
+        <g class="node store">
+          <rect x="800" y="520" width="300" height="100" rx="12" />
+          <text x="950" y="554" text-anchor="middle">
+            PostgreSQL + pgvector
+          </text>
+          <text class="sub" x="950" y="576" text-anchor="middle">
+            FTS(키워드) + pgvector(의미) 동시 검색
+          </text>
+          <text class="sub" x="950" y="594" text-anchor="middle">
+            RRF 로 순위 융합
+          </text>
+        </g>
+
+        <!-- 범례 -->
+        <g class="node legend">
+          <rect x="20" y="520" width="300" height="100" rx="10" />
+        </g>
+        <line
+          class="edge"
+          style="color: var(--text-dim)"
+          x1="40"
+          y1="552"
+          x2="80"
+          y2="552"
+        />
+        <text class="legend-label" x="92" y="557">실선 — 항상 도는 경로</text>
+        <line
+          class="edge dashed"
+          style="color: var(--text-dim)"
+          x1="40"
+          y1="588"
+          x2="80"
+          y2="588"
+        />
+        <text class="legend-label" x="92" y="593">
+          점선 — 갱신 / 실시간 조회 시에만
+        </text>
+      </svg>
+    </div>
+    <figcaption>
+      Google Drive · Notion · API 명세는 PostgreSQL 에 직접 쓰지 않는다. 모든
+      문서는 서버의 파싱 → 섹션 분할 → 임베딩(로컬 CPU) 단계를 거친 뒤에만
+      저장된다. 주기 재색인은 서버 안 스케줄러가 아니라 OS 스케줄러가
+      <code>refresh_documents.py</code> 를 돌려서 같은 경로를 탄다.
+    </figcaption>
+  </figure>
+
+  <footer>
+    <span>docs-mcp — MCP RAG server</span>
+    <span>presentation diagram · fix for #52</span>
+  </footer>
+</div>
