@@ -56,5 +56,15 @@ class ValidationError(DomainError):
         super().__init__(message, code="validation_error")
 
 
+class RefreshInProgressError(DomainError):
+    """배치 CLI 또는 다른 refresh_index 호출이 같은 축을 이미 재색인 중일 때 발생."""
+
+    def __init__(self) -> None:
+        """축 충돌 메시지와 코드를 보관한다."""
+        super().__init__(
+            "another refresh is already in progress for this axis", code="refresh_in_progress"
+        )
+
+
 class IntegrationError(Exception):
     """외부 HTTP/LLM/임베딩 실패."""

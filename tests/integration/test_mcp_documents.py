@@ -12,6 +12,7 @@ from datetime import datetime
 
 import pytest
 from fastmcp import FastMCP
+from sqlalchemy import text
 
 from app.mcp.server import create_mcp_server
 from app.models import DEFAULT_PROJECT
@@ -162,6 +163,75 @@ async def test_refresh_index_no_project_mapping_returns_error_payload(
 
     assert payload["error"] is True
     assert payload["code"] == "integration_error"
+
+
+@pytest.mark.asyncio()
+async def test_refresh_index_returns_refresh_in_progress_when_batch_holds_lock(
+    mcp_server: FastMCP, seed_default_project_sources, session_factory
+) -> None:
+    """배치 CLI 가 축 A lock 을 쥔 동안 refresh_index 를 부르면 충돌 에러를 반환한다.
+
+    `docs/architect-review/53_data_flow_scenarios.md` 케이스 4 리스크:
+    advisory lock 이 배치 CLI 에만 있어 두 writer 가 같은 document_meta 행에
+    동시에 붙을 수 있었다. MCP 도구도 같은 lock key 를 잡아야 한다.
+    """
+    from app.services.documents.refresh_lock import LOCK_KEY_META_SYNC, advisory_unlock
+
+    holder = session_factory()
+    holder.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": LOCK_KEY_META_SYNC})
+    try:
+        payload = _result(await mcp_server.call_tool("refresh_index", arguments={}))
+
+        assert payload["error"] is True
+        assert payload["code"] == "refresh_in_progress"
+    finally:
+        advisory_unlock(holder, LOCK_KEY_META_SYNC)
+        holder.close()
+
+
+@pytest.mark.asyncio()
+async def test_refresh_index_releases_lock_after_aborted_transaction(
+    mcp_server: FastMCP, seed_default_project_sources, pg_engine, monkeypatch
+) -> None:
+    """DB 레벨 오류로 트랜잭션이 aborted 여도 finally 의 방어적 rollback 이 락을 지킨다.
+
+    `document_repo.list_resyncable` 호출은 문서별 try/except(F2) 밖에 있어, 거기서
+    나는 SQLAlchemyError 는 그대로 finally 까지 전파된다. rollback 없이 그 상태로
+    advisory_unlock 을 호출하면 unlock 쿼리 자체가 실패해 락이 안 풀린다
+    (`docs/architect-review/54_refresh_lock_abort_asymmetry_verdict.md` F1/F3).
+    검증은 **완전히 별도의 엔진(별도 커넥션 풀)** 으로 한다 — `session_factory`
+    로 새 세션만 열면, 도구 호출이 반납한(락이 눌어붙은 채인) 바로 그 물리
+    커넥션을 커넥션 풀이 그대로 재배정할 수 있어(LIFO 체크인) 재진입으로
+    항상 성공해버려 검증이 무의미해진다.
+    """
+    from fastmcp.exceptions import ToolError
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.core.db import create_db_engine
+    from app.repositories.document_repository import DocumentRepository
+    from app.services.documents.refresh_lock import LOCK_KEY_REGISTERED_RESYNC
+
+    def _boom(self, project: str | None) -> list:
+        self._session.execute(text("SELECT 1/0"))  # 실제 DB 에러로 트랜잭션을 abort 시킨다
+        return []  # pragma: no cover - DB 가 먼저 에러를 던진다
+
+    monkeypatch.setattr(DocumentRepository, "list_resyncable", _boom)
+
+    with pytest.raises((ToolError, SQLAlchemyError)):
+        await mcp_server.call_tool("refresh_index", arguments={"include_registered": True})
+
+    verify_engine = create_db_engine(pg_engine.url.render_as_string(hide_password=False))
+    try:
+        with verify_engine.connect() as conn:
+            acquired = conn.execute(
+                text("SELECT pg_try_advisory_lock(:key)"), {"key": LOCK_KEY_REGISTERED_RESYNC}
+            ).scalar()
+            assert acquired is True
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:key)"), {"key": LOCK_KEY_REGISTERED_RESYNC}
+            )
+    finally:
+        verify_engine.dispose()
 
 
 @pytest.mark.asyncio()

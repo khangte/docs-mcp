@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from app.composition import AppState, ServiceBundle
+from app.core.errors import RefreshInProgressError
 from app.mcp.payloads import _to_drive_source_item, _to_notion_source_item, _to_refresh_payload
 from app.mcp.tools._common import run_bundle_tool
 from app.mcp.types import (
@@ -17,6 +18,11 @@ from app.mcp.types import (
     RegisterNotionSourceResult,
     RemoveDriveSourceResult,
     RemoveNotionSourceResult,
+)
+from app.services.documents.refresh_lock import (
+    advisory_unlock,
+    select_lock_key,
+    try_advisory_lock,
 )
 from app.services.documents.registered_resync import resync_registered_documents
 
@@ -72,19 +78,36 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             skipped/failed)가 추가된다. failed 는 resync 에 실패한
             document_id 목록이며, 개별 실패는 다른 문서 처리를 막지 않는다.
             include_registered=False 면 registered 키 자체가 없다(하위호환).
+            배치 CLI(`app/scripts/refresh_documents.py`)나 다른 refresh_index
+            호출이 같은 축(include_registered 기준)을 이미 재색인 중이면
+            code="refresh_in_progress" 인 ErrorPayload 를 대신 반환한다 —
+            같은 document_meta 행에 writer 두 개가 동시에 붙는 것을 막는다.
         """
         def _inner(bundle: ServiceBundle) -> RefreshIndexResult:
-            payload = _to_refresh_payload(
-                bundle.document_index_service.refresh(
-                    source=source, project=project, index_bodies=index_bodies
+            lock_key = select_lock_key(include_registered)
+            if not try_advisory_lock(bundle.session, lock_key):
+                raise RefreshInProgressError()
+            try:
+                payload = _to_refresh_payload(
+                    bundle.document_index_service.refresh(
+                        source=source, project=project, index_bodies=index_bodies
+                    )
                 )
-            )
-            if include_registered:
-                payload["registered"] = resync_registered_documents(
-                    bundle.session, bundle.document_repo, bundle.sync_service,
-                    project=project, force=force,
-                )
-            return payload
+                if include_registered:
+                    payload["registered"] = resync_registered_documents(
+                        bundle.session, bundle.document_repo, bundle.sync_service,
+                        project=project, force=force,
+                    )
+                return payload
+            finally:
+                # 재색인 도중 SQLAlchemyError 로 트랜잭션이 aborted 면 unlock 쿼리
+                # 자체가 실패해, 원래 예외를 가리면서 락까지 남는다(풀에 반납된
+                # 커넥션은 닫히지 않으므로 자동 해제도 안 된다). 락 해제는 callee 가
+                # 남긴 세션 상태에 의존하면 안 되므로 여기서 먼저 정리한다. 이 시점의
+                # 미커밋 분량은 커밋 경계가 이미 배치/문서 단위로 내려가 있어 실패해서
+                # 어차피 버려야 할 것뿐이다 — 확정분 손실은 없다.
+                bundle.session.rollback()
+                advisory_unlock(bundle.session, lock_key)
         return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()

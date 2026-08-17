@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -42,6 +43,7 @@ def resync_registered_documents(
 
     문서 하나가 실패해도 나머지는 계속 진행한다(부분 실패 허용). resync 는
     문서마다 자체 커밋하므로 한 문서의 실패가 다른 문서 결과를 롤백하지 않는다.
+    DB 레벨 오류(`SQLAlchemyError`)도 문서 단위로 격리한다.
     """
     documents = document_repo.list_resyncable(project)
     reindexed = 0
@@ -50,7 +52,7 @@ def resync_registered_documents(
     for document in documents:
         try:
             result = sync_service.resync(document.id, force=force)
-        except (DomainError, IntegrationError) as e:
+        except (DomainError, IntegrationError, SQLAlchemyError) as e:
             _LOG.error("registered resync failed: document_id=%s", document.id, exc_info=e)
             session.rollback()
             failed.append(document.id)
