@@ -224,7 +224,8 @@ uv run python -m app.scripts.refresh_documents [--include-registered] [--no-inde
 ```
 
 메타 캐시 동기화는 1시간마다, 등록 문서 재색인(`--include-registered`)은 1일 1회
-야간에 돌리기를 권장합니다. 중복 실행은 Postgres advisory lock 으로 막습니다.
+야간에 돌리기를 권장합니다. 중복 실행과 `refresh_index` MCP 도구와의 동시 실행은
+같은 Postgres advisory lock 을 공유해 막습니다.
 
 본문 색인(협업 문서를 fetch 해 섹션 청크로 색인)은 기본으로 켜져 있습니다.
 기본 검색 전략(`indexed`)의 keyword/vector arm 신호가 여기서 채워지므로,
