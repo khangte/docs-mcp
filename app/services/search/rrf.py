@@ -29,14 +29,7 @@ class FusedResult:
 
 def _dedupe_first(ref_ids: Sequence[str]) -> list[str]:
     """같은 ref_id 가 여러 번 나오면 첫 등장만 남긴다(등수 계산 전 전처리)."""
-    seen: set[str] = set()
-    result: list[str] = []
-    for ref_id in ref_ids:
-        if ref_id in seen:
-            continue
-        seen.add(ref_id)
-        result.append(ref_id)
-    return result
+    return list(dict.fromkeys(ref_ids))
 
 
 def reciprocal_rank_fuse(
