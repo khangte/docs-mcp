@@ -166,7 +166,7 @@ search_documents(query="주문조회 API", query_variants=["결제 내역 조회
 갱신하는 원샷 CLI 를 제공합니다. MCP stdio 서버는 세션마다 뜨는 단명 프로세스라
 스케줄러를 품을 수 없으므로, 이 스크립트는 **한 번 돌고 종료**하고 주기는 OS
 스케줄러(systemd timer 또는 cron)가 소유합니다
-(설계: [`architect-review/32-refresh-index-batch-automation.md`](architect-review/32-refresh-index-batch-automation.md)).
+(설계: [`architect-review/31-refresh-index-batch-automation.md`](architect-review/31-refresh-index-batch-automation.md)).
 
 ```bash
 uv run python -m app.scripts.refresh_documents \
@@ -197,7 +197,7 @@ uv run python -m app.scripts.refresh_documents \
   - 지금은 실패를 기억하지 않아, **텍스트를 못 뽑는 파일(이미지·영상 등)과 빈 본문
     문서는 실행할 때마다 다시 fetch** 됩니다. 1회성 백필에서는 무해하지만 정기
     실행으로 돌릴 때는 이 비용을 감안하세요
-    (`architect-review/43_backfill_result_verification_and_indexed_default_gate.md` §3).
+    (`architect-review/41_backfill_result_verification_and_indexed_default_gate.md` §3).
 
 중복 실행은 Postgres advisory lock 으로 막습니다. 축 A·축 B는 락 키가 달라 축 B 실행
 중에도 축 A 틱이 굶지 않습니다. 락 키는 `--include-registered` 여부로만 갈리므로

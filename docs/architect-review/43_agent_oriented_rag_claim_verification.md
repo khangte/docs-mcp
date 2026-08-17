@@ -3,11 +3,11 @@
 - 일시: 2026-08-15
 - 작성: architect
 - 선행: `docs/architect-review/07-search-rrf-reevaluation.md`(RRF 채택),
-  `35_drive_notion_no_embedding_rationale.md`, `36_drive_notion_embedding_migration_and_refresh_strategy.md`,
-  `37_user_rag_proposal_vs_our_design_diff.md`(범용 RAG 제안 대조),
-  `39_document_search_phase3_rrf_verdict.md`(3-arm RRF 확정),
-  `43_backfill_result_verification_and_indexed_default_gate.md`(indexed 기본 전환),
-  `44_snippet_as_of_mcp_exposure_verdict.md`
+  `34_drive_notion_no_embedding_rationale.md`, `35_drive_notion_embedding_migration_and_refresh_strategy.md`,
+  `36_user_rag_proposal_vs_our_design_diff.md`(범용 RAG 제안 대조),
+  `37_document_search_phase3_rrf_verdict.md`(3-arm RRF 확정),
+  `41_backfill_result_verification_and_indexed_default_gate.md`(indexed 기본 전환),
+  `42_snippet_as_of_mcp_exposure_verdict.md`
 - 질문: "docs-mcp는 Candidate/Evidence 분리 + LLM 중심 Retrieval Planning +
   Lazy Document Fetch + Agentic Retrieval 구조라서 일반 MCP/RAG보다 유리하다"는
   주장이 실제 코드와 맞는가. 일반 MCP/RAG 쪽 로직이 더 적절한 항목이 있는가.
@@ -81,7 +81,7 @@ LLM API를 부르면 같은 추론을 두 번 사고 지연·비용·모델 버�
 - `document_search_strategy="fetch"`(롤백 스위치, `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY=fetch`):
   검색 도중 후보 본문을 **실시간으로 최대 20건 fetch한다**
   (`_body_fetch_budget`, `MAX_BODY_FETCH_CANDIDATES=20`, `MAX_CONCURRENT_BODY_FETCHES=5`).
-  "검색 중 원문 조회 안 함"의 정확한 반대다. 이게 doc43 이전의 기본값이었다.
+  "검색 중 원문 조회 안 함"의 정확한 반대다. 이게 doc41 이전의 기본값이었다.
 - `document_search_strategy="indexed"`(현재 기본): 검색 경로에 외부 API 호출이 0회다.
 
 따라서 주장은 **현재 기본값에 한해서만** 참이다. 그리고 참인 이유가 "원문을 lazy하게

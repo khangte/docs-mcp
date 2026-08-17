@@ -110,7 +110,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 - **Vector Search**: pgvector(cosine similarity, HNSW 인덱스)를 이용한 의미론적 검색
 - **Keyword Search**: Postgres FTS(`to_tsquery` OR 매칭 + `ts_rank`, `chunk.text_tsv` 생성컬럼 + GIN 인덱스) 기반 키워드 검색
 - **Rerank**: 키워드/벡터 결과를 RRF(Reciprocal Rank Fusion, `RRF_K=60`)로 순위 융합(기본 `rrf` 전략). 롤백용 `fallback` 전략은 키워드 우선·0건일 때만 벡터를 보조로 시도하는 배타적 분기다. `hybrid_alpha` 가중합(과거 `SearchService` 하이브리드 전용 legacy 설정)은 config/bootstrap/composition 배선까지 완전히 제거했다
-- **두 검색 경로가 모두 RRF 기반이다.** 엔드포인트 검색(`search_endpoints`, `DOCS_MCP_SEARCH_STRATEGY`)은 키워드+벡터 2-arm, 협업 문서 검색(`search_documents`, `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`, 기본 `indexed`)은 **제목(`document_meta`) + 키워드/벡터(`chunk_type="section"` 본문 청크) 3-arm** 이다. 문서 경로의 융합 키는 청크가 아니라 `Document.id` 라 한 문서가 섹션 수만큼 결과 슬롯을 먹지 않고, 제목 arm 의 키는 `deterministic_document_id(project, source, external_id)` 로 순수 계산해 **미색인 문서도 제목 신호만으로 결과에 남는다**(별도 폴백 분기 없음). 롤백용 `fetch` 전략은 후보 본문을 실시간 fetch 해 제목·본문 토큰 겹침을 가중합(0.4/0.6)하던 이전 기본값이다 — 정규화 기준이 없는 가중합 문제 때문에 색인 경로에서는 쓰지 않는다. 근거: `docs/architect-review/39_document_search_phase3_rrf_verdict.md`, `docs/architect-review/43_backfill_result_verification_and_indexed_default_gate.md`. 흐름 상세는 [`docs/search-flow.md`](docs/search-flow.md)
+- **두 검색 경로가 모두 RRF 기반이다.** 엔드포인트 검색(`search_endpoints`, `DOCS_MCP_SEARCH_STRATEGY`)은 키워드+벡터 2-arm, 협업 문서 검색(`search_documents`, `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`, 기본 `indexed`)은 **제목(`document_meta`) + 키워드/벡터(`chunk_type="section"` 본문 청크) 3-arm** 이다. 문서 경로의 융합 키는 청크가 아니라 `Document.id` 라 한 문서가 섹션 수만큼 결과 슬롯을 먹지 않고, 제목 arm 의 키는 `deterministic_document_id(project, source, external_id)` 로 순수 계산해 **미색인 문서도 제목 신호만으로 결과에 남는다**(별도 폴백 분기 없음). 롤백용 `fetch` 전략은 후보 본문을 실시간 fetch 해 제목·본문 토큰 겹침을 가중합(0.4/0.6)하던 이전 기본값이다 — 정규화 기준이 없는 가중합 문제 때문에 색인 경로에서는 쓰지 않는다. 근거: `docs/architect-review/37_document_search_phase3_rrf_verdict.md`, `docs/architect-review/41_backfill_result_verification_and_indexed_default_gate.md`. 흐름 상세는 [`docs/search-flow.md`](docs/search-flow.md)
 
 ### 5-3. 프로젝트 단위 격리
 
@@ -131,7 +131,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
   (0x00)을 제거한다(PDF 텍스트 추출물이 섞어 보내며 PostgreSQL `text` 컬럼이
   저장하지 못한다). 색인·검색·`get_document` 세 소비자가 한 번에 덮이도록
   파서나 색인 직전이 아니라 소스 경계에서 씻는다
-  (`docs/architect-review/42_body_backfill_content_normalization_and_commit_boundary.md` §1).
+  (`docs/architect-review/40_body_backfill_content_normalization_and_commit_boundary.md` §1).
   본문이 빈 문서(하위 페이지만 있는 Notion 페이지 등)는 오류가 아니라 색인
   대상 제외로 취급하고, 이전에 색인돼 있었다면 그 `Document` 를 지워 옛 본문
   스니펫이 계속 노출되지 않게 한다.
@@ -154,7 +154,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
   마지막 한 건의 실패가 앞의 전부를 롤백시킨다 — doc42 §3).
 - 틱이 주기보다 길어져 겹치는 것은 Postgres advisory lock 으로 막는다(새 의존성 0, 프로세스
   종료 시 자동 해제). 락 키는 두 축이 다르다 — 같은 키면 무거운 축 B 가 가벼운 축 A 를 굶긴다.
-- 설계·실측 근거: `docs/architect-review/32-refresh-index-batch-automation.md`,
+- 설계·실측 근거: `docs/architect-review/31-refresh-index-batch-automation.md`,
   운영 방법(타이머 유닛·cron·실행 환경 함정·종료코드)은 `docs/operations.md` "자동 동기화" 절.
 
 ## 6. MCP 도구 계약 (Interface)

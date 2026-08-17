@@ -2,9 +2,9 @@
 
 - 일시: 2026-08-15
 - 작성: architect
-- 선행: `docs/architect-review/41_body_index_backfill_gate_fix.md`,
-  `docs/architect-review/40_doc36_step13_legacy_fetch_removal_gate.md`
-- 증상: doc41 수정 후 재백필이 여전히 0건, 이번엔 exit 1.
+- 선행: `docs/architect-review/39_body_index_backfill_gate_fix.md`,
+  `docs/architect-review/38_doc36_step13_legacy_fetch_removal_gate.md`
+- 증상: doc39 수정 후 재백필이 여전히 0건, 이번엔 exit 1.
   (a) drive PDF 본문에 NUL(0x00) → `PostgreSQL text fields cannot contain NUL bytes`
   (`drive:2239e73bded1694c`, `AI로개발을가속하기.pdf`).
   (b) notion 쪽 `empty document`(`markdown_parser.py:21` `ParserError`).
@@ -80,11 +80,11 @@ if not fetched.text.strip():
 `ParserError` 를 `try/except` 로 잡지 않고 선검사로 거르는 이유: 예외 포획은
 `index_document_body` 내부에서 파싱이 쓰기보다 먼저 일어난다는 **현재 구현 순서에 의존**한다
 (지금은 `:83` 파싱 → `:86` 이후 쓰기라 우연히 안전하다). 선검사는 그 순서와 무관하게
-성립한다. doc41 §5 와 같은 원칙 — 세션에 쓰기가 시작되기 전에 판정한다.
+성립한다. doc39 §5 와 같은 원칙 — 세션에 쓰기가 시작되기 전에 판정한다.
 
 **빈 본문으로 바뀐 문서의 기존 색인은 지운다.** `document_repo.get(deterministic_document_id(...))`
 로 찾아 있으면 삭제(청크·벡터는 CASCADE)하고 `row.document_id = None` 으로 되돌린다.
-안 지우면 원문이 비워졌는데 검색은 옛 본문 스니펫을 계속 내보낸다 — doc36 §0-1 이
+안 지우면 원문이 비워졌는데 검색은 옛 본문 스니펫을 계속 내보낸다 — doc35 §0-1 이
 필수 요건으로 못박은 삭제 전파와 같은 부류의 구멍이다. `_delete_removed` 는 메타 행까지
 지우므로 재사용하지 않는다(여기서는 문서가 원본에 여전히 존재한다).
 
@@ -94,7 +94,7 @@ if not fetched.text.strip():
 정의상 메타 변경이 0건이므로 `pending.total_changes` 가 영원히 0이고, `BATCH_SIZE` 경계가
 한 번도 걸리지 않아 **소스 하나가 끝날 때까지 단 한 번도 커밋되지 않는다**(`:300` 최종
 커밋이 유일). 274건 중 마지막 한 건이 깨지면 앞의 273건 색인이 통째로 롤백된다.
-developer 지적이 정확하다 — 이건 doc41 의 자기 치유 게이트가 커버하지 못하는 별개 결함이다.
+developer 지적이 정확하다 — 이건 doc39 의 자기 치유 게이트가 커버하지 못하는 별개 결함이다.
 
 수정:
 
@@ -104,23 +104,23 @@ developer 지적이 정확하다 — 이건 doc41 의 자기 치유 게이트가
 - `_refresh_source` 완료 로그에 `indexed_bodies` 한 항목 추가(백필이 실제로 돌았는지 보는
   운영 신호).
 
-**`RefreshResult`·MCP 도구 응답에는 노출하지 않는다** — doc41 §6 의 판단은 유지된다.
+**`RefreshResult`·MCP 도구 응답에는 노출하지 않는다** — doc39 §6 의 판단은 유지된다.
 `RefreshResult` 는 필드를 명시적으로 나열해 만들므로(`:202`) 자동 누출은 없다.
 
 배치 크기는 `BATCH_SIZE=100` 그대로 둔다. 본문 색인 전용 경계 상수를 따로 두면 최악 손실이
-100건에서 10건으로 줄지만, doc41 §5 와 §1·§2 를 적용하고 나면 남는 크래시 요인은 임베딩
+100건에서 10건으로 줄지만, doc39 §5 와 §1·§2 를 적용하고 나면 남는 크래시 요인은 임베딩
 제공자·DB 장애처럼 "그 실행 전체가 어차피 성립하지 않는" 부류다. 실제 백필에서 부분 손실이
 문제로 드러나면 그때 낮춘다.
 
 ## 4. exit 1 자체는 손대지 않는다 (c)
 
-`refresh` 가 모든 소스 실패 시 `IntegrationError` 를 올리는 것은 정상 계약이다(doc32).
+`refresh` 가 모든 소스 실패 시 `IntegrationError` 를 올리는 것은 정상 계약이다(doc31).
 이번 exit 1 은 그 계약이 잘못돼서가 아니라 소스 두 개가 실제로 다 죽어서 나온 결과다.
-§1·§2 로 문서 1건짜리 원인이 제거되면 소스 실패가 사라진다. 부분 실패 관용은 doc41 §5 의
+§1·§2 로 문서 1건짜리 원인이 제거되면 소스 실패가 사라진다. 부분 실패 관용은 doc39 §5 의
 per-document skip 이 이미 담당한다.
 
 ## 5. 이후 순서
 
-doc40 §6 순서 유지: 이 수정 → `--index-bodies` 재백필 → `app.chunk` 의 `section` 건수와
+doc38 §6 순서 유지: 이 수정 → `--index-bodies` 재백필 → `app.chunk` 의 `section` 건수와
 `document_meta.document_id` 채움 비율로 색인률 확인 → `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`
-기본값 전환 → doc36 13번(구경로 삭제).
+기본값 전환 → doc35 13번(구경로 삭제).

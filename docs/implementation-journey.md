@@ -138,7 +138,7 @@
 | 진단 먼저 | `855a5be` 긴 섹션 진단 스크립트 + truncation 경고 로깅 | **고치기 전에 관측 가능하게** 만들었다 |
 | 대안 비교 | doc/24 parent-child 청킹 vs 현행 | 그린필드 설계와 실제 코드 비교 |
 | 무조건 전환 기각 | [doc/25](architect-review/25-unconditional-n1-vs-gated-subchunking.md) | "지금 무조건 N:1로 바꾸자" 를 **게이트형 조건부**로 반려 |
-| 리뷰 판정 | [doc/27](architect-review/27-doc24-review-verdict.md) | reviewer 지적 판정, 섹션/스키마 헤지 유지 결정(`38ded98`) |
+| 리뷰 판정 | [doc/27](architect-review/24-parent-child-chunking-greenfield-vs-actual.md) | reviewer 지적 판정, 섹션/스키마 헤지 유지 결정(`38ded98`) |
 | 구현 | `0383667` splitter → `546f8e4` 실배선 | Phase2, 설계 doc/23 |
 | 파생 결함 수정 | `fe53e73` schema 청크 `ref_id` 를 바운드 `schema_id` 로 교체 | 절단이 **크래시**로 드러난 근본 수정, doc/29 |
 
@@ -209,7 +209,7 @@ Qdrant" 로 한 번 더 재검토됐고 다시 기각됐다(`9118686`). 같은 �
 | 1차 | 20질의 | `c197ec9` 08-08 | RRF vs fallback 비교용 자체 스펙 |
 | 지표 모듈 | MRR/nDCG@10/Recall@{1,3,5,10} | `731d43c` 08-10 | 손계산 제거 |
 | 2차 | **84질의**(실패 taxonomy 8종 × 8질의 이상) | `97f3c2d` 08-10 | 계획 `exec_plans/eval-set-expansion-plan.md`. 현재 픽스처는 100질의 |
-| 3차 | 실 코퍼스 20질의 (Stripe/GitHub 실제 OpenAPI) | `143478c` 08-13 | 설계 [doc/28](architect-review/28-search-quality-eval-real-corpus-design.md) |
+| 3차 | 실 코퍼스 20질의 (Stripe/GitHub 실제 OpenAPI) | `143478c` 08-13 | 설계 [doc/28](architect-review/27-search-quality-eval-real-corpus-design.md) |
 
 **20질의와 84질의가 다른 답을 줬다**는 것이 확장의 정당화다. 20질의에서 RRF 는 top-1
 80% 불변이었지만, 84질의 확장셋에서는 Recall@1 이 60%→69% 로 **개선**됐다
@@ -225,7 +225,7 @@ Qdrant" 로 한 번 더 재검토됐고 다시 기각됐다(`9118686`). 같은 �
 ### 5.2. 자체 스펙에서 실 코퍼스로 옮기니 점수가 무너졌다
 
 실 코퍼스(Stripe/GitHub) 20질의에서의 수치는 위와 자릿수가 다르다 —
-[doc/30](architect-review/30-search-quality-eval-real-corpus-results.md) §13.1 마감 재측정
+[doc/30](architect-review/29-search-quality-eval-real-corpus-results.md) §13.1 마감 재측정
 기준 최고 조건(변형 포함 rrf)이 **Recall@10 50%, MRR 0.248, nDCG 0.308** 이다.
 자체 제작 평가셋의 88~95% 와 실제 대형 스펙에서의 50% 사이 간격이 이 프로젝트가 확보한
 가장 값나가는 관측이고, 그래서 README 는 이 도구를 **"후보 피더"** 로, 품질 지표를
@@ -272,7 +272,7 @@ recall@k 로 규정한다.
 ### 6.1. 1차 판정 — 대상은 평가 배치, refresh_index 는 반려
 
 사용자 요청("배치 자동화를 적절하게 적용해야돼")에 대상이 없었다.
-[doc/31](architect-review/31-eval-batch-automation.md) 은 후보를 전부 열거한 뒤
+[doc/31](architect-review/30-eval-batch-automation.md) 은 후보를 전부 열거한 뒤
 **(a) 검색품질 평가 재측정 배치**를 대상으로 특정하고, 문서 재색인 쪽에 대해서는
 §2 에서 **명시적 반대 판정**을 냈다:
 
@@ -284,7 +284,7 @@ recall@k 로 규정한다.
 ### 6.2. 2차 — lead 가 대상을 정정, 반려 근거는 유지
 
 lead 가 "대상은 `refresh_index` 다. 내부 스케줄링 반려는 유지하되 **서버 밖 상주 러너**
-방향으로 설계하라" 고 지시해 [doc/32](architect-review/32-refresh-index-batch-automation.md)
+방향으로 설계하라" 고 지시해 [doc/32](architect-review/31-refresh-index-batch-automation.md)
 가 나왔다. 여기서 주목할 점은 **1차 판정을 뒤집지 않고 범위만 갈랐다**는 것이다 —
 "서버 안에 스케줄러를 두지 않는다" 는 유지하고, "스케줄 주체를 OS 로 옮긴다" 만 추가했다.
 그 결과가 지금 구조다: **앱은 스케줄을 모르고, 한 번 돌고 종료하는 배치 진입점만 갖는다.**
@@ -333,7 +333,7 @@ lead 가 "대상은 `refresh_index` 다. 내부 스케줄링 반려는 유지하
   단위 결론을 지지하지 못한다(doc/30 §12.5). C5(decoy 구분)·C4(흔한 토큰 범람)가
   이월 항목이고 C5 가 우선이다(§14.2).
 - **Notion API 버전** — `2022-06-28` 고정. 업그레이드 판단은
-  [doc/34](architect-review/34_notion_api_version_upgrade_judgment.md) 에서 "지금은 올리지
+  [doc/34](architect-review/33_notion_api_version_upgrade_judgment.md) 에서 "지금은 올리지
   않고 트리거 발생 시 착수" 로 결론.
 - **인증 없음** — `project` 는 검색 범위 축소 도구이고 보안 경계가 아니다
   (ARCHITECTURE.md §7).

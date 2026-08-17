@@ -1,4 +1,4 @@
-# 34. Notion API 버전 업그레이드 판단 (2022-06-28 → 2026-03-11)
+# 33. Notion API 버전 업그레이드 판단 (2022-06-28 → 2026-03-11)
 
 - 대상: `app/services/documents/sources/notion_source.py`, `app/core/config.py`
 - 질문: 지금 최신 버전(2026-03-11, data source 분리 모델)으로 올려야 하는가

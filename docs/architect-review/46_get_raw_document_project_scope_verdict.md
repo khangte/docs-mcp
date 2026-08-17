@@ -1,7 +1,7 @@
-# 49. `get_raw_document` project 스코프 검사 누락 판정
+# 46. `get_raw_document` project 스코프 검사 누락 판정
 
 - 대상: `app/mcp/tools/endpoints.py:191-206` (`@mcp.resource("document://{document_id}/raw")`)
-- 선행: `docs/architect-review/47_layer_boundary_exceptions_verdict.md` §3 (별건으로 보류했던 항목)
+- 선행: `docs/architect-review/44_layer_boundary_exceptions_verdict.md` §3 (별건으로 보류했던 항목)
 - 판정일 기준 커밋: `7bd579d`
 
 ## 1. 제기된 문제

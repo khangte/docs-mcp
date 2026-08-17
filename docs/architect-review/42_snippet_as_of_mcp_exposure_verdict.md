@@ -2,9 +2,9 @@
 
 - 일시: 2026-08-15
 - 작성: architect
-- 선행: `docs/architect-review/36_drive_notion_embedding_migration_and_refresh_strategy.md` §Phase0-2,
-  `docs/architect-review/39_document_search_phase3_rrf_verdict.md` §2.4,
-  `docs/architect-review/43_backfill_result_verification_and_indexed_default_gate.md` §2
+- 선행: `docs/architect-review/35_drive_notion_embedding_migration_and_refresh_strategy.md` §Phase0-2,
+  `docs/architect-review/37_document_search_phase3_rrf_verdict.md` §2.4,
+  `docs/architect-review/41_backfill_result_verification_and_indexed_default_gate.md` §2
 - 질문: `DocumentSearchItem.snippet_as_of` 가 서비스 DTO 에만 있고 MCP 응답
   (`app/mcp/payloads.py:119`)에는 실리지 않는다. 노출해야 하는가, 뺀 근거가 있는가.
 
@@ -14,20 +14,20 @@
 
 **노출한다. 의도적 제외 근거는 없고, 구현 누락으로 판단한다.**
 
-현행 상태에서는 doc36 이 "이번 변경에서 유일하게 깨지는 겉면 계약"이라고 못박은
+현행 상태에서는 doc35 이 "이번 변경에서 유일하게 깨지는 겉면 계약"이라고 못박은
 사실(스니펫 출처가 라이브 원문 → 동기화 시점 캐시)이 **호출 LLM 에 전달되지 않는다.**
 계약 변경을 명시하려고 만든 필드가 계약 경계를 못 넘고 서비스 내부에서 멈춰 있다.
 
 ## 1. 원 설계 의도 — 노출이 맞다
 
-- doc36 §Phase0-2: "검색 스니펫의 출처가 캐시 본문으로 바뀐다 — '스니펫은 마지막
+- doc35 §Phase0-2: "검색 스니펫의 출처가 캐시 본문으로 바뀐다 — '스니펫은 마지막
   동기화 시점, 원문은 최신'이라는 불일치가 새로 생기므로 `DocumentSearchItem` 에
   `last_synced_at`(또는 `snippet_as_of`)을 **노출해 계약을 명시**할 것을 권고한다.
   이게 이번 변경에서 유일하게 **깨지는 겉면 계약**이다."
   → "겉면 계약(외부에서 보이는 계약)"이라는 표현 자체가 수신자를 호출자로 지목한다.
   내부 DTO 필드는 겉면이 아니다.
-- doc39 §2.4: 같은 취지로 `DocumentSearchItem` 에 필드 추가를 지시.
-- doc43 §2("전환 조건과 롤백"): "겉면 계약 변경은 **이미 명시돼 있다**: score 스케일이
+- doc37 §2.4: 같은 취지로 `DocumentSearchItem` 에 필드 추가를 지시.
+- doc41 §2("전환 조건과 롤백"): "겉면 계약 변경은 **이미 명시돼 있다**: score 스케일이
   RRF 로 …, 스니펫 출처가 동기화 시점 캐시가 될 수 있어 `snippet_as_of` 노출".
   기본값 `indexed` 전환 승인은 **이 전제 위에 서 있다.** 전제가 실제로는 성립하지
   않으므로, 승인 근거를 사후에 맞추는 의미도 있다.
@@ -39,9 +39,9 @@ MCP 응답으로 그대로 옮겨지는 얇은 변환 계층(`_to_document_searc
 
 ## 2. 의도적 제외 근거는 없다
 
-`snippet_as_of` 를 언급한 문서는 doc36/39/43 셋뿐이고 **셋 다 노출 방향**이다.
+`snippet_as_of` 를 언급한 문서는 doc35/39/43 셋뿐이고 **셋 다 노출 방향**이다.
 "페이로드에는 싣지 않는다"는 결정을 내린 문서도, 코드 주석도 없다.
-(doc39 §2.5 가 명시적으로 뺀 필드는 `match_type` 이며, 그건 "문서 검색 계약에 없던
+(doc37 §2.5 가 명시적으로 뺀 필드는 `match_type` 이며, 그건 "문서 검색 계약에 없던
 필드라 추가하지 않는다"고 이유까지 남겼다 — 뺄 때는 이렇게 남는다.)
 
 `DocumentSearchItem.snippet_as_of` 는 단위 테스트도 있다

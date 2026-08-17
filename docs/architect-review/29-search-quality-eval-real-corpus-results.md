@@ -1,6 +1,6 @@
-# 30. 검색 품질 평가 — 실 코퍼스(Stripe/GitHub) 측정 결과
+# 29. 검색 품질 평가 — 실 코퍼스(Stripe/GitHub) 측정 결과
 
-- 상태: 측정 완료(developer). 설계는 `28-search-quality-eval-real-corpus-design.md`, 색인 차단 버그 수정은 `29-schema-chunk-ref-id-truncation-fix.md`.
+- 상태: 측정 완료(developer). 설계는 `27-search-quality-eval-real-corpus-design.md`, 색인 차단 버그 수정은 `28-schema-chunk-ref-id-truncation-fix.md`.
 - 실행: `uv run python tests/fixtures/corpus_eval/run_corpus_eval.py --strategy both`
 - 코퍼스: `tests/fixtures/corpus_eval/`에 프리즈(§4 매니페스트, 핀 SHA) — Stripe 589 엔드포인트, GitHub 1220 엔드포인트.
 - `is_semantic: True`(로컬 e5 모델 정상 동작 확인).
@@ -16,7 +16,7 @@
 | fallback | 10% | 20% | 30% | 40% | 0.183 | 0.235 |
 | rrf | 10% | 30% | 35% | 45% | 0.200 | 0.259 |
 
-synthetic 20-엔드포인트 하네스(`rrf_eval`) 대비 큰 폭 하락 — doc/28 §1.2가 예견한 대로, 589~1220개 규모 실 코퍼스에서 지표가 포화되지 않고 실제 변별력을 보인다.
+synthetic 20-엔드포인트 하네스(`rrf_eval`) 대비 큰 폭 하락 — doc/27 §1.2가 예견한 대로, 589~1220개 규모 실 코퍼스에서 지표가 포화되지 않고 실제 변별력을 보인다.
 
 ## 2. 카테고리별 분해 (Recall@3 / MRR)
 
@@ -45,12 +45,12 @@ synthetic 20-엔드포인트 하네스(`rrf_eval`) 대비 큰 폭 하락 — doc
 
 ## 4. 원 색인 차단 버그 (참고)
 
-최초 실행 시 Stripe 스펙 등록이 `StringDataRightTruncation`으로 크래시(schema 컴포넌트명 최대 135자가 `chunk.ref_id`(64자)에 그대로 들어감). `29-schema-chunk-ref-id-truncation-fix.md` 판정에 따라 근본 수정(schema 청크 ref_id를 바운드 id로 교체) 후 재실행 — 위 결과는 수정 반영 후 값이다. endpoint 청크만 채점 대상이라 이 수정은 doc/28 결과 자체에는 영향 없음(§4, 판정문 그대로 확인).
+최초 실행 시 Stripe 스펙 등록이 `StringDataRightTruncation`으로 크래시(schema 컴포넌트명 최대 135자가 `chunk.ref_id`(64자)에 그대로 들어감). `28-schema-chunk-ref-id-truncation-fix.md` 판정에 따라 근본 수정(schema 청크 ref_id를 바운드 id로 교체) 후 재실행 — 위 결과는 수정 반영 후 값이다. endpoint 청크만 채점 대상이라 이 수정은 doc/27 결과 자체에는 영향 없음(§4, 판정문 그대로 확인).
 
 ## 5. 시사점 (lead/architect 판단 필요 항목)
 
 1. **C2 교차언어 recall 붕괴**는 synthetic 하네스에서 보이지 않던 문제 — 실 코퍼스 규모에서만 드러남. multilingual-e5-small의 한/영 교차 임베딩 품질 재검토가 필요할 수 있음.
-2. **C7 truncation 미검출**은 doc/26(긴 섹션 truncation) 논지가 엔드포인트 청크에도 적용됨을 실측으로 확인 — 엔드포인트는 sub-chunking 대상이 아니므로(doc/28 §6 카테고리 의도) 별도 대응이 필요하면 새 설계 검토 대상.
+2. **C7 truncation 미검출**은 doc/26(긴 섹션 truncation) 논지가 엔드포인트 청크에도 적용됨을 실측으로 확인 — 엔드포인트는 sub-chunking 대상이 아니므로(doc/27 §6 카테고리 의도) 별도 대응이 필요하면 새 설계 검토 대상.
 3. RRF 회귀 2건은 표본이 작아 결론 보류 — 향후 질의셋 확장 시 재확인 권장.
 
 ## 6. 재현
@@ -255,7 +255,7 @@ C2 카테고리만 보면:
 
 4. **교차언어(C2) 오염 주의**: q18·q19·q20 질의문은 모두 한글이다. 즉 C7의 관측
    실패는 request body 누락과 §7의 KO→EN 교차언어 붕괴가 **곱해진** 값이다. 설계
-   의도(doc/28 §6)는 C7로 "엔드포인트 청크 truncation"을 노출하려 했으나, 실제 질의가
+   의도(doc/27 §6)는 C7로 "엔드포인트 청크 truncation"을 노출하려 했으나, 실제 질의가
    한글이라 truncation을 격리 측정하지 못했고 — 그리고 위 1~3으로 truncation은
    애초에 병목이 아니었다. doc/26 truncation 테마가 엔드포인트에 실측 확인됐다는
    §5-2 문장은 이 절로 정정한다.
@@ -285,12 +285,12 @@ customer, ...`. `build_schema_chunk_text`(`chunk_builder.py:70-73`)가 이미 �
   프로퍼티가 인라인이라 커버되므로 1차 범위에서 $ref 해소는 하지 않는다(YAGNI —
   필요 시 후속). 이 천장은 구현 시 주석으로 명시.
 
-이 방향은 청크당 1개(=엔드포인트 ref_id 1개) 불변(doc/28 §3.1 ground-truth 안정성
+이 방향은 청크당 1개(=엔드포인트 ref_id 1개) 불변(doc/27 §3.1 ground-truth 안정성
 근거)을 **깨지 않는다** — 기존 단일 청크 텍스트를 늘릴 뿐이다.
 
 #### 조건부 보류 — 2차: 엔드포인트도 sub-chunking 대상으로 확장 (전제 뒤집기)
 
-doc/28 §3.1·§6은 "엔드포인트는 sub-chunking 대상이 아니다(=정확히 청크 1개)"를
+doc/27 §3.1·§6은 "엔드포인트는 sub-chunking 대상이 아니다(=정확히 청크 1개)"를
 ground-truth 불변의 근거로 삼았다. **이 전제는 지금 뒤집지 않고, 1차 재측정 뒤로
 게이트한다.** 근거:
 
@@ -299,7 +299,7 @@ ground-truth 불변의 근거로 삼았다. **이 전제는 지금 뒤집지 않
   급 대형 body 엔드포인트가 480 상한을 **처음으로** 넘길 수 있다. 그때 비로소
   "엔드포인트 청크도 480 초과 시 `build_section_chunks` 기계로 분할" 확장이
   정당해진다(섹션 sub-chunking 배선 재사용).
-- 단 이 확장은 ref_id 1:N 청크가 되어 doc/28 §3.1 불변을 깬다. 채점은 `(method,path)`
+- 단 이 확장은 ref_id 1:N 청크가 되어 doc/27 §3.1 불변을 깬다. 채점은 `(method,path)`
   단위라 여전히 안전하나(ref_id 최초 일치), 그 트레이드오프를 지불할지는 실측
   overflow 건수를 본 뒤 결정한다.
 
@@ -317,9 +317,9 @@ ground-truth 불변의 근거로 삼았다. **이 전제는 지금 뒤집지 않
 
 body 필드를 별도 `chunk_type`으로 쪼개 색인하는 안. 1차(단일 청크에 인라인)가 같은
 발견성을 더 싸게 달성한다:
-- 청크 수·색인 비용 증가, 그리고 엔드포인트 ref_id 1:N → doc/28 §3.1 불변 파손을
+- 청크 수·색인 비용 증가, 그리고 엔드포인트 ref_id 1:N → doc/27 §3.1 불변 파손을
   1차 없이도 즉시 유발.
-- body 필드가 별도 청크로 분리되면 검색 필터(`chunk_type=="endpoint"`, doc/28 §1.3)에
+- body 필드가 별도 청크로 분리되면 검색 필터(`chunk_type=="endpoint"`, doc/27 §1.3)에
   새 타입 추가 배선까지 파생 — 레버리지 대비 표면적이 크다.
 
 인라인이 overflow할 만큼 커지는 경우는 2차(sub-chunking)로 흡수되므로 4차의 고유
@@ -436,7 +436,7 @@ a charge`, q19→`set automatic payment methods on a payment intent`을 `queries
    상한을 넘긴다. body 필드 리스트를 쪼개는 sub-chunking은 description-driven
    overflow에 **틀린 도구**다(45건의 driver 분포는 §10.3에서 분리 안 됨).
 4. **2차 비용이 실재한다.** 엔드포인트 청크 1:N은 `ref_id` = 정확히 청크 1개
-   불변(doc/28 §3.1, ground-truth 안정성 근거)을 깨고 색인 청크 수·검색 융합
+   불변(doc/27 §3.1, ground-truth 안정성 근거)을 깨고 색인 청크 수·검색 융합
    복잡도를 늘린다. 측정된 이득 0인 상태에서 선지불 안 함(YAGNI).
 
 ### 11.2. 채택 — 저비용 하드닝: 청크 필드 순서 재배치
@@ -470,7 +470,7 @@ description-길이)**를 먼저 산출해 도구를 고른다:
 `header / Params / Body / Tags / description / Responses`로 재배치했다.
 docstring 예시·근거 설명도 순서에 맞게 갱신.
 
-- 단일 청크 내 필드 재배치라 `ref_id` 1:1 불변은 그대로 유지(§9.2·doc/28 §3.1).
+- 단일 청크 내 필드 재배치라 `ref_id` 1:1 불변은 그대로 유지(§9.2·doc/27 §3.1).
 - 신규 단위 테스트(`test_endpoint_chunk_text_places_structured_fields_before_description`)로
   header 다음 Params→Body가 description보다 먼저 오는지 확인 — RED 확인 후 구현, GREEN.
 - 기존 단위 테스트는 전부 `in text`(포함 여부) 방식이라 순서에 의존하지 않아 갱신 불필요했음.
@@ -504,7 +504,7 @@ C7처럼 방치된 저성능 카테고리가 있는가에 대한 판정:
 
 - **C4-흔한토큰범람(R@3 0%, MRR 0.000, n=2)** — 유일하게 손대지 않은 0% 카테고리다.
   단, C7과 성격이 다르다. C7은 "색인 누락"이라는 **고칠 수 있는 결함**이었으나(§9.1),
-  C4는 doc/28 §6 의도상 **적대적(adversarial) 카테고리** — 흔한 토큰이 대량 매치를
+  C4는 doc/27 §6 의도상 **적대적(adversarial) 카테고리** — 흔한 토큰이 대량 매치를
   유발해 정답을 묻는 상황을 일부러 만든 것이다. 근본 원인 미분석 상태지만, n=2에
   적대적 설계라 C7급 딥다이브를 선지불할 근거가 없다(YAGNI). **판정: 질의셋 확장
   라운드로 게이트 — n을 늘려 실패 패턴이 재현되면 그때 원인 분리.** 지금은 방치가

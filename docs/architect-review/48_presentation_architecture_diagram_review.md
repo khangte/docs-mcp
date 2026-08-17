@@ -1,4 +1,4 @@
-# 52. 발표용 아키텍처 다이어그램 검토
+# 48. 발표용 아키텍처 다이어그램 검토
 
 - 대상: 사용자가 제시한 발표 슬라이드용 아키텍처 그림(원본 이미지는 첨부 형태로만 존재, 파일 없음)
 - 검토 기준: `ARCHITECTURE.md` §2·§5·§6, `app/mcp/tools/`, `app/services/documents/`, `app/scripts/refresh_documents.py`, `docs/architecture-overview.html` "전체 그림"

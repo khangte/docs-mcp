@@ -1,9 +1,9 @@
-# 31. 배치 자동화 적용 대상 특정 및 설계 — 검색품질 평가 재측정 배치
+# 30. 배치 자동화 적용 대상 특정 및 설계 — 검색품질 평가 재측정 배치
 
 - 작성: architect
 - 요청: 사용자 "배치 자동화를 적절하게 적용해야돼. 어떻게 처리하면 좋을지 검토해줘." (대상 미지정)
-- 선행 문서: `docs/architect-review/28-search-quality-eval-real-corpus-design.md`,
-  `docs/architect-review/30-search-quality-eval-real-corpus-results.md` §12~14
+- 선행 문서: `docs/architect-review/27-search-quality-eval-real-corpus-design.md`,
+  `docs/architect-review/29-search-quality-eval-real-corpus-results.md` §12~14
 - 대상 코드: `tests/fixtures/corpus_eval/run_corpus_eval.py`, `tests/fixtures/rrf_eval/`
 
 ---
@@ -15,7 +15,7 @@
 
 | 후보                     | 실체                                                          | 반복성                                                              | 판정               |
 | ------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------ |
-| (a) 검색품질 평가 재측정 | `tests/fixtures/corpus_eval/run_corpus_eval.py`               | doc/30 §8.1·§10.2·§11.4·§13에서 최소 4라운드 수동 실행, 결과 손전사 | **자동화 대상**    |
+| (a) 검색품질 평가 재측정 | `tests/fixtures/corpus_eval/run_corpus_eval.py`               | doc/29 §8.1·§10.2·§11.4·§13에서 최소 4라운드 수동 실행, 결과 손전사 | **자동화 대상**    |
 | (b) 협업문서 메타 동기화 | `refresh_index` MCP 도구 → `document_index_service.refresh()` | 클라이언트가 필요 시 호출                                           | 자동화 부적합(2절) |
 | (c) 재임베딩             | `app/scripts/reembed.py`                                      | 임베딩 모델·차원 교체 시 1회성                                      | 대상 아님          |
 | (d) 개발 하네스          | `harness/` (planner·generator·evaluator)                      | 개발 프로세스 문서, 실행 배치 아님                                  | 대상 아님          |
@@ -25,7 +25,7 @@
 근거는 "반복이 실제로 일어났고, 그 반복이 실제로 사고를 냈다"는 점이다.
 
 - 라운드마다 사람이 두 번 실행하고(콜드 / `--with-variants`), stdout 마크다운을 문서로 옮겼다.
-- doc/30 §12.4가 지적한 "§8.1·§10.2가 변형 조건을 서로 다르게 섞어 **비교 축이 흐트러졌다**"는
+- doc/29 §12.4가 지적한 "§8.1·§10.2가 변형 조건을 서로 다르게 섞어 **비교 축이 흐트러졌다**"는
   것은 절차 실수가 아니라 **조건 축이 실행 단위 밖에 있어서 생긴 구조적 결함**이다.
 - §13.3의 신규 회귀(`get user information`) 1건은 사람이 표를 눈으로 대조해 발견했다.
   라운드 간 자동 비교가 없으므로 다음엔 놓쳐도 아무도 모른다.
@@ -50,7 +50,7 @@
 
 ## 3. 현행 (a) 배치의 수동 비용 — 무엇을 없앨 것인가
 
-`run_corpus_eval.py`를 doc/30 §13 절차대로 돌리면 사람이 하는 일은 다음 5가지다.
+`run_corpus_eval.py`를 doc/29 §13 절차대로 돌리면 사람이 하는 일은 다음 5가지다.
 
 1. **프로세스 2회 실행.** 조건 A(콜드) / B(변형)가 별개 실행이라 **temp DB 생성 + 20MB 스펙
    색인 + 전량 로컬 임베딩을 두 번 지불**한다. 정작 `--with-variants`는 질의 시점 옵션

@@ -1,4 +1,4 @@
-# 48. 포트폴리오 문서 리뷰 판정 — 헤드라인 지표 반증분 반영, 타입 전용 임포트 강제
+# 45. 포트폴리오 문서 리뷰 판정 — 헤드라인 지표 반증분 반영, 타입 전용 임포트 강제
 
 - 작성: architect
 - 리뷰 출처: reviewer (`docs/architecture-overview.html`, `docs/architecture-detailed.html`)
@@ -18,10 +18,10 @@ reviewer 지적대로다. 두 문서의 헤드라인 통계는 `09-search-qualit
 | 출처 | 코퍼스 | Recall@1 | Recall@3 | Recall@10 | MRR |
 |---|---|---|---|---|---|
 | doc/09 (합성) | 엔드포인트 20개 | 68% | **88%** | **95%** | 0.788 |
-| doc/30 §1 (실 코퍼스, stale) | Stripe 589 + GitHub 1220 | 10% | 30% | 45% | 0.200 |
-| doc/30 §13.1 (실 코퍼스, **마감 재측정**) | 동일 | 15% | **25%** | **50%** | 0.248 |
+| doc/29 §1 (실 코퍼스, stale) | Stripe 589 + GitHub 1220 | 10% | 30% | 45% | 0.200 |
+| doc/29 §13.1 (실 코퍼스, **마감 재측정**) | 동일 | 15% | **25%** | **50%** | 0.248 |
 
-doc/30 §1 본문이 직접 명시한다 — "synthetic 20-엔드포인트 하네스 대비 큰 폭 하락 …
+doc/29 §1 본문이 직접 명시한다 — "synthetic 20-엔드포인트 하네스 대비 큰 폭 하락 …
 589~1220개 규모 실 코퍼스에서 지표가 포화되지 않고 실제 변별력을 보인다."
 
 즉 88/95%는 **성능 수치가 아니라 벤치마크가 포화됐다는 증거**였고, 그 사실을 이 저장소가
@@ -76,7 +76,7 @@ reviewer가 §1(20~30% / 40~50%)을 인용했는데, §1은 문서 본문에 `st
 reviewer 지적이 맞다. `app/services/documents/registered_resync.py:21` 은 평범한 런타임
 임포트다. 반면 문서 인셋은 "타입 전용 역참조 / 런타임 결합이 없다"고 적었다.
 
-doc/47 §2-b에서 내가 쓴 근거 자체는 정확했다 — `app/mcp/types.py` 는 `typing` 만
+doc/44 §2-b에서 내가 쓴 근거 자체는 정확했다 — `app/mcp/types.py` 는 `typing` 만
 임포트하는 leaf 모듈이라 이걸 끌어와도 `fastmcp` 가 딸려오지 않는다. 하지만 **다이어그램의
 짧은 라벨로 압축되면서** "임포트가 런타임에 일어나지 않는다"로 읽히게 됐다. 압축이 만든
 과장이고, 문서 잘못이다.
@@ -109,7 +109,7 @@ if TYPE_CHECKING:
 
 - 기존 `from app.mcp.types import RegisteredResyncResult`(21행) 를 위 형태로 옮긴다.
 - 모듈 docstring 의 유지 근거 문장에 "`TYPE_CHECKING` 가드로 런타임 임포트는 없다"를
-  더한다(기존 doc/47 §2-b 참조는 유지).
+  더한다(기존 doc/44 §2-b 참조는 유지).
 - 호출부·테스트 변경 없음. `app/mcp/tools/sources.py`, `app/scripts/refresh_documents.py`
   는 이 타입을 직접 참조하지 않는다.
 - 확인: `uv run python -c "import app.services.documents.registered_resync"` 가
@@ -135,4 +135,4 @@ developer 수정이 들어오면 문서와 코드가 일치한다. **수정 전�
 `docs/architect-review/09-search-quality-post-rrf.md` 는 여전히 88~95%를 근거로 P2/P3
 보류를 판단하고 있다. 그 판단이 실 코퍼스 값에서도 유지되는지는 별건이고, 검토문서는
 시점 기록이라 소급 수정 대상이 아니다. 다만 **다음에 검색 품질 우선순위를 다시 잡을 때는
-doc/09가 아니라 doc/30 §13을 기준선으로 삼아야 한다** — lead 판단이 필요하면 별도로 올린다.
+doc/09가 아니라 doc/29 §13을 기준선으로 삼아야 한다** — lead 판단이 필요하면 별도로 올린다.

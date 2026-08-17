@@ -1,9 +1,9 @@
-# 32. refresh_index 배치 자동화 설계 — 서버 밖 상주 러너
+# 31. refresh_index 배치 자동화 설계 — 서버 밖 상주 러너
 
 - 작성: architect
 - 요청: lead — "대상은 검색품질 평가 배치가 아니라 `refresh_index`(문서 재색인) 배치다.
   MCP 서버 내부 스케줄링 반려는 유지하되 '서버 밖 상주 러너' 방향으로 실제 설계를 진행하라."
-- 선행 판정: `docs/architect-review/31-eval-batch-automation.md` §2 (내부 스케줄러 반려)
+- 선행 판정: `docs/architect-review/30-eval-batch-automation.md` §2 (내부 스케줄러 반려)
 - 대상 코드: `app/mcp/tools/sources.py:34`(`refresh_index`),
   `app/services/documents/document_index_service.py`, `app/services/ingestor/sync_service.py:137`(`resync`)
 
@@ -11,7 +11,7 @@
 
 ## 0. 전제 — 무엇이 유지되고 무엇이 바뀌나
 
-doc/31 §2의 반려는 그대로 유지한다: **MCP stdio 서버 프로세스 안에 크론·APScheduler를 두지
+doc/30 §2의 반려는 그대로 유지한다: **MCP stdio 서버 프로세스 안에 크론·APScheduler를 두지
 않는다**(클라이언트가 세션마다 띄우는 단명 프로세스라 중복 기동·리더 선출 문제가 생기고,
 클라이언트가 서버를 내리면 스케줄도 죽어 "주기 실행" 계약을 지킬 수 없다).
 
@@ -237,7 +237,7 @@ cron (대안):
 ## 5. 하지 않을 것 (명시)
 
 - **웹훅 수신 서버** — 공개 HTTPS·채널 갱신 크론을 새로 들이는 값어치가 없다(2.1).
-- **앱 내부 스케줄러/무한 루프** — doc/31 §2 판정 유지 + OS 스케줄러 재구현(3.1).
+- **앱 내부 스케줄러/무한 루프** — doc/30 §2 판정 유지 + OS 스케줄러 재구현(3.1).
 - **갱신 주기 설정값(`Settings` 필드)** — 스케줄 소유권을 이중화한다(3.1).
 - **증분 목록 조회** — 삭제 감지를 파괴한다(2.1).
 - **배치 실행 이력 테이블·대시보드** — 로그와 종료코드로 충분하고, 문서 재색인 이력은 이미

@@ -1,4 +1,4 @@
-# 28. 검색 품질 평가 설계 — 실 코퍼스 기반 질의셋 + recall@k / MRR 방법론
+# 27. 검색 품질 평가 설계 — 실 코퍼스 기반 질의셋 + recall@k / MRR 방법론
 
 - 상태: 설계 확정 + 코퍼스/질의 리터럴 확정(구현은 developer)
 - 관련: `tests/fixtures/rrf_eval/`(기존 synthetic 하네스), `07-search-rrf-reevaluation.md`, `09-search-quality-post-rrf.md`, `26-pdf-docx-...`(번들 검토 대상)
@@ -48,7 +48,7 @@
 - **청킹 불변성**: 엔드포인트는 sub-chunking 대상이 아니다(sub-chunking은 섹션 전용, `chunk_builder.py`). 엔드포인트 = 정확히 청크 1개, `ref_id = endpoint_id` 고정. → `(method, path)` 라벨은 재청킹·재색인에도 안 깨진다. `chunk_id`는 라벨에 절대 기록하지 않는다(생성 id, 불안정).
 - 문서 2건 이상이라 동일 path 충돌 대비 `document` 키를 병기(Stripe는 `/v1/...` 프리픽스라 GitHub와 충돌 거의 없음).
 
-> 참고: doc/28 초안의 "document 1차 / section locator 2차"는 **다-문서 markdown 코퍼스**를 위한 설계였다. 실 코퍼스가 대형 OpenAPI 2건으로 확정되며 정답 단위는 기존 하네스와 동일한 `(method, path)`로 수렴 — 재사용이 오히려 커졌다.
+> 참고: doc/27 초안의 "document 1차 / section locator 2차"는 **다-문서 markdown 코퍼스**를 위한 설계였다. 실 코퍼스가 대형 OpenAPI 2건으로 확정되며 정답 단위는 기존 하네스와 동일한 `(method, path)`로 수렴 — 재사용이 오히려 커졌다.
 
 ### 3.2 정답 라벨 스키마 (`queries.json`)
 
@@ -158,15 +158,15 @@ uv run python tests/fixtures/corpus_eval/run_corpus_eval.py [--strategy rrf|fall
 
 ## 8. doc/26 번들 검토 — 결론: **분리(번들하지 않음)**
 
-사용자 요청: 공개 API 문서 중 multi-page PDF/DOCX가 있으면 코퍼스에 넣어 doc/28 질의 다양성 + doc/26 게이트 확증을 한 번에.
+사용자 요청: 공개 API 문서 중 multi-page PDF/DOCX가 있으면 코퍼스에 넣어 doc/27 질의 다양성 + doc/26 게이트 확증을 한 번에.
 
 **판정: 분리한다.** 근거(구조적, 취향 아님):
 
-1. **검색면 불일치.** doc/28 평가면 A는 `chunk_type=="endpoint"`만 반환. PDF/DOCX는 `section` 청크만 만들고 **검색에서 제외**(§1.3). → 코퍼스에 PDF를 넣어도 doc/28의 Recall/MRR에 **기여 0**(조회 자체가 안 됨). "질의 다양성 확보" 효과가 원리적으로 없다.
+1. **검색면 불일치.** doc/27 평가면 A는 `chunk_type=="endpoint"`만 반환. PDF/DOCX는 `section` 청크만 만들고 **검색에서 제외**(§1.3). → 코퍼스에 PDF를 넣어도 doc/28의 Recall/MRR에 **기여 0**(조회 자체가 안 됨). "질의 다양성 확보" 효과가 원리적으로 없다.
 2. **측정 종류가 다르다.** doc/26 확증은 *검색 품질*이 아니라 *섹션 길이 truncation* 진단이다 — 긴 PDF 1건 등록 후 `app/scripts/diagnose_long_sections.py`(Phase0 재실행)로 섹션 토큰 길이가 결정론적으로 512 초과함을 보이는 색인단 진단. 질의셋·정답·recall이 필요 없다.
 3. **결합이 제약만 는다.** doc/26은 "공개 API 문서"일 필요가 전혀 없다 — 아무 실무급 다중페이지 PDF면 된다. 공개 API 스펙을 굳이 PDF로 구하려는 건(Stripe/GitHub는 canonical PDF 스펙을 배포하지도 않음) 이득 없는 제약이다.
 
-**따라서**: doc/28 코퍼스 = Stripe/GitHub OpenAPI(§4)로 확정. doc/26 cheap 확증은 **독립 트랙**으로 진행 — developer가 임의의 실무급 다중페이지 PDF 1건 등록 + `diagnose_long_sections.py` 재실행. 두 작업은 산출물·측정·정답체계가 겹치지 않는다.
+**따라서**: doc/27 코퍼스 = Stripe/GitHub OpenAPI(§4)로 확정. doc/26 cheap 확증은 **독립 트랙**으로 진행 — developer가 임의의 실무급 다중페이지 PDF 1건 등록 + `diagnose_long_sections.py` 재실행. 두 작업은 산출물·측정·정답체계가 겹치지 않는다.
 
 ## 9. 열린 의존성 / lead 확인
 

@@ -2,8 +2,8 @@
 
 - 일시: 2026-08-15
 - 작성: architect
-- 선행: `docs/architect-review/40_doc36_step13_legacy_fetch_removal_gate.md`,
-  `docs/architect-review/36_drive_notion_embedding_migration_and_refresh_strategy.md` §1-7
+- 선행: `docs/architect-review/38_doc36_step13_legacy_fetch_removal_gate.md`,
+  `docs/architect-review/35_drive_notion_embedding_migration_and_refresh_strategy.md` §1-7
 - 증상: `--index-bodies` 백필 실행 결과 `synced=274 added=0 updated=0 removed=0`,
   `app.chunk` 0건 그대로.
 
@@ -19,7 +19,7 @@ if index_bodies and needs_body_index:
 ```
 
 `needs_body_index` 는 신규 행이거나 `_apply_changes` 가 True 를 준 경우다. `_apply_changes`
-는 `modified_at`/`title`/`url` 이 하나라도 바뀐 경우만 True 다(`:428`). 274건은 doc36
+는 `modified_at`/`title`/`url` 이 하나라도 바뀐 경우만 True 다(`:428`). 274건은 doc35
 Phase1+2 시점에 이미 메타 동기화가 끝나 있어 원본에서 아무것도 안 바뀌었고, 그래서
 `index_bodies=True` 를 줘도 `_index_body` 가 한 번도 호출되지 않는다.
 
@@ -39,7 +39,7 @@ Phase1+2 시점에 이미 메타 동기화가 끝나 있어 원본에서 아무�
 ## 3. `--force` 재사용도 반려
 
 `refresh_documents.py` 의 `--force` 는 `resync_registered_documents(force=...)` 로 가는
-**등록형 재동기화 축** 인자다(doc32 의 축 A/B 분리). 여기에 본문 백필을 얹으면 (a) 의미가
+**등록형 재동기화 축** 인자다(doc31 의 축 A/B 분리). 여기에 본문 백필을 얹으면 (a) 의미가
 다른 두 축이 한 플래그에 묶이고, (b) 백필이 "운영자가 기억해서 켜야 하는 의식"이 된다 —
 §2 의 구멍은 운영자가 켜는 걸 잊는 순간 그대로 남는다. (c) 매 실행마다 274건 전량
 재fetch 라 게이트의 존재 이유(rate limit 방어)를 정면으로 없앤다.
@@ -84,12 +84,12 @@ if index_bodies and (needs_body_index or row.document_id is None):
 
 ## 6. 하지 않는 것
 
-- `_SourceCounts` 에 본문 색인 카운터 추가 — 검증은 doc40 §6-2 대로 SQL(`app.chunk` 의
+- `_SourceCounts` 에 본문 색인 카운터 추가 — 검증은 doc38 §6-2 대로 SQL(`app.chunk` 의
   `section` 건수, `document_meta.document_id` 채워진 비율)로 한다. 집계 필드를 늘리면
   `RefreshResult`·MCP 도구 응답까지 파급된다. 필요해지면 그때 추가한다.
 - `--force` 의미 변경, 신규 CLI 플래그, 별도 백필 스크립트 (§2·§3).
 
-## 7. doc36 13번 게이트에 미치는 영향
+## 7. doc35 13번 게이트에 미치는 영향
 
-doc40 §6 의 순서는 유지된다. (1) 이 수정 → (2) `--index-bodies` 재실행으로 274건 백필 →
+doc38 §6 의 순서는 유지된다. (1) 이 수정 → (2) `--index-bodies` 재실행으로 274건 백필 →
 색인률 확인 → (3) `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY` 기본값 전환 → (4) 구경로 삭제.

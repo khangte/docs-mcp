@@ -1,7 +1,7 @@
-# 29. schema 청크 ref_id 트렁케이션 크래시 — 근본 수정 판정
+# 28. schema 청크 ref_id 트렁케이션 크래시 — 근본 수정 판정
 
 - 상태: 판정 확정 — 수정은 developer(app 코드), reviewer 검토.
-- 계기: developer가 doc/28 실 코퍼스 색인 중 발견. Stripe `spec3.json` 등록 시 `sync_service.register` 크래시 — `StringDataRightTruncation`. schema 컴포넌트 1440개 중 106개 이름이 64자 초과(최대 135자), `chunk.ref_id`(String(64)) INSERT 실패.
+- 계기: developer가 doc/27 실 코퍼스 색인 중 발견. Stripe `spec3.json` 등록 시 `sync_service.register` 크래시 — `StringDataRightTruncation`. schema 컴포넌트 1440개 중 106개 이름이 64자 초과(최대 135자), `chunk.ref_id`(String(64)) INSERT 실패.
 - 참고: `app/services/indexer/chunk_builder.py:114-121`, `app/services/indexer/indexer_service.py:79-87`, `app/models/chunk.py:57`, `app/models/openapi.py:171-173`, `app/repositories/chunk_repository.py:221`
 
 ## 0. 결론
@@ -30,7 +30,7 @@ developer가 제시한 A(컬럼 확장 마이그레이션)/B(해시·트렁케�
 - **B(해시/트렁케이트)**: 트렁케이트는 64자 프리픽스 충돌 위험, 임의 해시는 이미 있는 결정적 id를 버리는 것. 조인 대상(`ApiSchema.id`)과 어긋나 향후 schema 검색 배선(doc/24 C-2) 때 깨진다.
 - **C(eval에서 schema 청크 스킵)**: doc/28은 안 막지만 **프로덕션 버그를 방치**한다. `register_document`는 문서화된 1급 경로(README §C)라 실사용자가 Stripe급 실 스펙을 넣으면 동일 크래시 — HIGH 심각도. eval 전용 스킵 플래그는 버려질 코드.
 
-근본 수정이 **더 작고**(맵 하나 배선) 세 문제를 한 번에 없앤다: 크래시 + 조인 규약 이탈 + doc/28 차단.
+근본 수정이 **더 작고**(맵 하나 배선) 세 문제를 한 번에 없앤다: 크래시 + 조인 규약 이탈 + doc/27 차단.
 
 ## 3. 수정 지시 (developer)
 
@@ -40,10 +40,10 @@ developer가 제시한 A(컬럼 확장 마이그레이션)/B(해시·트렁케�
 4. `BuiltChunk.ref_id` 주석(`chunk_builder.py:29`)을 "schema_name" → "schema_id"로 정정.
 5. 테스트(RED→GREEN): 스키마명 64자 초과(예: 100자) 문서 등록 → 크래시 없음 + schema 청크 `ref_id == f"{doc_id}:schema:{idx}"`(== `ApiSchema.id`) 단언. 기존 색인 데이터 없음(DB 공백)이라 재색인 이슈 없음.
 
-## 4. doc/28 영향
+## 4. doc/27 영향
 
-- 이 수정으로 Stripe/GitHub 스펙 등록 차단 해제 → doc/28 코퍼스 색인 정상 진행. eval은 endpoint 청크만 채점하므로 schema ref_id 변경과 **무관**(결과 불변).
-- doc/28 스코프·정답 단위·질의셋 변경 없음.
+- 이 수정으로 Stripe/GitHub 스펙 등록 차단 해제 → doc/27 코퍼스 색인 정상 진행. eval은 endpoint 청크만 채점하므로 schema ref_id 변경과 **무관**(결과 불변).
+- doc/27 스코프·정답 단위·질의셋 변경 없음.
 
 ## 5. 심각도 / lead 보고 사항
 

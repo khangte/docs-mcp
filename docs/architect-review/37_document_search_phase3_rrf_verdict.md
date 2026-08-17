@@ -1,10 +1,10 @@
-# doc36 Phase3 12번 — DocumentSearchService 2단계 교체 구조 판정
+# doc35 Phase3 12번 — DocumentSearchService 2단계 교체 구조 판정
 
 - 일시: 2026-08-14
 - 작성: architect
-- 선행: `docs/architect-review/36_drive_notion_embedding_migration_and_refresh_strategy.md` §1 Phase3,
+- 선행: `docs/architect-review/35_drive_notion_embedding_migration_and_refresh_strategy.md` §1 Phase3,
   `docs/architect-review/07-search-rrf-reevaluation.md`,
-  `docs/architect-review/35_drive_notion_no_embedding_rationale.md`
+  `docs/architect-review/34_drive_notion_no_embedding_rationale.md`
 - 질문(developer): 2단계를 (A) 후보 문서별 스코프 조회 + 기존 가중합 유지로 갈지,
   (B) `EndpointCandidateSearch` 와 동형인 RRF 융합으로 갈지.
 
@@ -22,7 +22,7 @@
 **유일한 후보 공급원**으로 남긴다. 그 결과 본문 색인은 "이미 제목으로 찾은 문서의
 재정렬"에만 쓰인다.
 
-그런데 본문 임베딩 도입의 근거는 `35_drive_notion_no_embedding_rationale.md` 이후
+그런데 본문 임베딩 도입의 근거는 `34_drive_notion_no_embedding_rationale.md` 이후
 줄곧 **"제목에는 안 걸리고 본문에만 강하게 걸리는 문서"** 를 찾는 것이었다
 (`document_search_service.py:55-60` 의 오버스캔 주석도 같은 문제를 fetch 예산으로
 완화하려던 흔적이다). (A) 에서 그런 문서는 여전히 1단계에서 탈락해 0건이다.
@@ -100,12 +100,12 @@ title arm 의 키도 같은 공간이어야 하므로
 ### 2.4 스니펫
 
 승자 청크 text 로 `_build_snippet` 재사용 — **동의**. 라이브 fetch 는 검색 경로에서
-완전히 제거한다(`get_document` 에만 남긴다, doc36 13번). 세부:
+완전히 제거한다(`get_document` 에만 남긴다, doc35 13번). 세부:
 
 - 청크 arm 에 등장한 문서: 그 문서의 **최상위 히트 청크 1건**의 text 로 스니펫.
   청크 text 는 chunk_id 배치 조회 1회로 가져온다(문서당 조회 금지).
 - title arm 단독 문서: 기존 `_fallback_snippet(row, query)`. fetch 하지 않는다.
-- doc36 Phase0-2 가 예고한 유일한 겉면 계약 변경이 여기서 발생한다(스니펫 출처가
+- doc35 Phase0-2 가 예고한 유일한 겉면 계약 변경이 여기서 발생한다(스니펫 출처가
   동기화 시점 본문). `DocumentSearchItem` 에 `snippet_as_of: datetime | None` 를
   추가해 명시한다(title arm 단독 문서는 None — 스니펫이 본문 발췌가 아니므로).
 
@@ -140,7 +140,7 @@ title arm 의 키도 같은 공간이어야 하므로
 
 ## 3. developer 지시 사항
 
-1. 11번(`chunk_type` 인자 승격)은 doc36 대로. 기본값 `"endpoint"` 를 유지해 기존
+1. 11번(`chunk_type` 인자 승격)은 doc35 대로. 기본값 `"endpoint"` 를 유지해 기존
    호출부는 무변경.
 2. `reciprocal_rank_fuse` 에 3번째 arm 리스트 인자 추가(기본 빈 리스트). 기존
    시그니처·골든 테스트 무변경.
@@ -148,7 +148,7 @@ title arm 의 키도 같은 공간이어야 하므로
 4. `DocumentMetaRepository.list_by_document_ids` 추가.
 5. `DocumentSearchService` 는 `document_search_strategy` 인자를 받고, `indexed`
    일 때만 신규 경로. 기존 fetch 경로 코드는 **이번 단계에서 지우지 않는다**
-   (doc36 13번은 전환 완료 후).
+   (doc35 13번은 전환 완료 후).
 6. 테스트: (a) 제목에 질의 토큰이 전혀 없고 본문에만 있는 문서가 상위에 오는 회귀
    테스트 — 이게 Phase3 의 존재 이유다. (b) 한 문서의 여러 섹션이 히트해도 결과가
    1건으로 접히는 테스트. (c) 미색인 문서(청크 없음)가 title arm 으로 살아남는 테스트.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, httpx (Notion REST API v1), SQLAlchemy, pytest + `httpx.MockTransport`, uv
 
-**Spec:** `docs/architect-review/50_notion_nested_block_indexing_gap_and_design.md`
+**Spec:** `docs/architect-review/47_notion_nested_block_indexing_gap_and_design.md`
 
 ## Global Constraints
 

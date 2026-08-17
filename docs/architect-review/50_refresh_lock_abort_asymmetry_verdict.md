@@ -1,8 +1,8 @@
-# 54. refresh_index advisory lock — aborted 트랜잭션 비대칭 판정
+# 50. refresh_index advisory lock — aborted 트랜잭션 비대칭 판정
 
 - 작성: architect
 - 원 리뷰: reviewer(동시성 락 리뷰), 수정요청 1건
-- 관련: `docs/architect-review/53_data_flow_scenarios.md` 케이스 4, `docs/architect-review/32-refresh-index-batch-automation.md` §3.3
+- 관련: `docs/architect-review/49_data_flow_scenarios.md` 케이스 4, `docs/architect-review/31-refresh-index-batch-automation.md` §3.3
 
 ## 1. 판정 요약
 
@@ -114,5 +114,5 @@ from sqlalchemy.exc import SQLAlchemyError
 
 - 배치/MCP lock key 정합성(`733100501`/`733100502`, `refresh_lock.py:16-17`) — **문제없음, 승인.**
   키 상수를 `refresh_lock` 한 곳으로 모으고 배치가 그것을 가져다 쓰는 구조도 의도대로다.
-- 축 A/B 키 분리 유지도 정상(무거운 축 B 가 가벼운 축 A 틱을 굶기지 않게 하는 doc32 §3.3 결정).
+- 축 A/B 키 분리 유지도 정상(무거운 축 B 가 가벼운 축 A 틱을 굶기지 않게 하는 doc31 §3.3 결정).
 - 787 passed / ruff clean 보고는 그대로 인정한다. F1~F3 반영 후 재실행만 요구한다.

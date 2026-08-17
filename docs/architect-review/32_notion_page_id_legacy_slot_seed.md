@@ -1,4 +1,4 @@
-# 33. 레거시 슬롯 `DOCS_MCP_NOTION_PAGE_ID` 시드 설계
+# 32. 레거시 슬롯 `DOCS_MCP_NOTION_PAGE_ID` 시드 설계
 
 - 대상: `app/bootstrap.py::seed_default_sources()`, `.env.example`, `README.md`
 - 계기: 외부 세션 재검토 요청 — `notion_page_id` 레거시 슬롯 대칭 건
