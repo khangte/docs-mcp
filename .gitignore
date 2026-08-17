@@ -216,6 +216,7 @@ CLAUDE.md
 .claude/
 .claudeignore
 harness/
+docs/superpowers/
 
 # Gemini 
 .geminiignore
