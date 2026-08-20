@@ -1,6 +1,6 @@
 """RRF `K` 그리드 인메모리 스윕 실험 스크립트.
 
-`docs/exec_plans/search-p4-rrf-k-sweep-plan.md` 근거. 평가 픽스처(`openapi.json`)가
+`docs/exec_plans/search_p4_rrf_k_sweep_plan.md` 근거. 평가 픽스처(`openapi.json`)가
 오퍼레이션 20개뿐이라 후보폭 N은 이미 전 코퍼스를 포함(포화) — N은 스윕 불가하고
 K만 관측 가능하다(계획서 0절).
 

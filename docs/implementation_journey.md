@@ -9,7 +9,7 @@
 - 근거: 해당 구간 커밋, Alembic 마이그레이션 **12개**, `docs/exec_plans/`,
   `docs/adr/` 4건, `docs/architect-review/` 34건
 - 현재 상태 문서: 구조는 [`ARCHITECTURE.md`](../ARCHITECTURE.md), 검색 로직은
-  [`search-flow.md`](search-flow.md), 운영은 [`operations.md`](operations.md)
+  [`search_flow.md`](search_flow.md), 운영은 [`operations.md`](operations.md)
 - 초기 기획서는 [`archive/plan.md`](archive/plan.md) 에 아카이브돼 있다(현행 아님)
 
 ---
@@ -17,9 +17,9 @@
 ## 0. 시작점 — 틀만 있던 상태에서 출발했다
 
 착수 이전에도 저장소에는 골격이 있었다. 진입점과 서비스 계층 디렉터리, 그리고 방향을
-적어둔 [ADR-0001](adr/0001-storage-search-structure.md)(실시간 프록시가 아닌 저장형 검색),
-[ADR-0002](adr/0002-pgvector-hybrid-search.md)(pgvector 하이브리드 검색),
-[ADR-0003](adr/0003-read-only-mcp-boundary.md)(읽기 전용 경계) 정도다.
+적어둔 [ADR-0001](adr/0001_storage_search_structure.md)(실시간 프록시가 아닌 저장형 검색),
+[ADR-0002](adr/0002_pgvector_hybrid_search.md)(pgvector 하이브리드 검색),
+[ADR-0003](adr/0003_read_only_mcp_boundary.md)(읽기 전용 경계) 정도다.
 
 다만 **그건 결정만 적힌 틀이었고 실작업은 없는 상태였다.** 저장은 SQLite, 벡터 검색은
 프로세스 메모리에 올린 인덱스, 임베딩은 의미 유사도가 없는 결정적 해시 placeholder,
@@ -107,7 +107,7 @@
   마이그레이션 물결 계획, doc/22 는 `api_` 접두사가 스코프와 안 맞는다는 판정이다.
   스키마를 "최소로 잡고 확장"하면 필연적으로 이 정리 라운드가 따라온다는 것이
   이 프로젝트가 실제로 지불한 비용이다.
-- 개명(12번)의 여파는 문서에까지 남았다 — `search-flow.md` 가 `api_chunk`/`ApiDocument`
+- 개명(12번)의 여파는 문서에까지 남았다 — `search_flow.md` 가 `api_chunk`/`ApiDocument`
   표기를 계속 쓰고 있었고 2026-08-14 문서 대조 작업에서야 정정됐다.
 
 ---
@@ -158,7 +158,7 @@
 | 2세대 | `GeminiEmbeddingProvider` (관리형 API, 256차원) | `3fc4a17` 07-27 | 키 미설정 시 해시로 **조용히 폴백**해 벡터 검색 품질이 사라지는 운영 리스크 + 외부 비용·지연·가용성 의존 |
 | 3세대 | `LocalEmbeddingProvider` (`intfloat/multilingual-e5-small`, 384차원, CPU) | `be774dd` 08-08 | **현행** |
 
-3세대 전환 근거는 [ADR-0004](adr/0004-local-embedding-provider.md) 와 설계문서
+3세대 전환 근거는 [ADR-0004](adr/0004_local_embedding_provider.md) 와 설계문서
 [doc/05](architect-review/05_embedding_provider_local_model_design.md) 에 있다. 이 교체가
 싼 작업이 아니었다는 점이 중요하다:
 
@@ -208,7 +208,7 @@ Qdrant" 로 한 번 더 재검토됐고 다시 기각됐다(`9118686`). 같은 �
 | --- | --- | --- | --- |
 | 1차 | 20질의 | `c197ec9` 08-08 | RRF vs fallback 비교용 자체 스펙 |
 | 지표 모듈 | MRR/nDCG@10/Recall@{1,3,5,10} | `731d43c` 08-10 | 손계산 제거 |
-| 2차 | **84질의**(실패 taxonomy 8종 × 8질의 이상) | `97f3c2d` 08-10 | 계획 `exec_plans/eval-set-expansion-plan.md`. 현재 픽스처는 100질의 |
+| 2차 | **84질의**(실패 taxonomy 8종 × 8질의 이상) | `97f3c2d` 08-10 | 계획 `exec_plans/eval_set_expansion_plan.md`. 현재 픽스처는 100질의 |
 | 3차 | 실 코퍼스 20질의 (Stripe/GitHub 실제 OpenAPI) | `143478c` 08-13 | 설계 [doc/28](architect-review/27_search_quality_eval_real_corpus_design.md) |
 
 **20질의와 84질의가 다른 답을 줬다**는 것이 확장의 정당화다. 20질의에서 RRF 는 top-1

@@ -9,7 +9,7 @@
 > 현행 문서는 다음입니다:
 >
 > - 구조·레이어·MCP 도구 계약 → [`ARCHITECTURE.md`](../../ARCHITECTURE.md)
-> - 검색 로직 상세 → [`docs/search-flow.md`](../search-flow.md)
+> - 검색 로직 상세 → [`docs/search_flow.md`](../search_flow.md)
 > - 운영(등록·도구 목록·배치) → [`docs/operations.md`](../operations.md)
 > - 결정 기록 → [`docs/adr/`](../adr/)
 >

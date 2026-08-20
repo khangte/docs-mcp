@@ -1,6 +1,6 @@
 # 검색 품질 추가 개선 검토 — RRF 도입 이후 (분석)
 
-- 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md` / P5: HNSW ef_search, 커밋 `aae5728`, 실행계획 `docs/exec_plans/search-p4-p5-p6-plan.md`). **P4 완료**(K 스윕 실험, 커밋 `434c35a`, 결론 `K=60` 유지 — 강한 null result, 아래 절 참조). **P2 보류**(조건부 재검토, 아래 절 참조), **P3 보류**(착수 검토 완료 2026-08-10 — 이 도구는 후보 피더라 구속 지표가 recall@k(이미 88~95%)지 top-1이 아님, 재검토 트리거는 아래 절 참조).
+- 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval_set_expansion_plan.md` / P5: HNSW ef_search, 커밋 `aae5728`, 실행계획 `docs/exec_plans/search_p4_p5_p6_plan.md`). **P4 완료**(K 스윕 실험, 커밋 `434c35a`, 결론 `K=60` 유지 — 강한 null result, 아래 절 참조). **P2 보류**(조건부 재검토, 아래 절 참조), **P3 보류**(착수 검토 완료 2026-08-10 — 이 도구는 후보 피더라 구속 지표가 recall@k(이미 88~95%)지 top-1이 아님, 재검토 트리거는 아래 절 참조).
 - 일시: 2026-08-10
 - 작성: architect
 - 관련: `docs/architect-review/07_search_rrf_reevaluation.md`(RRF 도입·실측), `docs/architect-review/03_search_performance_improvements.md`(P1~P6), `docs/architect-review/06_vector_store_qdrant_vs_pgvector.md`

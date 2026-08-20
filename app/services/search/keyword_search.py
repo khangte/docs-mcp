@@ -51,7 +51,7 @@ class KeywordSearch:
 
         `query_variants`(호출자가 넘긴 동의어/유사 표현)는 FTS OR 후보
         필터만 넓히는 데 쓴다 — `ts_rank` 점수는 항상 원본 질의 term 만으로
-        계산한다(협업문서 검색과 동일 규약, `docs/search-flow.md` §3.1).
+        계산한다(협업문서 검색과 동일 규약, `docs/search_flow.md` §3.1).
         """
         terms = tokenize_terms(query)
         if not terms:

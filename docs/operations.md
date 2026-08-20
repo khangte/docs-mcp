@@ -132,7 +132,7 @@ Claude Desktop 의 설정 파일(`claude_desktop_config.json`)에 서버를 추�
 않으면 `refresh_index`(또는 배치)를 먼저 실행한다. 원문 전체 조회(`get_document`)는
 전략과 무관하게 항상 실시간이다.
 
-흐름 상세: [`search-flow.md`](search-flow.md) §3.
+흐름 상세: [`search_flow.md`](search_flow.md) §3.
 
 Drive/Notion 자격증명이 없으면 협업 문서 도구(`search_documents`/`get_document`/
 `refresh_index`)는 등록은 되지만 호출 시 "미구성" `IntegrationError`

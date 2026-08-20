@@ -98,7 +98,7 @@ fetch 경로를 남기고 플래그만 `fetch` 로 두는 한 회귀는 없지�
 - `_title_score` (title arm 이 계속 쓴다), `_build_snippet`/`_fallback_snippet`
 - `documents_tokenize`, `parse_version`
 
-**문서 갱신:** `docs/search-flow.md` §5·§2(2단계 fetch 서술), 모듈 docstring 상단 2단계 설명.
+**문서 갱신:** `docs/search_flow.md` §5·§2(2단계 fetch 서술), 모듈 docstring 상단 2단계 설명.
 
 ## 6. 지금 실행할 것
 

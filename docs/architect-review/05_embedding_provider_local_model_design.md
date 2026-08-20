@@ -84,7 +84,7 @@ class EmbeddingProvider(Protocol):
 
 ## 7. 문서 정리 대상(목록만 — 실제 수정은 developer 단계)
 - `README.md`, `ARCHITECTURE.md`: Gemini 언급 → 로컬 모델로 갱신.
-- `docs/adr/0002-pgvector-hybrid-search.md`: "임베딩 모델 관리" 서술이 API 전제 → **신규 ADR-0004(임베딩 프로바이더: 관리형 API → 로컬 CPU 모델) 추가**로 결정 이력을 남기고, 0002 는 소급 수정 대신 후속 참조 메모만 권장.
+- `docs/adr/0002_pgvector_hybrid_search.md`: "임베딩 모델 관리" 서술이 API 전제 → **신규 ADR-0004(임베딩 프로바이더: 관리형 API → 로컬 CPU 모델) 추가**로 결정 이력을 남기고, 0002 는 소급 수정 대신 후속 참조 메모만 권장.
 - `.env.example`(6절), `pyproject.toml`(2절).
 - `docs/architect-review/07_search_rrf_reevaluation.md`: "Gemini 키 유무"·"HashEmbeddingProvider" 서술을 "로컬 모델 활성 여부"로 갱신(RRF 게이팅 논리 자체는 `is_semantic` 기준으로 그대로 유효).
 - `docs/exec_plans/*`(vector-index-persist/SPEC, docs_mcp_expansion/*): 시점 기록물이라 소급 수정하지 않고 그대로 둔다(필요 시 상단 메모만).

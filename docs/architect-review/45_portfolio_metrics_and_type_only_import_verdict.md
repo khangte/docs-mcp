@@ -1,7 +1,7 @@
 # 45. 포트폴리오 문서 리뷰 판정 — 헤드라인 지표 반증분 반영, 타입 전용 임포트 강제
 
 - 작성: architect
-- 리뷰 출처: reviewer (`docs/architecture-overview.html`, `docs/architecture-detailed.html`)
+- 리뷰 출처: reviewer (`docs/architecture-overview.html`, `docs/architecture_detailed.html`)
 - 판정: **2건 모두 지적 타당 — 전부 수용**
   - (1) 헤드라인 지표: **문서 수정**(architect 직접 반영 완료)
   - (2) 런타임 임포트: **코드 수정 + 문서 표현 정정**(developer 지시)
@@ -36,7 +36,7 @@ reviewer가 §1(20~30% / 40~50%)을 인용했는데, §1은 문서 본문에 `st
 
 셋 다 부분적으로만 맞다. 채택안은 **문서별로 다르게** 간다.
 
-**`architecture-detailed.html` — 교체 + 전용 섹션 신설.**
+**`architecture_detailed.html` — 교체 + 전용 섹션 신설.**
 헤드라인 타일에서 품질 수치를 빼고 `1,809 평가 코퍼스 엔드포인트`(589 + 1,220)로 바꿨다.
 대신 **§5 "검색 품질 측정"** 섹션을 새로 만들어 합성값과 실 코퍼스값을 **같은 표에 나란히**
 싣고, n=20 표준오차(±11%p대)와 무너지는 축(C2 교차언어, C7 512토큰 상한)까지 적었다.

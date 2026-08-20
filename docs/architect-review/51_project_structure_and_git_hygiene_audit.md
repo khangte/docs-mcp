@@ -62,17 +62,20 @@
 
 | 파일 | 마지막 갱신 | Notion 재귀 색인 언급 |
 |---|---|---|
-| `docs/architecture-detailed.html` | 2026-08-15 | 없음 |
-| `docs/architecture-overview.html` | 2026-08-15 | 없음 |
-| `docs/architecture-presentation-diagram.html` | 2026-08-17 | 없음 |
-| `docs/portfolio-architecture.html` | 2026-08-15 | 없음 |
+| `docs/architecture_detailed.html` | 2026-08-15 | 없음 |
+| `docs/archive/architecture-overview.html` | 2026-08-15 | 없음 |
+| `docs/archive/architecture-presentation-diagram.html` | 2026-08-17 | 없음 |
+| `docs/archive/portfolio-architecture.html` | 2026-08-15 | 없음 |
 
-`refresh_lock`은 `architecture-detailed.html`·`portfolio-architecture.html`에 반영돼 있어,
+경로는 4.1 조치 이후 **현재 위치** 기준이다 — 점검 시점에는 넷 다 `docs/` 루트에 있었고,
+아래 3종은 그 조치로 `docs/archive/`로 옮겨졌다(하이픈 이름 유지, 4.1 참조).
+
+`refresh_lock`은 `architecture_detailed.html`·`archive/portfolio-architecture.html`에 반영돼 있어,
 누락은 Notion 재귀 색인 건에 한정된다.
 
 권고: 4종 중 실제로 유지할 문서를 먼저 정하고(4.1 참조), 유지 대상에만 Notion 재귀 색인 경로를 반영.
 
-**조치 완료 (2026-08-20).** 4.1 판정에 따라 `docs/architecture-detailed.html` 한 곳에만 반영했다.
+**조치 완료 (2026-08-20).** 4.1 판정에 따라 `docs/architecture_detailed.html` 한 곳에만 반영했다.
 
 - §3 MCP 표면: `refresh_index` 설명에 본문 색인(`index_bodies` 기본 `True`) 추가 — `cb7f022`가 기본값을
   `False`에서 `True`로 바꿨는데 표에는 "메타 캐시 동기화"만 적혀 있었다.
@@ -95,29 +98,44 @@
 권고: 일괄 리네임은 문서 상호 참조 링크를 깨뜨리므로, 리네임을 한다면 링크 갱신과 함께 한 커밋으로 처리한다.
 우선순위는 낮으니 다른 문서 작업과 묶어 처리해도 무방하다.
 
-**조치 완료 (2026-08-20).** 01~31번 31개 파일을 `git mv`로 언더스코어 규칙으로 통일했고(예:
-`01-app-layout-refactor.md` → `01_app_layout_refactor.md`), 이를 참조하던 `README.md`,
-`ARCHITECTURE.md`, `docs/search-flow.md`, `docs/operations.md`, `docs/implementation-journey.md`,
-`docs/exec_plans/` 3개 문서, `docs/architect-review/` 내부 상호 참조 15개 문서의 경로 문자열을
-전수 치환했다. `docs/archive/`로 옮긴 문서(4.1 참조)는 시점 기록 보존 목적이라 대상에서 제외했다.
+**조치 완료 (2026-08-20).** 통일 범위가 `docs/architect-review/`에 그치지 않고 `docs/` 전반으로
+넓어졌다. 두 묶음으로 처리했다.
+
+1. `docs/architect-review/` 01~31번 31개 파일을 `git mv`로 언더스코어 규칙으로 통일
+   (예: `01-app-layout-refactor.md` → `01_app_layout_refactor.md`).
+2. 같은 규칙을 어기고 있던 `docs/` 하위 나머지 11개 파일도 함께 리네임 — `docs/adr/` 4개,
+   `docs/exec_plans/` 4개(`eval_set_expansion_plan.md`, `refresh_index_api_document_resync.md`,
+   `search_p4_p5_p6_plan.md`, `search_p4_rrf_k_sweep_plan.md`), `docs/search_flow.md`,
+   `docs/implementation_journey.md`, `docs/architecture_detailed.html`.
+
+이를 참조하던 `README.md`, `ARCHITECTURE.md`, `docs/operations.md`, `docs/adr/README.md`,
+`docs/architect-review/` 내부 상호 참조 문서들의 경로 문자열을 전수 치환했다. 문서 경로를 주석·
+docstring에 담고 있던 `app/services/search/keyword_search.py`와 테스트 2개도 같은 치환 대상이었다.
+
+`docs/archive/`의 파일 **이름**은 바꾸지 않았다(4.1 참조). 다만 아카이브 문서가 **밖으로 거는 링크**는
+대상 파일이 실제로 리네임됐으므로 함께 고쳤다 — `archive/plan.md`의 `docs/search_flow.md` 참조 1건,
+`archive/architecture-overview.html`의 상세 문서 링크 1건. 후자는 파일명 치환만으로는 부족했다.
+아카이브로 내려가면서 `./architecture_detailed.html`이 `docs/archive/` 기준으로 해석돼 깨졌으므로
+`../architecture_detailed.html`로 보정했다. 이름 보존과 링크 유효성은 별개다.
 
 ## 4. 정리 권고
 
 ### 4.1 아키텍처 HTML 문서 4종의 역할 중복
 
-`architecture-detailed.html`(878줄), `architecture-overview.html`(407줄),
-`architecture-presentation-diagram.html`(417줄), `portfolio-architecture.html`(429줄) 네 개가
+점검 시점에 `docs/` 루트에 함께 있던 `architecture_detailed.html`(878줄),
+`architecture-overview.html`(407줄), `architecture-presentation-diagram.html`(417줄),
+`portfolio-architecture.html`(429줄) 네 개가
 같은 시스템을 서로 다른 상세도로 설명한다. 총 2131줄이며 코드가 바뀔 때마다 네 곳을 동기화해야 한다.
 3.3의 누락도 이 구조에서 나온 결과다.
 
 권고: 발표·포트폴리오 목적이 끝난 문서는 `docs/archive/`로 옮기고, 살아있는 참조 문서만 `docs/` 루트에 남긴다.
 
-**조치 완료 (2026-08-20).** `architecture-detailed.html` 한 개만 살아있는 참조로 남기고 나머지 3종을
+**조치 완료 (2026-08-20).** `architecture_detailed.html` 한 개만 살아있는 참조로 남기고 나머지 3종을
 `docs/archive/`로 옮겼다(`git mv`).
 
 | 파일 | 판정 | 근거 |
 |---|---|---|
-| `docs/architecture-detailed.html` | 유지 | 8개 섹션으로 MCP 표면 16 tools·검색 파이프라인·저장/색인·외부 통합을 모두 덮는 유일한 전체 문서 |
+| `docs/architecture_detailed.html` | 유지 | 8개 섹션으로 MCP 표면 16 tools·검색 파이프라인·저장/색인·외부 통합을 모두 덮는 유일한 전체 문서 |
 | `docs/archive/architecture-overview.html` | 아카이브 | 서사형 요약. `README.md`의 "검색 아키텍처(요약)"와 detailed §1이 같은 내용을 이미 덮는다 |
 | `docs/archive/portfolio-architecture.html` | 아카이브 | 포트폴리오용. overview와 설계 결정 3가지·기술 스택이 거의 그대로 겹친다 |
 | `docs/archive/architecture-presentation-diagram.html` | 아카이브 | 발표용 단일 다이어그램. 일회성 목적이 끝났다 |
@@ -125,10 +143,16 @@
 두 계층(요약 + 상세)을 유지하는 선택지도 있었으나, 그것이 바로 3.3의 드리프트를 만든 구조다.
 입문용 서사는 이미 `README.md`가 맡고 있어 요약본 HTML을 따로 살려 둘 이유가 없다.
 
-링크 정리: `architecture-detailed.html`의 헤더 내비게이션이 `./architecture-overview.html`을 가리키고
+링크 정리: `architecture_detailed.html`의 헤더 내비게이션이 `./architecture-overview.html`을 가리키고
 있어 `README.md`와 `docs/archive/`를 가리키도록 고쳤다. 나머지 인바운드 참조는
 `docs/architect-review/` 44·45·46·48·49번의 본문 인용으로, 그 시점의 판단 기록이므로 경로를
 고쳐 쓰지 않았다.
+
+**아카이브 3종 파일명 (2026-08-20 사용자 결정).** 3.4에서 정리한 `snake_case` 통일은 `docs/` 하위
+살아있는 문서에만 적용하고, `docs/archive/`로 옮긴 3종은 `architecture-overview.html` ·
+`portfolio-architecture.html` · `architecture-presentation-diagram.html` 하이픈 이름을
+**그대로 유지한다**. 아카이브는 그 시점 산출물을 손대지 않고 보존하는 것이 목적이고, 이름을 바꾸면
+44·45·46·48·49번이 인용한 경로가 가리키는 대상과 어긋난다.
 
 ### 4.2 CI 설정 부재
 

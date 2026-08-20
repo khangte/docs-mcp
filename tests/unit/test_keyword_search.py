@@ -125,7 +125,7 @@ def test_keyword_search_project_scopes_results(db_session) -> None:
 def test_keyword_search_query_variants_widen_filter_but_not_score(db_session) -> None:
     """query_variants 는 FTS OR 후보 필터만 넓히고, 점수(ts_rank)는 원본 질의 토큰만 쓴다.
 
-    문서 검색(`DocumentSearchService`)과 동일 규약(`docs/search-flow.md` §3.1) —
+    문서 검색(`DocumentSearchService`)과 동일 규약(`docs/search_flow.md` §3.1) —
     variant 는 후보를 놓치지 않게 넓히는 용도일 뿐, 순위는 항상 원본 질의로 정한다.
     """
     _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep-c1")

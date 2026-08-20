@@ -98,7 +98,7 @@ top-20을 재채점하는 건 같은 일을 두 번 하면서 지연만 얹는 �
 | 제안 항목 | 우리 코드 |
 |---|---|
 | Connectors | `DocumentSource` Protocol(drive/notion) + `parser/document_router` 7개 포맷 |
-| Hybrid + RRF | 기본 전략이 `rrf`. k 스윕 실험까지 완료(`docs/exec_plans/search-p4-rrf-k-sweep-plan.md`) |
+| Hybrid + RRF | 기본 전략이 `rrf`. k 스윕 실험까지 완료(`docs/exec_plans/search_p4_rrf_k_sweep_plan.md`) |
 | 메타데이터 필터링 | `CandidateSearchOptions(document_id, project)`, `DocumentSearchOptions(source, project)` — SQL WHERE + `Document` JOIN으로 내려간다 |
 | MCP tool 스펙 | 16개 등록: `search_endpoints`/`get_endpoint_details`/`resolve_ref`/`list_tags`/`search_documents`/`get_document`/`list_documents`/`register_document`/`refresh_index` + drive·notion 소스 CRUD 7종 |
 | pgvector + HNSW | `ix_chunk_embedding_hnsw`(vector_cosine_ops), FTS는 `ix_chunk_text_tsv` GIN |

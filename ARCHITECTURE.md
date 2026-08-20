@@ -1,6 +1,6 @@
 # 아키텍처 문서 (Simplified)
 
-본 문서는 `docs-mcp`의 핵심 설계 원칙과 구조를 정의한다. 검색 로직 상세는 `docs/search-flow.md`,
+본 문서는 `docs-mcp`의 핵심 설계 원칙과 구조를 정의한다. 검색 로직 상세는 `docs/search_flow.md`,
 운영 절차는 `docs/operations.md`, 결정 기록은 `docs/adr/` 를 참고한다.
 
 > 착수 시점의 초기 기획서는 `docs/archive/plan.md` 로 아카이브했다(FastAPI·`src/` 기반으로
@@ -110,7 +110,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 - **Vector Search**: pgvector(cosine similarity, HNSW 인덱스)를 이용한 의미론적 검색
 - **Keyword Search**: Postgres FTS(`to_tsquery` OR 매칭 + `ts_rank`, `chunk.text_tsv` 생성컬럼 + GIN 인덱스) 기반 키워드 검색
 - **Rerank**: 키워드/벡터 결과를 RRF(Reciprocal Rank Fusion, `RRF_K=60`)로 순위 융합(기본 `rrf` 전략). 롤백용 `fallback` 전략은 키워드 우선·0건일 때만 벡터를 보조로 시도하는 배타적 분기다. `hybrid_alpha` 가중합(과거 `SearchService` 하이브리드 전용 legacy 설정)은 config/bootstrap/composition 배선까지 완전히 제거했다
-- **두 검색 경로가 모두 RRF 기반이다.** 엔드포인트 검색(`search_endpoints`, `DOCS_MCP_SEARCH_STRATEGY`)은 키워드+벡터 2-arm, 협업 문서 검색(`search_documents`, `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`, 기본 `indexed`)은 **제목(`document_meta`) + 키워드/벡터(`chunk_type="section"` 본문 청크) 3-arm** 이다. 문서 경로의 융합 키는 청크가 아니라 `Document.id` 라 한 문서가 섹션 수만큼 결과 슬롯을 먹지 않고, 제목 arm 의 키는 `deterministic_document_id(project, source, external_id)` 로 순수 계산해 **미색인 문서도 제목 신호만으로 결과에 남는다**(별도 폴백 분기 없음). 롤백용 `fetch` 전략은 후보 본문을 실시간 fetch 해 제목·본문 토큰 겹침을 가중합(0.4/0.6)하던 이전 기본값이다 — 정규화 기준이 없는 가중합 문제 때문에 색인 경로에서는 쓰지 않는다. 근거: `docs/architect-review/37_document_search_phase3_rrf_verdict.md`, `docs/architect-review/41_backfill_result_verification_and_indexed_default_gate.md`. 흐름 상세는 [`docs/search-flow.md`](docs/search-flow.md)
+- **두 검색 경로가 모두 RRF 기반이다.** 엔드포인트 검색(`search_endpoints`, `DOCS_MCP_SEARCH_STRATEGY`)은 키워드+벡터 2-arm, 협업 문서 검색(`search_documents`, `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`, 기본 `indexed`)은 **제목(`document_meta`) + 키워드/벡터(`chunk_type="section"` 본문 청크) 3-arm** 이다. 문서 경로의 융합 키는 청크가 아니라 `Document.id` 라 한 문서가 섹션 수만큼 결과 슬롯을 먹지 않고, 제목 arm 의 키는 `deterministic_document_id(project, source, external_id)` 로 순수 계산해 **미색인 문서도 제목 신호만으로 결과에 남는다**(별도 폴백 분기 없음). 롤백용 `fetch` 전략은 후보 본문을 실시간 fetch 해 제목·본문 토큰 겹침을 가중합(0.4/0.6)하던 이전 기본값이다 — 정규화 기준이 없는 가중합 문제 때문에 색인 경로에서는 쓰지 않는다. 근거: `docs/architect-review/37_document_search_phase3_rrf_verdict.md`, `docs/architect-review/41_backfill_result_verification_and_indexed_default_gate.md`. 흐름 상세는 [`docs/search_flow.md`](docs/search_flow.md)
 - `chunk_type="section"` 청크는 협업 문서(drive/notion)와 등록형 문서(markdown/csv 등)가 공유하므로, keyword/vector arm 은 `ChunkRepository`에 `doc_types` 필터를 SQL 단에서 푸시다운해 등록형 문서 청크가 협업 문서 검색 결과에 섞이지 않게 한다(`source` 미지정 시 drive/notion 전체, 지정 시 해당 소스로 좁힘). 응답의 `external_id` 필드는 `get_document(source, external_id)` 호출에 그대로 쓰도록 노출한 값이다(근거: `docs/architect-review/45_portfolio_metrics_and_type_only_import_verdict.md`).
 
 ### 5-3. 프로젝트 단위 격리
