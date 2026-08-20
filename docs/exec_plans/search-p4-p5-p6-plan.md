@@ -2,7 +2,7 @@
 
 - 상태: **착수 승인**(lead, 2026-08-10). developer 구현 대상.
 - 작성: architect
-- 근거: `docs/architect-review/03-search-performance-improvements.md` P4/P5/P6
+- 근거: `docs/architect-review/03_search_performance_improvements.md` P4/P5/P6
 - 원칙: **셋 다 저효과·저리스크 → 최소 변경, 과설계 금지.** 새 env·설정 표면 늘리지 않는다
   (상수는 모듈 상수로, RRF_K 선례 따름). 검색 동작 계약은 바뀌지 않는다(성능/내부 최적화만).
 - alembic head(작성 시점): `ff8aa8f36266`. P4 마이그레이션의 `down_revision` 은 이 값.

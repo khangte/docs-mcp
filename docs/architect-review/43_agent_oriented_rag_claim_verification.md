@@ -2,7 +2,7 @@
 
 - 일시: 2026-08-15
 - 작성: architect
-- 선행: `docs/architect-review/07-search-rrf-reevaluation.md`(RRF 채택),
+- 선행: `docs/architect-review/07_search_rrf_reevaluation.md`(RRF 채택),
   `34_drive_notion_no_embedding_rationale.md`, `35_drive_notion_embedding_migration_and_refresh_strategy.md`,
   `36_user_rag_proposal_vs_our_design_diff.md`(범용 RAG 제안 대조),
   `37_document_search_phase3_rrf_verdict.md`(3-arm RRF 확정),

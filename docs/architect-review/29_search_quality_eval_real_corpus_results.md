@@ -1,6 +1,6 @@
 # 29. 검색 품질 평가 — 실 코퍼스(Stripe/GitHub) 측정 결과
 
-- 상태: 측정 완료(developer). 설계는 `27-search-quality-eval-real-corpus-design.md`, 색인 차단 버그 수정은 `28-schema-chunk-ref-id-truncation-fix.md`.
+- 상태: 측정 완료(developer). 설계는 `27_search_quality_eval_real_corpus_design.md`, 색인 차단 버그 수정은 `28_schema_chunk_ref_id_truncation_fix.md`.
 - 실행: `uv run python tests/fixtures/corpus_eval/run_corpus_eval.py --strategy both`
 - 코퍼스: `tests/fixtures/corpus_eval/`에 프리즈(§4 매니페스트, 핀 SHA) — Stripe 589 엔드포인트, GitHub 1220 엔드포인트.
 - `is_semantic: True`(로컬 e5 모델 정상 동작 확인).
@@ -45,7 +45,7 @@ synthetic 20-엔드포인트 하네스(`rrf_eval`) 대비 큰 폭 하락 — doc
 
 ## 4. 원 색인 차단 버그 (참고)
 
-최초 실행 시 Stripe 스펙 등록이 `StringDataRightTruncation`으로 크래시(schema 컴포넌트명 최대 135자가 `chunk.ref_id`(64자)에 그대로 들어감). `28-schema-chunk-ref-id-truncation-fix.md` 판정에 따라 근본 수정(schema 청크 ref_id를 바운드 id로 교체) 후 재실행 — 위 결과는 수정 반영 후 값이다. endpoint 청크만 채점 대상이라 이 수정은 doc/27 결과 자체에는 영향 없음(§4, 판정문 그대로 확인).
+최초 실행 시 Stripe 스펙 등록이 `StringDataRightTruncation`으로 크래시(schema 컴포넌트명 최대 135자가 `chunk.ref_id`(64자)에 그대로 들어감). `28_schema_chunk_ref_id_truncation_fix.md` 판정에 따라 근본 수정(schema 청크 ref_id를 바운드 id로 교체) 후 재실행 — 위 결과는 수정 반영 후 값이다. endpoint 청크만 채점 대상이라 이 수정은 doc/27 결과 자체에는 영향 없음(§4, 판정문 그대로 확인).
 
 ## 5. 시사점 (lead/architect 판단 필요 항목)
 

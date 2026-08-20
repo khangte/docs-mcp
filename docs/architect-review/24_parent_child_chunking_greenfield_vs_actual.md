@@ -4,7 +4,7 @@
 - 일시: 2026-08-13
 - 작성: architect
 - 목적: (1) parent-child 청킹을 "지금 아무것도 없다" 가정하고 표준 패턴으로 처음부터 설계. (2) 이 코드베이스에 **부수효과로 이미 존재하는** 유사 구조와 차이 정리.
-- 참고: `app/models/chunk.py`, `app/models/document.py`, `app/services/indexer/chunk_builder.py`, `app/services/search/rrf.py`, `docs/architect-review/23-long-section-sub-chunking-phase2-design.md`
+- 참고: `app/models/chunk.py`, `app/models/document.py`, `app/services/indexer/chunk_builder.py`, `app/services/search/rrf.py`, `docs/architect-review/23_long_section_sub_chunking_phase2_design.md`
 
 ---
 

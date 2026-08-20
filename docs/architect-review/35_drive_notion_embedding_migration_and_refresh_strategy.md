@@ -149,7 +149,7 @@ Phase 0(정책) → 4·5(스키마) → 7·8(게이트+색인) → 9(삭제 전�
   넘긴다. `index_bodies=True` 실사용 시 `StringDataRightTruncation` 으로 색인 자체가 깨짐.
 - 참고: `app/services/documents/document_body_indexer.py:30-32`, `app/models/document.py:30`,
   `app/services/ingestor/sync_service.py:234-236`, `app/services/indexer/indexer_service.py:81,94,121,193-197`,
-  `docs/architect-review/28-schema-chunk-ref-id-truncation-fix.md`
+  `docs/architect-review/28_schema_chunk_ref_id_truncation_fix.md`
 
 ### 3.0 결론
 

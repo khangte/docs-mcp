@@ -3,7 +3,7 @@
 - 작성: architect
 - 요청: lead — "대상은 검색품질 평가 배치가 아니라 `refresh_index`(문서 재색인) 배치다.
   MCP 서버 내부 스케줄링 반려는 유지하되 '서버 밖 상주 러너' 방향으로 실제 설계를 진행하라."
-- 선행 판정: `docs/architect-review/30-eval-batch-automation.md` §2 (내부 스케줄러 반려)
+- 선행 판정: `docs/architect-review/30_eval_batch_automation.md` §2 (내부 스케줄러 반려)
 - 대상 코드: `app/mcp/tools/sources.py:34`(`refresh_index`),
   `app/services/documents/document_index_service.py`, `app/services/ingestor/sync_service.py:137`(`resync`)
 

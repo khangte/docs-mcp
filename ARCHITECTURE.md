@@ -169,7 +169,7 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
   트랜잭션이 aborted 상태가 되면 unlock 쿼리 자체가 실패해 원인 예외를 가리고 락도 안 풀릴 수
   있어, unlock 직전에 먼저 `rollback()` 한다. 락을 못 잡으면 `RefreshInProgressError` 를
   반환한다(`docs/architect-review/50_refresh_lock_abort_asymmetry_verdict.md`).
-- 설계·실측 근거: `docs/architect-review/31-refresh-index-batch-automation.md`,
+- 설계·실측 근거: `docs/architect-review/31_refresh_index_batch_automation.md`,
   운영 방법(타이머 유닛·cron·실행 환경 함정·종료코드)은 `docs/operations.md` "자동 동기화" 절.
 
 ## 6. MCP 도구 계약 (Interface)

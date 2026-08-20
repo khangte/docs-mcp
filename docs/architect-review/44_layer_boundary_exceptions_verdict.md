@@ -6,7 +6,7 @@
 - 대상 코드:
   - `app/mcp/tools/endpoints.py:190` (`get_raw_document`, `@mcp.resource`)
   - `app/services/documents/registered_resync.py`
-- 선행 판정: `docs/architect-review/31-refresh-index-batch-automation.md` §4,
+- 선행 판정: `docs/architect-review/31_refresh_index_batch_automation.md` §4,
   인셋 함수명 오타 판정(구 46번 문서를 본 문서 §0에 흡수)
 
 ---

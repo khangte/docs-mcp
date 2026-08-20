@@ -3,7 +3,7 @@
 - 상태: **설계 only** — 코드 미수정. 구현 착수 판단 lead/사용자 대기.
 - 일시: 2026-08-13
 - 작성: architect
-- 선행: `docs/architect-review/16-long-section-chunking-blindspot.md` (Phase 0 진단 + Phase 1 경고 로깅 완료). Phase 0 측정은 현 코퍼스에서 512 초과 섹션 **0건** → Phase 2는 YAGNI 게이트로 보류 상태였음. 본 문서는 lead 지시로 Phase 2 **설계만** 선착수.
+- 선행: `docs/architect-review/16_long_section_chunking_blindspot.md` (Phase 0 진단 + Phase 1 경고 로깅 완료). Phase 0 측정은 현 코퍼스에서 512 초과 섹션 **0건** → Phase 2는 YAGNI 게이트로 보류 상태였음. 본 문서는 lead 지시로 Phase 2 **설계만** 선착수.
 - 대상 코드: `app/services/parser/markdown_parser.py`, `app/services/indexer/chunk_builder.py`, `app/services/indexer/indexer_service.py`, `app/services/indexer/embedding_provider.py`, `app/repositories/chunk_repository.py`, `app/services/search/rrf.py`
 
 ---

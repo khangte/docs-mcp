@@ -166,7 +166,7 @@ search_documents(query="주문조회 API", query_variants=["결제 내역 조회
 갱신하는 원샷 CLI 를 제공합니다. MCP stdio 서버는 세션마다 뜨는 단명 프로세스라
 스케줄러를 품을 수 없으므로, 이 스크립트는 **한 번 돌고 종료**하고 주기는 OS
 스케줄러(systemd timer 또는 cron)가 소유합니다
-(설계: [`architect-review/31-refresh-index-batch-automation.md`](architect-review/31-refresh-index-batch-automation.md)).
+(설계: [`architect-review/31_refresh_index_batch_automation.md`](architect-review/31_refresh_index_batch_automation.md)).
 
 ```bash
 uv run python -m app.scripts.refresh_documents \

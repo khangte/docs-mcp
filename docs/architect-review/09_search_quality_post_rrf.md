@@ -3,7 +3,7 @@
 - 상태: **P1·P5 구현완료**(P1: 2026-08-10 커밋 `4ff1f5a`·`6c2236a`·`97f3c2d`·`731d43c`, 실행계획 `docs/exec_plans/eval-set-expansion-plan.md` / P5: HNSW ef_search, 커밋 `aae5728`, 실행계획 `docs/exec_plans/search-p4-p5-p6-plan.md`). **P4 완료**(K 스윕 실험, 커밋 `434c35a`, 결론 `K=60` 유지 — 강한 null result, 아래 절 참조). **P2 보류**(조건부 재검토, 아래 절 참조), **P3 보류**(착수 검토 완료 2026-08-10 — 이 도구는 후보 피더라 구속 지표가 recall@k(이미 88~95%)지 top-1이 아님, 재검토 트리거는 아래 절 참조).
 - 일시: 2026-08-10
 - 작성: architect
-- 관련: `docs/architect-review/07-search-rrf-reevaluation.md`(RRF 도입·실측), `docs/architect-review/03-search-performance-improvements.md`(P1~P6), `docs/architect-review/06-vector-store-qdrant-vs-pgvector.md`
+- 관련: `docs/architect-review/07_search_rrf_reevaluation.md`(RRF 도입·실측), `docs/architect-review/03_search_performance_improvements.md`(P1~P6), `docs/architect-review/06_vector_store_qdrant_vs_pgvector.md`
 - 대상 코드: `app/services/search/`, `app/models/openapi.py`(text_tsv 식), `app/repositories/chunk_repository.py`, `tests/fixtures/rrf_eval/`
 
 ## 출발점(현 상태)
@@ -71,7 +71,7 @@ P2(필드 가중 tsvector)는 "필드 희석" 카테고리가 이미 88~100%로 
 > **재검토 조건**: 실사용/평가셋에서 "질의 토큰이 파라미터·응답코드에만 매칭돼 무관 엔드포인트가
 > 상위에 오는" **구체적 필드희석 실패가 실측**되면 그때 위 비용을 감수하고 착수한다. 그 전까지는 보류.
 - **현 문제**: `text_tsv` 가 summary·path·description·params·responses 를 **동일 가중**으로 뭉친다.
-  → `docs/architect-review/07-search-rrf-reevaluation.md` 1절이 지목한 **"필드 희석"**(질의 토큰이 파라미터 이름에 매칭돼 무관 엔드포인트 히트)의 직접 원인. `ts_rank` 가 요약/경로 매칭과 파라미터 매칭을 구분 못 한다.
+  → `docs/architect-review/07_search_rrf_reevaluation.md` 1절이 지목한 **"필드 희석"**(질의 토큰이 파라미터 이름에 매칭돼 무관 엔드포인트 히트)의 직접 원인. `ts_rank` 가 요약/경로 매칭과 파라미터 매칭을 구분 못 한다.
 - **개선**: `TEXT_TSV_EXPRESSION` 을 필드별 `setweight` 로 재구성 — A=summary+path, B=description, C=tags, D=params+responses. `ts_rank(weights, tsv, query)` 로 요약/경로 매칭을 상위로.
 - **효과**: 중~큼. 필드 희석 오탐 억제 → **키워드 arm 정밀도↑ = top-1 직접 개선 여지**(RRF가 못 움직인 지표).
 - **난이도**: 중(생성 컬럼식 변경 → text_tsv 재생성 마이그레이션, 모델·alembic 식 동기화, ts_rank 호출에 weights 전달). **리스크**: 중(순위 골든 기대값 갱신 필요, 회귀 재검증). Postgres 네이티브라 신규 의존성 0.
@@ -145,7 +145,7 @@ cross-encoder는 후보 N건을 질의쌍으로 **매 검색마다** 개별 채�
 - **개선**: `compare_strategies.py` 로 K∈{10,20,40,60,80}·N 스윕 → 지표 최적점 확인.
 - **효과**: 낮음~중(K는 대체로 둔감, 상방 제한적). **난이도**: 낮음(파라미터 루프). **리스크**: **20질의 과적합** — 반드시 **P1 확장 후** 실행. 개선폭 미미하면 K=60 유지(설정 표면 안 늘림, YAGNI).
 
-### P5 — HNSW `ef_search` GUC + 스코프 필터 over-filtering 점검 (규모 의존, 저비용) — ✅ 구현완료(커밋 `aae5728`, `search_by_vector`에 `SET LOCAL hnsw.ef_search = max(100, top_k)`; `03-search-performance-improvements.md` P6과 동일 건)
+### P5 — HNSW `ef_search` GUC + 스코프 필터 over-filtering 점검 (규모 의존, 저비용) — ✅ 구현완료(커밋 `aae5728`, `search_by_vector`에 `SET LOCAL hnsw.ef_search = max(100, top_k)`; `03_search_performance_improvements.md` P6과 동일 건)
 - **현 문제**: `hnsw.ef_search` 세션 미설정(기본 40=낮은 recall). 또한 벡터 검색이 `candidate_ids IN (...)`(스코프 내 endpoint 청크)로 **post-filter** — HNSW가 ef_search개 후보를 먼저 뽑고 걸러서, 다문서 프로젝트에서 단일 문서로 좁히면 top_k 미만 반환(recall 저하) 가능.
 - **개선**: `SET LOCAL hnsw.ef_search=100`(융합용 넓은 N에 맞춰), pgvector 0.8+면 `hnsw.iterative_scan` 로 over-filtering 해소 검토.
 - **효과**: **현 규모(단일 문서·수백 청크)에선 낮음**(HNSW가 seq scan으로 폴백할 만큼 작음). **다문서/대규모 시 중.** **난이도**: 낮음. **리스크**: recall↔속도 트레이드오프. 지금은 "인지하고 규모 커지면 착수".

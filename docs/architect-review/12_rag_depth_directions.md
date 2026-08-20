@@ -4,9 +4,9 @@
 - 일시: 2026-08-11
 - 작성: architect
 - 요청 경위: 사용자 "RAG를 깊게 만들 수 있나" → lead가 4개 후보 제시 → architect에게 방향 선정 위임.
-- 선행 문서: `docs/search-flow.md`(현 흐름), `docs/architect-review/07-search-rrf-reevaluation.md`(RRF),
-  `docs/architect-review/09-search-quality-post-rrf.md`(P1~P5, 특히 **P3 리랭킹 보류 판정**),
-  `docs/architect-review/11-search-performance-round2.md`(§5 설계 결정: 서버 LLM 질의확장 배제)
+- 선행 문서: `docs/search-flow.md`(현 흐름), `docs/architect-review/07_search_rrf_reevaluation.md`(RRF),
+  `docs/architect-review/09_search_quality_post_rrf.md`(P1~P5, 특히 **P3 리랭킹 보류 판정**),
+  `docs/architect-review/11_search_performance_round2.md`(§5 설계 결정: 서버 LLM 질의확장 배제)
 - 대상 코드(검토 근거): `app/services/search/`, `app/mcp/tools/endpoints.py`(도구 세트),
   `app/models/openapi.py`(청크·스키마 구조)
 

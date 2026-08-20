@@ -12,7 +12,7 @@
 
 ### 1.1 사실 확인
 
-reviewer 지적대로다. 두 문서의 헤드라인 통계는 `09-search-quality-post-rrf.md`
+reviewer 지적대로다. 두 문서의 헤드라인 통계는 `09_search_quality_post_rrf.md`
 (2026-08-10~12, **합성 하네스 20 엔드포인트**, n=20) 값이었다.
 
 | 출처 | 코퍼스 | Recall@1 | Recall@3 | Recall@10 | MRR |
@@ -132,7 +132,7 @@ developer 수정이 들어오면 문서와 코드가 일치한다. **수정 전�
 
 ## 3. 남은 확인 사항
 
-`docs/architect-review/09-search-quality-post-rrf.md` 는 여전히 88~95%를 근거로 P2/P3
+`docs/architect-review/09_search_quality_post_rrf.md` 는 여전히 88~95%를 근거로 P2/P3
 보류를 판단하고 있다. 그 판단이 실 코퍼스 값에서도 유지되는지는 별건이고, 검토문서는
 시점 기록이라 소급 수정 대상이 아니다. 다만 **다음에 검색 품질 우선순위를 다시 잡을 때는
 doc/09가 아니라 doc/29 §13을 기준선으로 삼아야 한다** — lead 판단이 필요하면 별도로 올린다.

@@ -2,7 +2,7 @@
 
 - 작성: architect
 - 원 리뷰: reviewer(동시성 락 리뷰), 수정요청 1건
-- 관련: `docs/architect-review/49_data_flow_scenarios.md` 케이스 4, `docs/architect-review/31-refresh-index-batch-automation.md` §3.3
+- 관련: `docs/architect-review/49_data_flow_scenarios.md` 케이스 4, `docs/architect-review/31_refresh_index_batch_automation.md` §3.3
 
 ## 1. 판정 요약
 

@@ -85,7 +85,7 @@
 
 아카이브 대상 3종은 갱신하지 않았다 — 보존이 목적이므로 시점 기록으로 남기는 편이 맞다.
 
-### 3.4 [낮음] `docs/architect-review/` 파일명 규칙이 중간에 바뀌었다
+### 3.4 [낮음] [완료 2026-08-20] `docs/architect-review/` 파일명 규칙이 중간에 바뀌었다
 
 `01-app-layout-refactor.md` ~ `31-refresh-index-batch-automation.md`는 하이픈,
 `32_notion_page_id_legacy_slot_seed.md` ~ `50_refresh_lock_abort_asymmetry_verdict.md`는 언더스코어를 쓴다.
@@ -94,6 +94,12 @@
 
 권고: 일괄 리네임은 문서 상호 참조 링크를 깨뜨리므로, 리네임을 한다면 링크 갱신과 함께 한 커밋으로 처리한다.
 우선순위는 낮으니 다른 문서 작업과 묶어 처리해도 무방하다.
+
+**조치 완료 (2026-08-20).** 01~31번 31개 파일을 `git mv`로 언더스코어 규칙으로 통일했고(예:
+`01-app-layout-refactor.md` → `01_app_layout_refactor.md`), 이를 참조하던 `README.md`,
+`ARCHITECTURE.md`, `docs/search-flow.md`, `docs/operations.md`, `docs/implementation-journey.md`,
+`docs/exec_plans/` 3개 문서, `docs/architect-review/` 내부 상호 참조 15개 문서의 경로 문자열을
+전수 치환했다. `docs/archive/`로 옮긴 문서(4.1 참조)는 시점 기록 보존 목적이라 대상에서 제외했다.
 
 ## 4. 정리 권고
 

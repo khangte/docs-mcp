@@ -2,7 +2,7 @@
 
 - 상태: **착수 승인**(lead, 2026-08-10). developer 구현 대상.
 - 작성: architect
-- 근거: `docs/architect-review/09-search-quality-post-rrf.md` P4(RRF K/N 스윕). **P2(필드가중)는 보류**(한계이득 작음+재색인 비용), **P3(리랭킹)은 조건부 보류**.
+- 근거: `docs/architect-review/09_search_quality_post_rrf.md` P4(RRF K/N 스윕). **P2(필드가중)는 보류**(한계이득 작음+재색인 비용), **P3(리랭킹)은 조건부 보류**.
 - 대상: `tests/fixtures/rrf_eval/`(실험 스크립트). **프로덕션 검색 코드(`app/`)는 건드리지 않는다.**
 - 성격: 이것은 **실험(측정) 태스크**다. K를 실제로 바꾸는 건 이 태스크가 아니라, 스윕 결과 해석 후 별도 후속(아래 6절).
 

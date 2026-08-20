@@ -45,7 +45,7 @@
 컬럼 재생성 마이그레이션 + 전량 재임베딩이 필요하다(256→384 때 실제로 그렇게 했다 —
 `alembic/versions/ff8aa8f36266_*`, `app/scripts/reembed.py`).
 
-그런데 이건 **이미 실험한 건이다**(`docs/architect-review/15-embedding-model-swap-experiment.md`):
+그런데 이건 **이미 실험한 건이다**(`docs/architect-review/15_embedding_model_swap_experiment.md`):
 
 - bge-m3는 애초에 "후보 2순위, 조건부"였고 **미착수 확정**으로 종결됐다(§5-확정).
 - 이유 (a) dense가 e5의 `query:`/`passage:` 접두사 규약을 안 써서 provider 변형이 필요,

@@ -35,8 +35,8 @@ Recall@10 50%로 떨어지며, 그 간격과 대응 경위는 아래 구현 여�
 
 - [`docs/implementation-journey.md`](docs/implementation-journey.md) — 로드맵 0~5가 실제로 어떤 순서·판단을 거쳐 구현됐는지(커밋·설계문서 매핑, 기각된 개선안 포함)
 - [`docs/search-flow.md`](docs/search-flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
-- [`docs/architect-review/03-search-performance-improvements.md`](docs/architect-review/03-search-performance-improvements.md) — 성능 개선 P1~P6 및 구현 상태
-- [`docs/architect-review/09-search-quality-post-rrf.md`](docs/architect-review/09-search-quality-post-rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
+- [`docs/architect-review/03_search_performance_improvements.md`](docs/architect-review/03_search_performance_improvements.md) — 성능 개선 P1~P6 및 구현 상태
+- [`docs/architect-review/09_search_quality_post_rrf.md`](docs/architect-review/09_search_quality_post_rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
 
 ## 시작하기
 

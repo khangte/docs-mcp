@@ -2,8 +2,8 @@
 
 - 작성: architect
 - 요청: 사용자 "배치 자동화를 적절하게 적용해야돼. 어떻게 처리하면 좋을지 검토해줘." (대상 미지정)
-- 선행 문서: `docs/architect-review/27-search-quality-eval-real-corpus-design.md`,
-  `docs/architect-review/29-search-quality-eval-real-corpus-results.md` §12~14
+- 선행 문서: `docs/architect-review/27_search_quality_eval_real_corpus_design.md`,
+  `docs/architect-review/29_search_quality_eval_real_corpus_results.md` §12~14
 - 대상 코드: `tests/fixtures/corpus_eval/run_corpus_eval.py`, `tests/fixtures/rrf_eval/`
 
 ---

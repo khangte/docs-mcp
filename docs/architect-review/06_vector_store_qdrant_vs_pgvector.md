@@ -4,16 +4,16 @@
 - 일시: 2026-08-08 (초판) / 2026-08-08 갱신 — 7절 "전제 완화 재검토" 추가(사용자가 "하이브리드 로직을 Qdrant 에 맞춰 바꿔도 된다" 전제를 열어 재판단). **초판 결론(pgvector 유지)은 유지되나 근거가 바뀜** — 상세는 7절.
 - 작성: architect
 - 지시: lead(로컬 CPU 임베딩 전환과 함께 벡터 DB 를 Qdrant 로 옮길지 판단)
-- 관련: `docs/architect-review/05-embedding-provider-local-model-design.md`(로컬 임베딩 전환 설계), `docs/architect-review/07-search-rrf-reevaluation.md`(RRF 융합), `docs/supabase-migration-review.md`(원격/추가 서비스 정당성 판단 선례)
+- 관련: `docs/architect-review/05_embedding_provider_local_model_design.md`(로컬 임베딩 전환 설계), `docs/architect-review/07_search_rrf_reevaluation.md`(RRF 융합), `docs/supabase-migration-review.md`(원격/추가 서비스 정당성 판단 선례)
 - 대상(전환 시): `app/services/search/vector_search.py`, `app/repositories/chunk_repository.py`, `app/models/openapi.py`, `app/services/indexer/indexer_service.py`, `app/services/sync/*`, `app/composition.py`, `docker-compose.yml`, `alembic/versions/`, `pyproject.toml`
 
 ## 요약(결정 사항)
 1. **결론: pgvector 유지. Qdrant 전환은 현 시점 비권장.** 로컬 CPU 임베딩(384dim) 전환은 진행하되 벡터 스토어는 pgvector HNSW 그대로 둔다.
 2. **핵심 근거 — "한 행 분리(row split)"**: `api_chunk` 는 **하나의 행**에 `text`·`ref_id`·`embedding`(벡터)·`text_tsv`(FTS)를 모두 담는다. 키워드 FTS 와 벡터 검색이 **같은 테이블·같은 행·같은 스코프 필터**(`chunk_type='endpoint'` + document/project JOIN)를 공유한다. Qdrant 로 벡터만 떼면 이 단일 행이 두 스토어로 쪼개져 **이중쓰기·동기화 책임·크로스스토어 병합**이 새로 생긴다.
 3. **스케일 부적합**: Qdrant 의 실이득(분산 샤딩, 양자화 RAM 절감, 고급 HNSW 튜닝)은 **로컬·단일 사용자·수천~수만 벡터** 규모에서 무의미하다. pgvector HNSW 가 이 규모를 이미 충분히 감당한다(정상 동작은 수백만 벡터까지).
-4. **RRF 설계에 역행**: `07-search-rrf-reevaluation.md` 의 융합 설계는 "벡터 `search_by_vector` 에 `ref_id` 프로젝션만 추가하면 조인 불필요"(동일 테이블이라 가능)라는 단순화에 기대어 있다. Qdrant 분리는 이 단순화를 파괴하고 `ref_id`·scope 메타데이터를 Qdrant payload 로 **중복**시켜 융합을 크로스스토어로 만든다 — RRF 를 더 복잡하게만 한다.
+4. **RRF 설계에 역행**: `07_search_rrf_reevaluation.md` 의 융합 설계는 "벡터 `search_by_vector` 에 `ref_id` 프로젝션만 추가하면 조인 불필요"(동일 테이블이라 가능)라는 단순화에 기대어 있다. Qdrant 분리는 이 단순화를 파괴하고 `ref_id`·scope 메타데이터를 Qdrant payload 로 **중복**시켜 융합을 크로스스토어로 만든다 — RRF 를 더 복잡하게만 한다.
 5. **선례 일치**: `supabase-migration-review.md` 는 "로컬 단일 사용자 MCP 에 원격/추가 서비스를 얹는 정당성"을 물어 비권장했다. Qdrant 를 로컬 docker 로 띄우면 **원격 왕복 문제는 없지만**, "별도 서비스 하나 추가 + 이중 데이터스토어 동기화"라는 운영 복잡도 축은 오히려 Supabase 검토 때보다 **악화**된다(그때는 전부 한 Postgres 안이었다).
-6. **05-embedding-provider-local-model-design.md 개정 불필요**: pgvector 유지가 결론이므로 그 문서 3절(컬럼 dim 256→384 마이그레이션)·5절(composition 배선)은 **그대로 유효**하다. 개정 방향 없음(8절에서 확인).
+6. **05_embedding_provider_local_model_design.md 개정 불필요**: pgvector 유지가 결론이므로 그 문서 3절(컬럼 dim 256→384 마이그레이션)·5절(composition 배선)은 **그대로 유효**하다. 개정 방향 없음(8절에서 확인).
 
 ---
 
@@ -55,7 +55,7 @@
 `ApiChunk.embedding.is_not(None)` 같은 조건, `candidate_ids` 집합 필터(`ApiChunk.id.in_(...)`), scope JOIN 이 **전부 하나의 SQL 문**에서 조합된다. 벡터·메타·FTS 가 한 테이블에 있으니 트랜잭션·백업·스코프 필터가 **자동으로 정합**하다. 이 정합성은 Qdrant 전환 시 **직접 코드로 재구현·유지**해야 하는 대상이 된다.
 
 ## 3. 하이브리드 검색(키워드 FTS + 벡터) 병합 — 두 스토어 분리 시 변화
-`07-search-rrf-reevaluation.md` 의 RRF 설계는 **벡터가 FTS 와 같은 테이블에 있다는 전제**에 최적화되어 있다. 분리하면 그 전제가 무너진다.
+`07_search_rrf_reevaluation.md` 의 RRF 설계는 **벡터가 FTS 와 같은 테이블에 있다는 전제**에 최적화되어 있다. 분리하면 그 전제가 무너진다.
 
 ### 3-1. RRF 재검토 문서가 기대는 단순화(동일 테이블 전제)
 그 문서 3절 핵심 항목:
@@ -80,7 +80,7 @@
 - **백필**: 로컬 임베딩 설계의 `reembed.py` 를 "컬럼 갱신"이 아니라 "Qdrant 컬렉션 적재"로 작성. 청크 순회는 동일.
 - **테스트**: 벡터 경로 테스트 전반이 Qdrant(임베디드/도커) 의존으로 바뀜. CI 에서 Qdrant 기동 or 페이크 스토어 필요.
 
-대조: **pgvector 유지 시** 로컬 임베딩 전환은 이미 설계된 "컬럼 dim 256→384 재생성 alembic 1개 + reembed 배치"로 끝난다(05-embedding-provider-local-model-design.md 3·4절). 추상화 신설·이중쓰기·컨테이너 추가가 **전부 불필요**하다.
+대조: **pgvector 유지 시** 로컬 임베딩 전환은 이미 설계된 "컬럼 dim 256→384 재생성 alembic 1개 + reembed 배치"로 끝난다(05_embedding_provider_local_model_design.md 3·4절). 추상화 신설·이중쓰기·컨테이너 추가가 **전부 불필요**하다.
 
 ## 5. 최종 권장
 **pgvector 유지.** Qdrant 전환은 현 시점 비권장.
@@ -98,12 +98,12 @@
 
 **한 줄 요약**: Qdrant 의 강점은 이 프로젝트가 갖지 않은 규모에서만 켜지고, 비용(단일 행을 두 스토어로 쪼개는 정합성 부담)은 규모와 무관하게 즉시 발생한다. 로컬 CPU 임베딩 전환은 pgvector 컬럼 dim 변경만으로 끝나므로, **벡터 스토어는 pgvector 로 유지하고 로컬 임베딩 전환을 그대로 진행**하는 것이 옳다.
 
-## 6. 05-embedding-provider-local-model-design.md 개정 방향
+## 6. 05_embedding_provider_local_model_design.md 개정 방향
 **개정 불필요.** pgvector 유지가 결론이므로 그 문서의 다음 절은 **그대로 유효**하다:
 - **3절(차원 256→384 마이그레이션)**: pgvector 컬럼 재생성(DROP INDEX → DROP/ADD COLUMN vector(384) → HNSW 재생성) 그대로 진행. 변경 없음.
 - **5절(composition 배선)**: `_build_embedding_provider` 의 gemini 제거·로컬 provider 기본화·`is_vector_fallback_available` 을 `is_semantic` 으로 재정의 — 벡터 스토어 선택과 **직교**하며 그대로 유효.
 
-즉 이번 Qdrant 검토 결과로 로컬 임베딩 설계에 되돌릴 내용은 없다. developer 는 05-embedding-provider-local-model-design.md 의 착수 순서를 **수정 없이** 따르면 된다.
+즉 이번 Qdrant 검토 결과로 로컬 임베딩 설계에 되돌릴 내용은 없다. developer 는 05_embedding_provider_local_model_design.md 의 착수 순서를 **수정 없이** 따르면 된다.
 
 ---
 
@@ -133,7 +133,7 @@
 
 ## 7-2. 이 재구성이 RRF 융합에 실제로 이득인가
 반반이다 — **융합 계층은 단순해지고, 키워드 계층은 복잡해진다.**
-- **단순해지는 쪽**: 융합이 Qdrant 서버사이드 RRF 로 내려간다. `07-search-rrf-reevaluation.md` 3절이 앱에서 짜려던 "두 ranker 병렬 실행→ref_id dedupe→RRF 합산" 코어가 상당 부분 Qdrant Query API 로 대체된다.
+- **단순해지는 쪽**: 융합이 Qdrant 서버사이드 RRF 로 내려간다. `07_search_rrf_reevaluation.md` 3절이 앱에서 짜려던 "두 ranker 병렬 실행→ref_id dedupe→RRF 합산" 코어가 상당 부분 Qdrant Query API 로 대체된다.
 - **복잡해지는 쪽(결정적)**: 현재 키워드 recall 은 **이미 구축·배포된 자산**이다 — 최근 커밋 `aa4de84 (perf: 엔드포인트 키워드 검색을 Postgres FTS(tsvector+GIN)로 이관)`, 그리고 P1 이 넣은 **한글·혼합 스크립트 토큰화**(`GET요청`→`get`,`요청`; 경로 분해 `/orders/{orderId}`→`orders`,`orderid`)가 `TEXT_TSV_EXPRESSION` 정규식으로 정밀 튜닝되어 있다. B 로 가면 이 로직을 **sparse-vector 토크나이저 위에서 재현**해야 하는데, Qdrant/FastEmbed 의 BM25 토크나이저·`multilingual` full-text 토크나이저(charabia 계열)의 **한글 처리 품질이 이 커스텀 FTS 와 동등하다는 보장이 없다.** → **이미 튜닝된 키워드 recall 을 미검증 경로로 재구축하는 회귀 리스크**가 생긴다. (이 한글 토큰화 동등성은 researcher 가 실측 검증할 항목 — 단, 아래 결론은 이 값에 의존하지 않는다.)
 - **결정적 대비점**: **pgvector 도 "단일 스토어 네이티브 하이브리드"를 이미 제공한다.** RRF 재검토 문서의 전제가 바로 그것 — 키워드 FTS 와 벡터가 **한 테이블·한 SQL** 안에 있어 RRF 를 한 쿼리로 표현 가능. 즉 사용자가 Qdrant 에서 얻으려는 "네이티브 하이브리드"는 **pgvector 에서 마이그레이션 없이 이미 가능**하며, 그쪽 키워드 계층은 **이미 완성·튜닝**되어 있다.
 
@@ -170,7 +170,7 @@ lead/사용자가 아키텍처 미학 또는 향후 스케일 대비로 **B 채�
 - **하이브리드**: 아키텍처 B(dense e5-small + sparse BM25, Qdrant Query API 서버사이드 RRF). A(풀텍스트 필터)는 키워드 랭킹 부재로 배제.
 - **SoR 경계**: Postgres = 엔드포인트/문서 메타·원문(`get_endpoint_details`). Qdrant = 검색 인덱스(dense+sparse 벡터 + payload: `ref_id`/`document_id`/`project`/`chunk_type`/`text`).
 - **쓰기 일관성**: **outbox 패턴** — Postgres 트랜잭션에 outbox 행 기록 → 워커가 Qdrant upsert/delete 반영, 실패 시 재시도. 부팅 시·주기적 **재조정 배치**(Postgres 청크 ↔ Qdrant 포인트 드리프트 감지)로 보강.
-- **05-embedding-provider-local-model-design.md 개정 방향(이 경우에만)**:
+- **05_embedding_provider_local_model_design.md 개정 방향(이 경우에만)**:
   - **3절**: pgvector 컬럼 dim 256→384 재생성 → **`api_chunk.embedding` 컬럼·HNSW 인덱스 폐기(DROP)** 로 교체. dim 은 Qdrant 컬렉션(384, cosine) 생성으로 이관. `EMBEDDING_DIM` 은 Qdrant 컬렉션 파라미터로 이동.
   - **5절**: `VectorSearch`/`search_by_vector`(pgvector SQL) 제거, `QdrantVectorStore`(upsert/delete/hybrid-query) 신설, `is_vector_fallback_available` 은 Qdrant 가용성으로 재정의. sparse 임베딩 provider(BM25) 배선 추가.
   - **선행 검증(researcher)**: Qdrant `multilingual`/BM25 토크나이저의 **한글·혼합스크립트·경로세그먼트** recall 이 현행 `TEXT_TSV_EXPRESSION` 대비 동등한지 실측 — 회귀 없음이 확인돼야 착수.

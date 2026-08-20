@@ -3,7 +3,7 @@
 - 일시: 2026-08-14
 - 작성: architect
 - 선행: `docs/architect-review/35_drive_notion_embedding_migration_and_refresh_strategy.md` §1 Phase3,
-  `docs/architect-review/07-search-rrf-reevaluation.md`,
+  `docs/architect-review/07_search_rrf_reevaluation.md`,
   `docs/architect-review/34_drive_notion_no_embedding_rationale.md`
 - 질문(developer): 2단계를 (A) 후보 문서별 스코프 조회 + 기존 가중합 유지로 갈지,
   (B) `EndpointCandidateSearch` 와 동형인 RRF 융합으로 갈지.
@@ -42,7 +42,7 @@ Phase1+2 로 만든 색인의 유일한 존재 이유가 사라진다.
 `TITLE_SCORE_WEIGHT`(0.4) / `BODY_SCORE_WEIGHT`(0.6) 은 두 항이 모두 **토큰 겹침
 비율 [0,1]** 이라 성립했던 공식이다. body 항을 `ts_rank`(코퍼스 의존·무경계)나
 코사인 유사도로 바꾸면 정규화 기준이 없다 — 그 정규화 불가능성이
-`07-search-rrf-reevaluation.md` 3·5절에서 RRF 를 채택한 근거다. 엔드포인트 경로에서
+`07_search_rrf_reevaluation.md` 3·5절에서 RRF 를 채택한 근거다. 엔드포인트 경로에서
 버린 구조를 문서 경로에 새로 심는 셈이다.
 
 "per-document 1건 랭킹이라 RRF 의미가 약하다"는 관찰은 맞지만, 그건 (A) 구조가

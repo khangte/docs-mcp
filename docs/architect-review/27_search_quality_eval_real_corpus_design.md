@@ -1,7 +1,7 @@
 # 27. 검색 품질 평가 설계 — 실 코퍼스 기반 질의셋 + recall@k / MRR 방법론
 
 - 상태: 설계 확정 + 코퍼스/질의 리터럴 확정(구현은 developer)
-- 관련: `tests/fixtures/rrf_eval/`(기존 synthetic 하네스), `07-search-rrf-reevaluation.md`, `09-search-quality-post-rrf.md`, `26-pdf-docx-...`(번들 검토 대상)
+- 관련: `tests/fixtures/rrf_eval/`(기존 synthetic 하네스), `07_search_rrf_reevaluation.md`, `09_search_quality_post_rrf.md`, `26-pdf-docx-...`(번들 검토 대상)
 - 선행 결정: 사용자가 **실 코퍼스 = 공개 API 문서(Stripe / GitHub OpenAPI spec)** 로 확정.
 
 ## 1. 배경과 현황
