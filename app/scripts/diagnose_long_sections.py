@@ -1,6 +1,6 @@
 """긴 섹션(512토큰 초과) 진단 — 읽기 전용, 프로덕션 무변경.
 
-`docs/architect-review/16-long-section-chunking-blindspot.md` Phase 0. 현재 DB의 `chunk`
+`docs/architect-review/16_long_section_chunking_blindspot.md` Phase 0. 현재 DB의 `chunk`
 중 `chunk_type='section'` 행을 훑어, 임베딩 토크나이저 기준 최대
 시퀀스 길이(실측 512, `docs/16` §1-2) 초과 건수·최대 토큰·초과 문서를
 doc_type 별로 집계한다.

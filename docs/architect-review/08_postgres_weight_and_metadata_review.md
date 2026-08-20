@@ -4,7 +4,7 @@
 - 일시: 2026-08-08
 - 작성: architect
 - 지시: lead(사용자 질문 — "postgresql이 용도에 비해 무겁지 않은가", "메타데이터를 굳이 저장할 필요가 있나")
-- 관련: `docs/architect-review/06_vector_store_qdrant_vs_pgvector.md`, `docs/supabase-migration-review.md`, `docs/architect-review/05_embedding_provider_local_model_design.md`(구현 완료 커밋 `be774dd`)
+- 관련: `docs/architect-review/06_vector_store_qdrant_vs_pgvector.md`, `docs/supabase-migration-review.md`(커밋 `52636bd`에서 삭제됨), `docs/architect-review/05_embedding_provider_local_model_design.md`(구현 완료 커밋 `be774dd`)
 - 대상: `app/core/db.py`, `app/models/openapi.py`, `docker-compose.yml`, `alembic/versions/*`, `.env.example`, `app/services/ingestor/sync_service.py`
 
 ## 요약(결정 사항)

@@ -1,6 +1,6 @@
 """실 코퍼스(Stripe/GitHub OpenAPI) 기반 검색 품질 평가 스크립트.
 
-`docs/architect-review/28-search-quality-eval-real-corpus-design.md` §7 계약의
+`docs/architect-review/27_search_quality_eval_real_corpus_design.md` §7 계약의
 구현이다. `tests/fixtures/rrf_eval/compare_strategies.py`(synthetic 20-엔드포인트
 하네스)의 DB·순위·지표·요약 로직을 그대로 재사용하고(§7.1), 이 스크립트가
 새로 갖는 것은 (1) 코퍼스 매니페스트 로더 (2) 다-문서 라벨 검증 게이트뿐이다.

@@ -2,7 +2,7 @@
 
 MCP stdio 서버 프로세스는 클라이언트가 세션마다 띄우는 단명 프로세스라 그
 안에 크론을 두면 "주기 실행" 계약을 지킬 수 없다
-(`docs/architect-review/32-refresh-index-batch-automation.md` §0). 이
+(`docs/architect-review/31_refresh_index_batch_automation.md` §0). 이
 스크립트는 한 번 돌고 종료하는 원샷 CLI이고, 주기는 OS 스케줄러
 (systemd timer/cron)가 소유한다. `refresh_index` MCP 도구와 같은 서비스
 함수를 호출하므로 즉시 실행 경로(도구)와 정기 실행 경로(이 스크립트)의

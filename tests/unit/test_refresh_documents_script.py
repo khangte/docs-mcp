@@ -1,6 +1,6 @@
 """app/scripts/refresh_documents.py 종료코드 규약 단위 테스트.
 
-`docs/architect-review/32-refresh-index-batch-automation.md` §4.1 의 4분기
+`docs/architect-review/31_refresh_index_batch_automation.md` §4.1 의 4분기
 (전 대상 실패/부분 실패/락 미획득/정상)를 가짜 bundle·lock_acquire 로
 검증한다. DB·외부 API 없이 `_execute()` 만 직접 호출한다.
 """

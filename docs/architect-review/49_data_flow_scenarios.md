@@ -1,7 +1,7 @@
 # 49. 데이터 흐름 시나리오별 정리 및 플로우 차트 (발표 다이어그램 보완 자료)
 
 - 작성: architect
-- 대상: `docs/architecture-presentation-diagram.html` 보완 설명
+- 대상: `docs/archive/architecture-presentation-diagram.html` 보완 설명
 - 근거: 코드 기준(2026-08-17, `main` @ 023e1a9), 다이어그램은 `main` @ 7fe2adb 기준 재확인
 
 각 케이스는 서술 다음에 바로 mermaid 플로우차트를 붙였다. 색 규칙(부록 C 범례)은 문서 전체에 동일하게

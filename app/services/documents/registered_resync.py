@@ -4,7 +4,7 @@
 도는 배치 진입점(`app/scripts/refresh_documents.py`)이 공유하는 로직이다.
 원래 MCP 계층(`app/mcp/tools/sources.py`)에 있었으나, 배치 스크립트가 MCP
 도구 모듈을 import하면 스크립트 → MCP 도구 → 서비스로 계층이 역전되므로
-서비스 계층으로 내렸다(`docs/architect-review/32-refresh-index-batch-automation.md` §4).
+서비스 계층으로 내렸다(`docs/architect-review/31_refresh_index_batch_automation.md` §4).
 
 `app.mcp.types.RegisteredResyncResult` 임포트는 응답 스키마(`RefreshIndexResult.registered`)를
 공유하기 위한 타입 전용 결합이며, 의도적으로 유지하는 계층 경계 예외다

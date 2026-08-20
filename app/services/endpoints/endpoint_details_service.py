@@ -7,7 +7,7 @@
 2. 호출 예시 코드는 `include_example=True` 일 때만 생성한다. 기본값에서는
    예시 생성 로직 자체를 호출하지 않는다(SPEC Phase 0 결정 7번).
 3. `referenced_schema_refs`/`related_endpoints` 순회 힌트를 함께 실어
-   준다(`docs/architect-review/12-rag-depth-directions.md` 후보2 얇은 버전) — 서버는 다음
+   준다(`docs/architect-review/12_rag_depth_directions.md` 후보2 얇은 버전) — 서버는 다음
    홉을 자동으로 밟지 않고 후보만 노출한다. `search_endpoints` 는 의도적으로
    얇은 후보만 반환하는 2단계 분리 설계라 이 힌트를 싣지 않는다(추가
    parameter/response 조회가 필요해 그 분리를 훼손하므로) — endpoint_id로

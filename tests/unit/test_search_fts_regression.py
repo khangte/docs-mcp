@@ -1,7 +1,7 @@
 """P1(키워드 검색 Postgres FTS 이관) 회귀 검증.
 
 ts_rank 점수값은 옛 파이썬 겹침비율 스코어러와 다를 수밖에 없으므로, "점수
-동일"이 아니라 설계문서(`docs/architect-review/04-search-p1-keyword-fts-design.md`) 5번의
+동일"이 아니라 설계문서(`docs/architect-review/04_search_p1_keyword_fts_design.md`) 5번의
 불변식 + 특성(characterization) 비교로 검증한다.
 
 - ASCII recall 동치(회귀 게이트): 레거시 스코어러 후보 집합 == FTS 후보 집합.
@@ -298,7 +298,7 @@ def test_korean_query_matches_keyword_not_vector_fallback(
 
     FTS 전환 전에는 한글이 토큰화에서 완전히 버려져 항상 벡터 fallback 을
     탔다(design.md 확인된 사실 1번). 이 테스트는 그 전략 변화를 명시적
-    계약으로 고정한다. RRF 도입(`docs/architect-review/07-search-rrf-reevaluation.md` 5.6) 이후
+    계약으로 고정한다. RRF 도입(`docs/architect-review/07_search_rrf_reevaluation.md` 5.6) 이후
     이 배타적 계약은 기본(rrf)이 아니라 `search_strategy="fallback"` 에
     한해서만 유효하므로 전략을 명시적으로 고정한다.
     """

@@ -1,7 +1,7 @@
 # 45. 포트폴리오 문서 리뷰 판정 — 헤드라인 지표 반증분 반영, 타입 전용 임포트 강제
 
 - 작성: architect
-- 리뷰 출처: reviewer (`docs/architecture-overview.html`, `docs/architecture_detailed.html`)
+- 리뷰 출처: reviewer (`docs/archive/architecture-overview.html`, `docs/architecture_detailed.html`)
 - 판정: **2건 모두 지적 타당 — 전부 수용**
   - (1) 헤드라인 지표: **문서 수정**(architect 직접 반영 완료)
   - (2) 런타임 임포트: **코드 수정 + 문서 표현 정정**(developer 지시)

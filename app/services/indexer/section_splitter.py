@@ -1,10 +1,10 @@
 """긴 섹션을 임베딩 토큰 상한 이하의 sub-chunk 텍스트로 분할하는 순수 함수.
 
-`docs/architect-review/23-long-section-sub-chunking-phase2-design.md` §2 계층적
+`docs/architect-review/23_long_section_sub_chunking_phase2_design.md` §2 계층적
 그리디 분할(문단 → 문장/줄 → 토큰 하드컷, overlap 없음)의 구현. 토큰 카운터는
 임베딩 프로바이더에서 콜러블로 주입받아 이 모듈은 모델에 의존하지 않는다.
 
-`docs/architect-review/26-pdf-docx-deterministic-catchall-gate-recheck.md`:
+`docs/architect-review/26_pdf_docx_deterministic_catchall_gate_recheck.md`:
 pdf/docx는 헤딩이 원리적으로 없어(파서가 서식 없는 순수 텍스트만 추출)
 section_count=1 로 결정론적으로 묶이고, 실측(다중페이지 PDF 1건, 10335토큰)으로
 480토큰 초과가 확인되어 게이트가 실배선 착수로 상향되었다. `chunk_builder.build_chunks`

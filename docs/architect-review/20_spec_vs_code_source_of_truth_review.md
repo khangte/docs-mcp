@@ -1,7 +1,7 @@
 # 20. OpenAPI 스펙을 색인 소스로 삼는 접근의 타당성 재검토 (스펙 vs 코드)
 
 > 별개 트랙 분석 리포트. 코드 변경 없음. 근거: `README.md`,
-> `docs/product_specs/plan.md`, `docs/adr/0001`,
+> `docs/archive/plan.md`, `docs/adr/0001`,
 > `docs/exec_plans/docs_mcp_expansion/SPEC.md`, 파이프라인 코드.
 
 사용자 지적: OpenAPI/Swagger 스펙은 실제 API 구현(코드)과 별도로 관리·수정되는

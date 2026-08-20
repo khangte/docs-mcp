@@ -1,7 +1,7 @@
 # 48. 발표용 아키텍처 다이어그램 검토
 
 - 대상: 사용자가 제시한 발표 슬라이드용 아키텍처 그림(원본 이미지는 첨부 형태로만 존재, 파일 없음)
-- 검토 기준: `ARCHITECTURE.md` §2·§5·§6, `app/mcp/tools/`, `app/services/documents/`, `app/scripts/refresh_documents.py`, `docs/architecture-overview.html` "전체 그림"
+- 검토 기준: `ARCHITECTURE.md` §2·§5·§6, `app/mcp/tools/`, `app/services/documents/`, `app/scripts/refresh_documents.py`, `docs/archive/architecture-overview.html` "전체 그림"
 - 판정: **수정 필요** (구조 오류 1건, 표기 오류 2건, 누락 4건)
 
 ## 1. 검토한 그림의 구성
@@ -58,7 +58,7 @@
 
 ### M2 (누락) 주기 동기화(배치) 경로
 
-"사람이 챙기지 않아도 최신"은 이 프로젝트의 셀링 포인트인데(`docs/architecture-overview.html` 지표 "0"), 그림에 스케줄러가 없다. OS 스케줄러 → `refresh_documents.py` → (서버와 같은 서비스 함수) → 소스 fetch → DB 갱신 흐름이 빠져 있으면, 관객은 사용자가 도구를 호출할 때만 데이터가 들어오는 것으로 이해한다.
+"사람이 챙기지 않아도 최신"은 이 프로젝트의 셀링 포인트인데(`docs/archive/architecture-overview.html` 지표 "0"), 그림에 스케줄러가 없다. OS 스케줄러 → `refresh_documents.py` → (서버와 같은 서비스 함수) → 소스 fetch → DB 갱신 흐름이 빠져 있으면, 관객은 사용자가 도구를 호출할 때만 데이터가 들어오는 것으로 이해한다.
 
 수정: 오른쪽 위에 "OS 스케줄러(systemd/cron)" 박스를 하나 두고 서버와 같은 서비스 계층으로 점선을 넣는다. 슬라이드가 빡빡하면 서버 박스 안에 "정해진 주기로 자동 재색인" 한 줄로 축약해도 된다.
 
@@ -80,7 +80,7 @@
 
 ## 4. 권고
 
-`docs/architecture-overview.html` 의 "전체 그림"이 이미 같은 내용을 두 갈래(문서를 **쌓는 길** / 질문에 **답하는 길**)로 정리해 두었고, 이 구성이 위 지적을 전부 해소한다. 발표 슬라이드는 새로 그리기보다 그 구성을 그대로 옮기는 편을 권한다.
+`docs/archive/architecture-overview.html` 의 "전체 그림"이 이미 같은 내용을 두 갈래(문서를 **쌓는 길** / 질문에 **답하는 길**)로 정리해 두었고, 이 구성이 위 지적을 전부 해소한다. 발표 슬라이드는 새로 그리기보다 그 구성을 그대로 옮기는 편을 권한다.
 
 최소 수정안(현 그림 유지 시):
 

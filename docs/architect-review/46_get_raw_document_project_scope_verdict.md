@@ -85,7 +85,7 @@ project)가 서로 안 맞을 때 조용히 빈 결과를 주지 않기 위한 �
 ### 3-4. 결론적으로 이것은 신뢰 경계가 아니다
 
 이 시스템의 `project` 는 접근 통제 주체가 아니라 **검색 범위를 좁히는 태그**다
-(`docs/portfolio-architecture.html` 설계 결정 02). 단일 프로세스 stdio MCP 서버, 단일 DB,
+(`docs/archive/portfolio-architecture.html` 설계 결정 02). 단일 프로세스 stdio MCP 서버, 단일 DB,
 인증 없음, 세션 신원 없음 — 격리를 걸 지점이 존재하지 않는다. 47번 문서의 "신뢰 경계가 아니라
 태그 기반 범위 지정" 판단은 이번 재검토에서도 유지된다.
 

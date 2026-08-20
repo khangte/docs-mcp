@@ -176,7 +176,7 @@ def test_endpoint_without_request_body_returns_none(
 
 # --- 순회 힌트 링크: referenced_schema_refs / related_endpoints --------------
 #
-# docs/architect-review/12-rag-depth-directions.md 후보2(얇은 버전) — 서버는 판단하지 않고
+# docs/architect-review/12_rag_depth_directions.md 후보2(얇은 버전) — 서버는 판단하지 않고
 # 다음 홉 후보만 노출한다. 밟을지는 호출측(Claude)이 정한다.
 
 

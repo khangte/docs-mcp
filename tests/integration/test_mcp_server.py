@@ -110,7 +110,7 @@ async def test_search_marks_match_type_from_contract_values(seeded_mcp: FastMCP)
 
     기본 전략은 rrf(키워드+벡터 항상 병렬 실행)라 어느 arm 이 기여했는지는
     임베딩 유사도에 따라 달라질 수 있다 — "both" 도 유효한 결과다
-    (`docs/architect-review/07-search-rrf-reevaluation.md` 5.1). fallback 전략의 배타적
+    (`docs/architect-review/07_search_rrf_reevaluation.md` 5.1). fallback 전략의 배타적
     match_type="keyword" 계약은 `test_search_marks_keyword_match_type_under_fallback_strategy`
     가 별도로 고정한다.
     """
@@ -241,7 +241,7 @@ async def test_details_exposes_traversal_hints(seeded_mcp: FastMCP) -> None:
     """상세 응답에 순회 힌트(referenced_schema_refs·related_endpoints)가 실린다.
 
     서버는 다음 홉을 자동으로 호출하지 않는다 — 힌트는 후보 노출일 뿐이다
-    (`docs/architect-review/12-rag-depth-directions.md` 후보2 얇은 버전).
+    (`docs/architect-review/12_rag_depth_directions.md` 후보2 얇은 버전).
     """
     candidate = await _first_candidate(seeded_mcp, "find pet by id")
 

@@ -1,6 +1,6 @@
 """RRF vs fallback 검색 품질 정량 비교 스크립트.
 
-`docs/architect-review/07-search-rrf-reevaluation.md` 5.0(전제 B)이 요구한 "최소 평가셋 기반
+`docs/architect-review/07_search_rrf_reevaluation.md` 5.0(전제 B)이 요구한 "최소 평가셋 기반
 before/after 측정"의 재실행 가능한 도구다. pytest 로 수집되지 않는 독립
 스크립트다(느린 실제 임베딩 모델 로딩·전용 임시 DB 필요 — CI 상시 실행용이
 아니라 회귀 의심 시 수동으로 재실행하는 용도).

@@ -112,6 +112,26 @@
 `docs/architect-review/` 내부 상호 참조 문서들의 경로 문자열을 전수 치환했다. 문서 경로를 주석·
 docstring에 담고 있던 `app/services/search/keyword_search.py`와 테스트 2개도 같은 치환 대상이었다.
 
+**최종 스윕 (2026-08-20).** 위 치환 이후 `docs/` 전체를 다시 훑어 남은 경로 인용을 정리했다.
+
+- `docs/implementation_journey.md`의 글롭 표기 `NN-*.md`를 `NN_*.md`로.
+- 삭제·이동된 문서를 가리키던 참조를 현재 위치로 — `docs/search-rrf-reevaluation.md`(exec_plans
+  SPEC.md)는 `docs/architect-review/07_search_rrf_reevaluation.md`로, `docs/product_specs/plan.md`
+  (20번)는 `docs/archive/plan.md`로.
+- 4.1에서 아카이브로 옮긴 HTML을 가리키던 44·45·46·48·49번의 인용 경로에 `archive/`를 붙였다.
+  앞서 "시점 기록이라 고치지 않는다"고 적었던 판단을 뒤집은 것이다 — 문서가 삭제된 것이 아니라
+  자리만 옮겼고, 인용이 실재하는 파일을 가리키지 못하면 기록으로서의 값도 없다.
+- 저장소에 더는 없는 문서 참조 2종은 경로를 고치는 대신 그 사실을 본문에 적었다.
+  `docs/supabase-migration-review.md`(6·8번)는 커밋 `52636bd`에서 삭제됐고,
+  `docs/portfolio-components.html`(44번)은 커밋된 적이 없는 작업 중 로컬 파일이었다.
+
+**남은 것 — 코드·테스트 30군데.** 스윕이 `docs/` 안쪽만 덮었다. 주석·docstring에 문서 경로를
+담고 있는 `app/`·`tests/`·`scripts/` 파일 30군데가 아직 옛 경로를 가리킨다. 그중 5건은 하이픈
+문제가 아니라 **번호가 틀린 것**이라(커밋 `be3e545`의 56→50 재정렬을 주석이 따라가지 않았다)
+단순 치환으로는 못 고친다 — 특히 `32-refresh-index-batch-automation.md`는 지금
+`32_notion_page_id_legacy_slot_seed.md`라는 다른 주제 문서다. 파일·줄 단위 목록과 치환 대상은
+`.team/_runtime/doc_path_refs_todo.md`에 정리해 developer에 전달했다.
+
 `docs/archive/`의 파일 **이름**은 바꾸지 않았다(4.1 참조). 다만 아카이브 문서가 **밖으로 거는 링크**는
 대상 파일이 실제로 리네임됐으므로 함께 고쳤다 — `archive/plan.md`의 `docs/search_flow.md` 참조 1건,
 `archive/architecture-overview.html`의 상세 문서 링크 1건. 후자는 파일명 치환만으로는 부족했다.

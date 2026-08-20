@@ -13,7 +13,8 @@
 
 ## 0. 선행 판정 — 인셋 함수명 오타 (doc/46 흡수)
 
-- 대상: `docs/portfolio-components.html` (신규 컴포넌트 구조 문서)
+- 대상: `docs/portfolio-components.html` (신규 컴포넌트 구조 문서 — 저장소에 커밋된 적이 없다.
+  작업 중 로컬 파일이었고 현재는 남아 있지 않다)
 - 리뷰 출처: reviewer
 - 판정: **수정 필요 인정 — 지적 1건 전부 수용, architect가 직접 문서 정정**
 
@@ -55,7 +56,7 @@
 
 ### 0.4 부산물 — 기존 문서의 "17 도구" 표기 해소
 
-앞선 보고에서 `docs/portfolio-architecture.html`의 `17 도구` 표기와 실제 등록 수 16개가
+앞선 보고에서 `docs/archive/portfolio-architecture.html`의 `17 도구` 표기와 실제 등록 수 16개가
 불일치한다고 올렸는데, 이번 확인으로 원인이 드러났다.
 
 - 실제 `@mcp.tool()` 등록: **16개** (documents 4 · endpoints 4 · sources 8)
@@ -258,7 +259,7 @@ def resync_registered_documents(
   `list_tags` 등은 document_id ↔ project 정합을 검사한다. 다만 리소스 URI 템플릿
   (`document://{document_id}/raw`)에 project 가 없어 **검사할 인자 자체가 없고**, 이
   시스템의 프로젝트 격리는 애초에 신뢰 경계가 아니라 태그 기반 범위 지정이다
-  (`docs/portfolio-architecture.html` 설계 결정 02). 이번 지시 범위(계층 경계) 밖이므로
+  (`docs/archive/portfolio-architecture.html` 설계 결정 02). 이번 지시 범위(계층 경계) 밖이므로
   건드리지 않되, **별건으로 판단이 필요하면 lead 에 올린다.**
 
 ---
