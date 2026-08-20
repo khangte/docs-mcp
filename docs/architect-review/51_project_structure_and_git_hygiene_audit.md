@@ -45,7 +45,7 @@
 
 권고: `.gitignore`에서 `uv.lock` 제거 후 커밋.
 
-### 3.2 [중간] `.env.example`에 `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`가 없다
+### 3.2 [중간] [완료 2026-08-20] `.env.example`에 `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`가 없다
 
 `app/core/config.py:45`가 읽는 `DOCS_MCP_DOCUMENT_SEARCH_STRATEGY`(기본 `indexed`, 롤백값 `fetch`)가
 `.env.example`에 누락되어 있다. `.env.example`의 나머지 12개 환경변수는 모두 문서화되어 있어
