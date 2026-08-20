@@ -28,15 +28,23 @@ Markdown·CSV·PDF/DOCX·OpenAPI(Swagger) 문서와 Google Drive/Notion 협업 �
 
 ## 검색 아키텍처 (요약)
 
-검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM 이 반환된 후보(top_k) 중에서 선택합니다 — 서버는 **후보 피더**이고 품질 지표는 recall@k 입니다(확장 평가셋 84질의에서 Recall@3 88%·@10 95%).
+검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM 이 반환된 후보(top_k) 중에서 선택합니다 — 서버는 **후보 피더**이고 품질 지표는 recall@k 입니다.
 
-위 수치는 자체 제작 평가셋 기준입니다. 실제 대형 스펙(Stripe/GitHub OpenAPI) 20질의에서는
-Recall@10 50%로 떨어지며, 그 간격과 대응 경위는 아래 구현 여정 문서에 정리해 두었습니다.
+품질은 **Stripe 589 + GitHub 1,220 = 1,809개 실제 엔드포인트**를 프리즈한 코퍼스(n=20 질의)로
+측정합니다. 마감 재측정 기준 `rrf` 전략은 **Recall@3 25%·Recall@10 50%·MRR 0.248**입니다
+(질의 변형 포함 조건).
+
+초기에는 20개 엔드포인트짜리 합성 하네스에서 Recall@3 88%·@10 95%가 나왔지만, 실 코퍼스로
+다시 재면서 **그 수치가 성능이 아니라 벤치 포화의 증거였음이 드러났습니다.** 경위와 실패 축
+분해(교차언어·흔한 토큰 범람·RRF 회귀 3건)는 아래 문서에 있습니다. n=20 에서 표준오차는
+±11%p 대이므로 라운드 간 몇 %p 변동은 노이즈와 구분되지 않습니다.
 
 - [`docs/implementation_journey.md`](docs/implementation_journey.md) — 로드맵 0~5가 실제로 어떤 순서·판단을 거쳐 구현됐는지(커밋·설계문서 매핑, 기각된 개선안 포함)
 - [`docs/search_flow.md`](docs/search_flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
 - [`docs/architect-review/03_search_performance_improvements.md`](docs/architect-review/03_search_performance_improvements.md) — 성능 개선 P1~P6 및 구현 상태
-- [`docs/architect-review/09_search_quality_post_rrf.md`](docs/architect-review/09_search_quality_post_rrf.md) — 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
+- [`docs/architect-review/09_search_quality_post_rrf.md`](docs/architect-review/09_search_quality_post_rrf.md) — 합성 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
+- [`docs/architect-review/29_search_quality_eval_real_corpus_results.md`](docs/architect-review/29_search_quality_eval_real_corpus_results.md) — 실 코퍼스 측정 결과(마감 재측정은 §13, 카테고리별 실패 분해 포함)
+- [`docs/architect-review/45_portfolio_metrics_and_type_only_import_verdict.md`](docs/architect-review/45_portfolio_metrics_and_type_only_import_verdict.md) — 합성 지표를 대외 문서에서 걷어낸 판정
 
 ## 시작하기
 
