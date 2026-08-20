@@ -70,7 +70,20 @@
 `refresh_lock`은 `architecture-detailed.html`·`portfolio-architecture.html`에 반영돼 있어,
 누락은 Notion 재귀 색인 건에 한정된다.
 
-권고: 4종 중 실제로 유지할 문서를 먼저 정하고(3.5 참조), 유지 대상에만 Notion 재귀 색인 경로를 반영.
+권고: 4종 중 실제로 유지할 문서를 먼저 정하고(4.1 참조), 유지 대상에만 Notion 재귀 색인 경로를 반영.
+
+**조치 완료 (2026-08-20).** 4.1 판정에 따라 `docs/architecture-detailed.html` 한 곳에만 반영했다.
+
+- §3 MCP 표면: `refresh_index` 설명에 본문 색인(`index_bodies` 기본 `True`) 추가 — `cb7f022`가 기본값을
+  `False`에서 `True`로 바꿨는데 표에는 "메타 캐시 동기화"만 적혀 있었다.
+- §7 외부 통합: Notion 행의 "가져오는 것"을 `child_page`/`child_database` 재귀 탐색으로, "파싱"을
+  헤딩·리스트 마커 복원까지 포함하도록 수정.
+- §7 말미: 재귀 색인 설계를 카드 3장으로 추가 — (01) 목록화는 하위 트리를 독립 문서로 평탄화하며
+  `MAX_PAGE_DEPTH = 4` · `MAX_CONTAINER_DEPTH = 3` · `MAX_PAGES = 500`으로 끊는다, (02) 본문 재귀는
+  `child_page`에서 멈춰 부모·자식 중복 색인을 막는다, (03) DB 행 속성은 블록에 없어 `GET /pages/{id}`를
+  한 번 더 호출해 붙인다. 마커 복원이 없으면 모든 청크 앵커가 `# 개요`로 뭉개지는 이유도 함께 적었다.
+
+아카이브 대상 3종은 갱신하지 않았다 — 보존이 목적이므로 시점 기록으로 남기는 편이 맞다.
 
 ### 3.4 [낮음] `docs/architect-review/` 파일명 규칙이 중간에 바뀌었다
 
@@ -92,6 +105,24 @@
 3.3의 누락도 이 구조에서 나온 결과다.
 
 권고: 발표·포트폴리오 목적이 끝난 문서는 `docs/archive/`로 옮기고, 살아있는 참조 문서만 `docs/` 루트에 남긴다.
+
+**조치 완료 (2026-08-20).** `architecture-detailed.html` 한 개만 살아있는 참조로 남기고 나머지 3종을
+`docs/archive/`로 옮겼다(`git mv`).
+
+| 파일 | 판정 | 근거 |
+|---|---|---|
+| `docs/architecture-detailed.html` | 유지 | 8개 섹션으로 MCP 표면 16 tools·검색 파이프라인·저장/색인·외부 통합을 모두 덮는 유일한 전체 문서 |
+| `docs/archive/architecture-overview.html` | 아카이브 | 서사형 요약. `README.md`의 "검색 아키텍처(요약)"와 detailed §1이 같은 내용을 이미 덮는다 |
+| `docs/archive/portfolio-architecture.html` | 아카이브 | 포트폴리오용. overview와 설계 결정 3가지·기술 스택이 거의 그대로 겹친다 |
+| `docs/archive/architecture-presentation-diagram.html` | 아카이브 | 발표용 단일 다이어그램. 일회성 목적이 끝났다 |
+
+두 계층(요약 + 상세)을 유지하는 선택지도 있었으나, 그것이 바로 3.3의 드리프트를 만든 구조다.
+입문용 서사는 이미 `README.md`가 맡고 있어 요약본 HTML을 따로 살려 둘 이유가 없다.
+
+링크 정리: `architecture-detailed.html`의 헤더 내비게이션이 `./architecture-overview.html`을 가리키고
+있어 `README.md`와 `docs/archive/`를 가리키도록 고쳤다. 나머지 인바운드 참조는
+`docs/architect-review/` 44·45·46·48·49번의 본문 인용으로, 그 시점의 판단 기록이므로 경로를
+고쳐 쓰지 않았다.
 
 ### 4.2 CI 설정 부재
 

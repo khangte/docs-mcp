@@ -292,7 +292,7 @@
       <span class="badge">Pydantic v2</span>
       <span class="badge">sentence-transformers</span>
     </div>
-    <div class="nav-note">발표용 요약본 → <a href="./architecture-overview.html">architecture-overview.html</a></div>
+    <div class="nav-note">입문용 요약은 <a href="../README.md">README.md</a> — 지난 발표·포트폴리오본은 <a href="./archive/">docs/archive/</a>에 보존</div>
   </div>
 
   <div class="stats">
@@ -636,7 +636,7 @@
           <tr><td class="mod">document://&#123;id&#125;/raw</td><td><b>resource</b> — OpenAPI 문서 원문(JSON/YAML) 반환</td><td class="dim">DocumentRepository</td></tr>
 
           <tr class="grp"><td colspan="3">sources — 소스 등록 · 동기화 (8 tools)</td></tr>
-          <tr><td class="mod">refresh_index</td><td>협업 문서 메타 캐시(제목·수정일)를 원본과 동기화</td><td class="dim">DocumentIndexService</td></tr>
+          <tr><td class="mod">refresh_index</td><td>협업 문서 메타 캐시(제목·수정일) 동기화 + 본문 색인(<code>index_bodies</code> 기본 <code>True</code>)</td><td class="dim">DocumentIndexService</td></tr>
           <tr><td class="mod">register_drive_source</td><td>프로젝트 → Google Drive 폴더 매핑 등록</td><td class="dim">ProjectSourceService</td></tr>
           <tr><td class="mod">list_drive_sources</td><td>Drive 폴더 매핑 목록</td><td class="dim">ProjectSourceService</td></tr>
           <tr><td class="mod">remove_drive_source</td><td>Drive 폴더 매핑 제거</td><td class="dim">ProjectSourceService</td></tr>
@@ -815,8 +815,8 @@
           <tr>
             <td class="mod">Notion API</td>
             <td class="dim">integration token (전역 공유)</td>
-            <td>매핑된 database 또는 허브 page의 하위 문서</td>
-            <td class="dim">블록 → 텍스트</td>
+            <td>매핑된 database 행 · 허브 page의 하위 트리를 <code>child_page</code>/<code>child_database</code>로 재귀 탐색</td>
+            <td class="dim">블록 → 평문 (헤딩·리스트 마커 복원)</td>
           </tr>
           <tr>
             <td class="mod">OpenAPI spec (HTTP)</td>
@@ -828,6 +828,25 @@
       </table>
     </div>
     <p class="s-sub">Drive/Notion 자격증명은 전역 공유이고 프로젝트마다 달라지는 것은 폴더/DB 매핑뿐이다. 하나의 프로세스·DB가 여러 프로젝트를 함께 서비스하며, 격리는 <code>project</code> 태그로 한다 — 신규 프로젝트 온보딩 비용이 낮은 이유다.</p>
+    <p class="s-sub">Notion만 통합 난이도가 다르다. Drive는 파일이 폴더에 평탄하게 놓이지만 Notion 문서는 페이지 안에 페이지가, 페이지 안에 데이터베이스가 다시 들어간다. 제목만 긁으면 <b>Notion 자체 검색보다 못한</b> 커버리지가 나오므로, 목록화와 본문 수집 양쪽에서 트리를 따라간다.</p>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">01</span>
+        <h3>목록화는 트리 전체를 편다</h3>
+        <p>허브 page든 database 행이든 <code>child_page</code> · <code>child_database</code>를 타고 내려가 하위 문서를 <b>독립 문서로 평탄화</b>한다. 하위 페이지를 품을 수 있는 <code>toggle</code> · <code>column</code> 컨테이너도 통과한다. 무한 순회는 상한으로 끊는다 — 페이지 깊이 <code>MAX_PAGE_DEPTH = 4</code>, 컨테이너 깊이 <code>MAX_CONTAINER_DEPTH = 3</code>(별도로 센다), 총 페이지 <code>MAX_PAGES = 500</code>.</p>
+      </div>
+      <div class="card">
+        <span class="mark">02</span>
+        <h3>본문 재귀는 child_page에서 멈춘다</h3>
+        <p>목록화가 하위 페이지를 이미 독립 문서로 잡으므로, 부모 본문을 모을 때 또 타고 들어가면 같은 텍스트가 <b>두 문서에 중복 색인</b>되고 부모 히트의 스니펫·URL이 실제 출처와 어긋난다. 그래서 본문 수집은 <code>child_page</code>에서 재귀를 끊고 제목만 남긴다 — 부모에서도 하위 문서 이름은 검색된다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">03</span>
+        <h3>블록에 없는 것은 페이지 객체에서</h3>
+        <p>DB 행의 status · formula 같은 속성은 블록이 아니라 페이지 객체에 있어 <code>/blocks/{id}/children</code>만으로는 잡히지 않는다. <code>GET /pages/{id}</code>를 한 번 더 호출해 <code>"{속성명}: {값}"</code> 줄을 본문 앞에 붙인다. 표 셀 · caption · bookmark URL도 같은 이유로 따로 긁는다.</p>
+      </div>
+    </div>
+    <p class="s-sub">헤딩·리스트 마커를 되살리는 것도 여기 딸린 일이다. Notion 평문에는 서식 정보가 없어 마커 없이 이어 붙이면 <code>markdown_parser</code>가 문서 전체를 "개요" 섹션 하나로 만들고 <b>모든 청크 앵커가 <code># 개요</code>로 뭉개진다</b>. 블록 타입을 <code>#</code> · <code>-</code> · <code>&gt;</code> 마커로 되돌려 섹션 경계를 복원한다.</p>
   </section>
 
   <section>
