@@ -376,6 +376,36 @@ def test_search_by_vector_returns_ref_id(db_session) -> None:
     assert hits[0].ref_id == "ep-1"
 
 
+def test_search_by_vector_ties_break_by_id_ascending(db_session) -> None:
+    """거리가 동일한 청크들은 id 오름차순으로 결정적으로 정렬된다."""
+    document = Document(
+        id="doc-1",
+        project="default",
+        source_url=None,
+        title="샘플 문서",
+        content_hash="hash",
+        raw_text="{}",
+    )
+    db_session.add(document)
+    for chunk_id in ["chunk-c", "chunk-a", "chunk-b"]:
+        db_session.add(
+            Chunk(
+                id=chunk_id,
+                document_id="doc-1",
+                chunk_type="endpoint",
+                ref_id=f"ep-{chunk_id}",
+                text="hello world",
+                embedding=[0.1] * EMBEDDING_DIM,
+            )
+        )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
+
+    assert [hit.chunk_id for hit in hits] == ["chunk-a", "chunk-b", "chunk-c"]
+
+
 # --- Q2: search_by_vector 의 chunk_type='endpoint' SQL 필터 ------------------
 
 

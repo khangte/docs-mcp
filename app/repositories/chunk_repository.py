@@ -254,7 +254,7 @@ class ChunkRepository:
                 stmt = stmt.where(Document.project == project)
             if doc_types is not None:
                 stmt = stmt.where(Document.doc_type.in_(doc_types))
-        stmt = stmt.order_by(distance.asc()).limit(top_k)
+        stmt = stmt.order_by(distance.asc(), Chunk.id.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
             ChunkVectorHit(chunk_id=cid, ref_id=ref_id, document_id=doc_id, score=1.0 - float(dist))
