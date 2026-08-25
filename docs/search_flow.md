@@ -7,12 +7,14 @@
 > - `app/services/documents/` (협업문서 검색: `document_search_service.py`, `search_scorer.py`, `snippet_generator.py`, `document_body_indexer.py`의 `deterministic_document_id` — 융합 키 계산)
 > - `app/repositories/chunk_repository.py` (FTS·벡터 SQL), `app/repositories/document_meta_repository.py` (문서 메타 ILIKE 필터)
 > - `app/models/chunk.py` (`TEXT_TSV_EXPRESSION`, `text_tsv` 생성 컬럼·GIN 인덱스), `app/composition.py` (조립), `app/core/config.py` (전략 플래그)
+> - `app/services/indexer/chunk_builder.py` (`build_endpoint_chunk_text` — **매칭 대상 텍스트**의 구성), `app/services/indexer/endpoint_chunk_refresher.py`·`app/services/metadata/writeback_service.py` (write-back 으로 청크 텍스트·임베딩이 런타임에 바뀌는 경로 — §2.0)
 >
 > 코드와 이 문서가 어긋나면 신규 참여자가 잘못된 그림을 갖게 된다. **코드가 진실, 문서는 그 요약**임을 전제로, 흐름·파일·함수 위치가 바뀌면 반드시 반영한다.
 >
 > 인용한 `파일:라인`은 갱신 시점 기준이다. 함수·상수 **이름**이 1차 좌표이고 라인 번호는 보조 힌트로 읽는다.
 
-- 최종 갱신: 2026-08-15 (architect: 협업문서 검색 `indexed` 전략(3-arm RRF) §3 신규 기술 — 기본값이 `fetch`→`indexed` 로 전환됨(커밋 2d5cb26), 기존 fetch 경로는 §3.4~3.5 롤백 스위치로 격하)
+- 최종 갱신: 2026-08-25 (architect: §2.0 신규 — 엔드포인트 청크의 매칭 대상 텍스트 구성과 비즈니스 메타데이터 write-back 에 의한 런타임 갱신 경로 기술, §4 공통 원칙에 코퍼스 변동 항목 추가)
+- 이전 갱신: 2026-08-15 (architect: 협업문서 검색 `indexed` 전략(3-arm RRF) §3 신규 기술 — 기본값이 `fetch`→`indexed` 로 전환됨(커밋 2d5cb26), 기존 fetch 경로는 §3.4~3.5 롤백 스위치로 격하)
 - 작성: architect
 - 관련 설계 근거: `docs/architect-review/07_search_rrf_reevaluation.md`(RRF), `docs/architect-review/04_search_p1_keyword_fts_design.md`(키워드 FTS), `docs/architect-review/03_search_performance_improvements.md`(P1~P6), `docs/architect-review/10_collab_docs_search_fixes.md`(항목1~6: version 파싱, truncated 노출 등), `docs/architect-review/12_rag_depth_directions.md`(후보4: query_variants 확장), `docs/architect-review/29_search_quality_eval_real_corpus_results.md`(§7.2: query_variants 벡터 arm 라우팅), `docs/architect-review/37_document_search_phase3_rrf_verdict.md`(문서 검색 3-arm RRF 채택), `docs/architect-review/41_backfill_result_verification_and_indexed_default_gate.md`(`indexed` 기본값 전환 승인)
 
@@ -39,6 +41,32 @@
 
 `EndpointCandidateSearch.search` (`app/services/search/endpoint_candidate_search.py:116`)가 진입점이다.
 **후보 식별 정보만**(endpoint_id·method·path·summary·match_type) 반환하고, 상세(파라미터·응답)는 `get_endpoint_details`가 담당한다.
+
+### 2.0 매칭 대상 텍스트 — 무엇이 색인돼 있는가
+
+두 arm 은 서로 다른 데이터를 보지 않는다. **하나의 endpoint 청크 텍스트**를 FTS 는 `text_tsv` 생성 컬럼으로, 벡터는 그 텍스트의 임베딩으로 볼 뿐이다. 텍스트 구성은 `build_endpoint_chunk_text` (`app/services/indexer/chunk_builder.py:33`) 하나가 정하고, 색인 경로와 아래 write-back 갱신 경로가 **같은 함수**를 쓴다.
+
+```
+[METHOD] PATH — SUMMARY
+Keywords: k1, k2          (비즈니스 메타데이터 있을 때만)
+Phrases: p1; p2           (비즈니스 메타데이터 있을 때만)
+OperationId: ...
+Params: name(in,required), ...
+Body: field1, field2, ...  (인라인 properties 가 있을 때만)
+Tags: t1, t2
+DESCRIPTION               (HTML 태그 제거 후 앞 300자)
+BusinessDesc: ...         (비즈니스 메타데이터 있을 때만, description 을 대체하지 않고 병기)
+Responses: 200, 404
+```
+
+순서에 이유가 있다. 임베딩 모델은 입력 꼬리를 자르므로 구조 필드(`Params`/`Body`)를 저신호 free-text 뒤가 아니라 앞에 두고, `Keywords`/`Phrases` 는 header 바로 뒤 — 512토큰 상한에서 가장 살아남는 자리 — 에 온다(`docs/architect-review/30` §9.2·§11.2, `52` §(3), `54` §4).
+
+**이 텍스트는 재색인 배치 밖에서도 바뀐다.** 호출 LLM 이 `submit_endpoint_metadata` 로 비즈니스 메타데이터를 저장하면(`MetadataWritebackService.submit`, `app/services/metadata/writeback_service.py:116`) 해당 엔드포인트 청크 **1건만** 즉시 재조립·재임베딩한다(`refresh_endpoint_chunk`, `app/services/indexer/endpoint_chunk_refresher.py:22`). `ParsedEndpoint` 를 ORM 역조립이 아니라 `Document.raw_text` 재파싱으로 다시 얻어 색인 경로와의 포맷 드리프트를 막는다. 갱신 결과로
+
+- **키워드 arm**: `text_tsv` 는 STORED generated 컬럼이라 텍스트 UPDATE 만으로 자동으로 다시 계산된다 — `Keywords`/`Phrases`/`BusinessDesc` 의 lexeme 이 새로 매칭 대상이 된다(사용자 어휘 ↔ 스펙 어휘의 간극을 메우는 것이 이 필드들의 목적).
+- **벡터 arm**: 임베딩은 자동이 아니라 위 갱신기가 명시적으로 다시 채운다. 실패하면 메타데이터 저장은 유지한 채 `reindexed=false` 로 알리고 다음 전체 재색인에서 맞춰진다.
+
+검색 로직(질의 처리·후보 폭·RRF·tie-break)은 이 경로로 바뀌지 않는다. 바뀌는 것은 **코퍼스 쪽 lexeme 과 벡터**뿐이다. 설계 근거는 `docs/architect-review/56_business_metadata_writeback_design.md`.
 
 ### 2.1 전략 두 가지
 
@@ -230,6 +258,7 @@ flowchart TD
 - **질의 확장은 호출측 LLM의 몫** — 서버는 동의어/약어 확장을 위해 별도 LLM을 호출하지 않는다. 호출자가 넘긴 `query_variants`를 쓸 뿐이다(`docs/architect-review/12_rag_depth_directions.md` 후보4).
 - **variant는 후보를 넓히고, 점수는 원본이 정한다** — 두 경로의 키워드 신호(FTS OR / ILIKE)는 `query_variants`로 후보 필터만 넓히고 점수는 **원본 질의 토큰만으로** 계산한다. 엔드포인트 검색의 벡터 arm은 `query_variants`를 **받는다**(§2.2 5번, `docs/architect-review/29_search_quality_eval_real_corpus_results.md` §7.2) — 교차언어 질의에서는 벡터 arm이 유일한 신호인데 원본 질의만으로는 약해서다. 이때도 원본과 변형의 점수를 가중합하지 않고 **각 질의의 자체 등수 중 최솟값**만 취해 RRF에 순위로 넘기므로, "variant가 점수를 밀어 올리지 않는다"는 규약은 유지된다. **협업문서 검색의 벡터 arm은 아직 variant를 받지 않는다**(§3.2 7번) — 두 경로의 유일한 비대칭이며, 필요해지면 엔드포인트 경로의 등수 최솟값 병합을 그대로 이식하면 된다.
 - **RRF는 두 경로의 공통 랭킹 축이고, 다른 것은 융합 키뿐이다** — 엔드포인트는 `endpoint_id`(`ref_id`), 협업문서는 `Document.id`. 같은 `reciprocal_rank_fuse`·같은 `K=60`·같은 후보 폭 규칙(`max(top_k*4, 50)`)을 쓰고, 청크 저장소도 `chunk` 테이블 하나를 `chunk_type`(`endpoint`/`section`)으로 나눠 쓴다. 가중합을 쓰지 않는 이유는 두 경로가 같다 — `ts_rank`와 코사인 유사도는 정규화 기준이 없어 합칠 수 없다(`docs/architect-review/07_search_rrf_reevaluation.md` 3·5절, `docs/architect-review/39` §1.3).
+- **코퍼스는 재색인 배치 밖에서도 바뀐다** — 엔드포인트 경로에는 검색 대상 텍스트를 런타임에 바꾸는 경로가 하나 있다: `submit_endpoint_metadata` write-back(§2.0). 랭킹 코드가 아니라 색인 내용이 바뀌는 것이므로 **같은 질의의 결과가 write-back 전후로 달라질 수 있다** — 이는 의도된 품질 개선이고, 같은 스펙에서 문구가 세션마다 흔들리며 재임베딩이 반복되는 것은 `source_hash` 게이트가 막는다(같으면 `already_current`). 골든 회귀 테스트는 write-back 이 개입하지 않는 픽스처 문서로 돌아 영향받지 않는다. 협업문서 경로에는 대응 경로가 없다(본문 청크는 동기화·색인 배치로만 바뀐다).
 - **결정성** — 두 경로 모두 동점 tie-break를 고정 키(ref_id / document_id / external_id / title)로 못박아 결과가 결정적이다(엔드포인트 검색은 골든 회귀 테스트 전제).
 - **스니펫 신선도의 계약 차이** — `indexed` 협업문서 검색의 스니펫은 **동기화 시점 캐시 발췌**라 `DocumentSearchItem.snippet_as_of`(=`document_meta.last_synced_at`)로 그 시점을 담는다(`fetch` 전략과 title-only 매치는 캐시 발췌가 아니므로 `None`). **이 필드는 아직 MCP 응답에 실리지 않아 호출 LLM 에는 보이지 않는다** — §3.2 12번. 원문 자체는 어느 전략에서도 캐시하지 않는다 — `get_document`는 항상 fetch 시점의 최신 본문이다.
 - **"없음"의 구분** — 미등록 document_id·미구성 소스는 빈 결과가 아니라 명시적 오류로 구분해, 호출 LLM이 "문서 없음"과 "결과 없음"을 혼동하지 않게 한다.
