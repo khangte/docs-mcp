@@ -121,3 +121,45 @@ def test_contributing_arms_empty_default_on_dataclass() -> None:
     result = FusedResult(ref_id="x", score=1.0, match_type="keyword")
 
     assert result.contributing_arms == ()
+
+
+# --- 57번 리뷰 개선3: arm 가중 RRF -------------------------------------------
+
+
+def test_weights_none_matches_unweighted_result() -> None:
+    """weights 를 안 주면(기본값 None) 기존 무가중 결과와 완전히 같다."""
+    fused = reciprocal_rank_fuse(["a"], [], top_k=5, title_ref_ids=["a"])
+    fused_explicit_none = reciprocal_rank_fuse(
+        ["a"], [], top_k=5, title_ref_ids=["a"], weights=None
+    )
+
+    assert fused == fused_explicit_none
+
+
+def test_title_weight_halves_title_only_score() -> None:
+    """title arm 가중치 0.5 를 주면 title 단독 히트 점수가 무가중 대비 정확히 절반이다."""
+    unweighted = reciprocal_rank_fuse([], [], top_k=5, title_ref_ids=["a"])
+    weighted = reciprocal_rank_fuse(
+        [], [], top_k=5, title_ref_ids=["a"], weights={ARM_TITLE: 0.5}
+    )
+
+    assert weighted[0].score == unweighted[0].score * 0.5
+
+
+def test_body_arms_outrank_weighted_title_only_hit() -> None:
+    """keyword+vector 양쪽 히트 문서는 가중치 낮춘 title 단독 히트 문서보다 항상 위다."""
+    fused = reciprocal_rank_fuse(
+        ["body-doc"], ["body-doc"], top_k=5, title_ref_ids=["title-doc"], weights={ARM_TITLE: 0.5}
+    )
+
+    assert [f.ref_id for f in fused] == ["body-doc", "title-doc"]
+
+
+def test_weights_do_not_affect_contributing_arms_or_match_type() -> None:
+    """가중치를 줘도 contributing_arms/match_type 은 존재 여부 기준 그대로다."""
+    fused = reciprocal_rank_fuse(
+        ["a"], ["a"], top_k=5, title_ref_ids=["a"], weights={ARM_TITLE: 0.0}
+    )
+
+    assert fused[0].contributing_arms == (ARM_TITLE, ARM_KEYWORD, ARM_VECTOR)
+    assert fused[0].match_type == "both"

@@ -1560,3 +1560,62 @@ def test_fetch_strategy_item_carries_same_evidence_fields(
     assert item.indexed is False
     assert item.modified_at is not None
     assert fake_drive_source.fetch_call_count == 1
+
+
+# --- 57번 리뷰 §5 개선3 T3 개정: title arm 토큰 경계 게이트 --------------------
+
+
+def test_indexed_strategy_title_gate_excludes_substring_noise(
+    db_session, indexed_search_service
+) -> None:
+    """부분문자열 잡음('api' ⊂ 'Rapid')은 title arm 게이트에서 걸러져 결과에서 사라진다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "substring-noise", "Rapid Onboarding Guide")
+
+    items = indexed_search_service.search("api", DocumentSearchOptions())
+
+    assert items == []
+
+
+def test_indexed_strategy_title_gate_passes_original_collapse_match(
+    db_session, indexed_search_service
+) -> None:
+    """원본 질의의 collapse(연속 부분열) 매치는 게이트를 통과한다('결제장애' ↔ '결제 장애 대응')."""
+    _seed_meta(db_session, SOURCE_DRIVE, "collapse-match", "결제 장애 대응 가이드")
+
+    items = indexed_search_service.search("결제장애", DocumentSearchOptions())
+
+    assert [i.title for i in items] == ["결제 장애 대응 가이드"]
+
+
+def test_indexed_strategy_title_gate_passes_variant_only_full_token_match(
+    db_session, indexed_search_service
+) -> None:
+    """원본으로 안 걸리고 variant 토큰 완전 일치로만 걸리는 행도 살아남는다(회귀 방지 핵심)."""
+    _seed_meta(db_session, SOURCE_DRIVE, "variant-only", "Payment Failure Runbook")
+
+    items = indexed_search_service.search(
+        "결제 실패", DocumentSearchOptions(query_variants=["payment failure"])
+    )
+
+    assert [i.title for i in items] == ["Payment Failure Runbook"]
+
+
+def test_indexed_strategy_title_only_document_ranks_below_body_matched_document(
+    db_session, indexed_search_service
+) -> None:
+    """제목만 걸린 문서와 본문(keyword) 걸린 문서가 함께 있으면 본문 매치 문서가 위다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "title-only", "공통검색어테스트 문서")
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-title-vs-body",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="body-hit",
+        title="완전히 무관한 제목",
+        url="https://example.test/drive/body-hit",
+        chunk_texts=["공통검색어테스트 라는 표현이 본문에 있다."],
+    )
+
+    items = indexed_search_service.search("공통검색어테스트", DocumentSearchOptions())
+
+    assert [i.external_id for i in items] == ["body-hit", "title-only"]

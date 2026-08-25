@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from app.models.document_meta import DocumentMeta
 from app.repositories.document_meta_repository import collapse
@@ -55,6 +56,56 @@ def _collapse_match_score(query: str, collapsed_haystack: str, token_count: int)
     if collapsed_query not in collapsed_haystack:
         return 0.0
     return 1 / token_count
+
+
+def _token_aligned_concat_match(query: str, haystack_tokens: Sequence[str]) -> bool:
+    """질의 토큰 concat 이 haystack 토큰들의 **연속 부분열** concat 과 정확히 일치하는지.
+
+    `_collapse_match_score` 와 달리 토큰 경계를 존중한다. '결제장애' 는 제목
+    ['결제','장애','대응'] 의 연속 부분열 '결제'+'장애' 와 일치해 통과하지만,
+    'api' 는 ['rapid','onboarding'] 의 어떤 연속 부분열과도 같지 않아 탈락한다
+    (부분문자열로는 'rapid' 안에 들어 있지만 경계가 맞지 않는다).
+    """
+    target = "".join(documents_tokenize(query))
+    if not target or not haystack_tokens:
+        return False
+    boundaries = {0}
+    joined_parts: list[str] = []
+    offset = 0
+    for token in haystack_tokens:
+        joined_parts.append(token)
+        offset += len(token)
+        boundaries.add(offset)
+    joined = "".join(joined_parts)
+    pos = joined.find(target)
+    while pos >= 0:
+        if pos in boundaries and pos + len(target) in boundaries:
+            return True
+        pos = joined.find(target, pos + 1)
+    return False
+
+
+def _passes_title_gate(row: DocumentMeta, filter_tokens: set[str], queries: Sequence[str]) -> bool:
+    """title/url 이 질의와 토큰 수준에서 실제로 겹치는지(부분문자열 잡음 배제).
+
+    SQL 1단계(`search_by_tokens`)는 `ILIKE '%token%'` 부분문자열 매칭이라
+    토큰 경계를 무시한다 — 질의 토큰 'api' 가 제목의 'rapid' 안에 들어 있어도
+    후보로 올라온다. `_title_score`(`_collapse_match_score` 경유)도 같은
+    문제가 있어 게이트로 재사용할 수 없다(57번 리뷰 §5 개선3 T3 개정).
+    이 함수는 별도로 토큰 경계를 지켜 그 잡음만 걸러낸다 — (원본 ∪ variant
+    토큰) 중 하나가 title/url 토큰과 완전 일치하거나, 어떤 질의의 토큰
+    concat 이 title/url 토큰들의 연속 부분열과 완전 일치하면 통과.
+    title 토큰열과 url 토큰열은 따로 본다(둘을 이어붙인 경계를 넘는 매치는
+    허용하지 않는다).
+    """
+    title_tokens = documents_tokenize(row.title)
+    url_tokens = documents_tokenize(row.url)
+    if filter_tokens & (set(title_tokens) | set(url_tokens)):
+        return True
+    return any(
+        _token_aligned_concat_match(q, title_tokens) or _token_aligned_concat_match(q, url_tokens)
+        for q in queries
+    )
 
 
 def _match_positions(body: str, query_tokens: set[str]) -> list[int]:

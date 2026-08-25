@@ -11,7 +11,13 @@ snippet_generator.py 의 책임이라 여기서 다루지 않는다 — 이 모�
 
 from __future__ import annotations
 
-from app.services.documents.search_scorer import _match_positions
+from app.models.document_meta import DocumentMeta
+from app.services.documents.search_scorer import (
+    _match_positions,
+    _passes_title_gate,
+    _token_aligned_concat_match,
+    documents_tokenize,
+)
 
 
 def test_exact_token_match_returns_its_position() -> None:
@@ -106,3 +112,94 @@ def test_mixed_exact_and_collapse_tokens_both_become_candidates() -> None:
     order_collapse_pos = body.find("주문 목록")
     api_exact_pos = body.lower().find("api")
     assert sorted(positions) == sorted([order_collapse_pos, api_exact_pos])
+
+
+# --- 57번 리뷰 개선3 T3 개정: 토큰 경계 인지 매치 -----------------------------
+
+
+def test_token_aligned_concat_match_true_for_contiguous_token_subsequence() -> None:
+    """질의 토큰 concat 이 haystack 토큰들의 연속 부분열 concat 과 일치하면 True."""
+    haystack_tokens = documents_tokenize("결제 장애 대응 가이드")
+
+    assert _token_aligned_concat_match("결제장애", haystack_tokens) is True
+
+
+def test_token_aligned_concat_match_false_for_substring_inside_single_token() -> None:
+    """토큰 경계를 넘어 단일 토큰 내부에 우연히 들어있는 문자열은 제외한다.
+
+    'api' 는 'rapid' 안에 부분문자열로는 있지만 토큰 경계가 맞지 않는다.
+    """
+    haystack_tokens = documents_tokenize("Rapid Onboarding Guide")
+
+    assert _token_aligned_concat_match("api", haystack_tokens) is False
+
+
+def test_token_aligned_concat_match_false_for_misaligned_boundary() -> None:
+    """경계가 어긋난 부분 매치('장애대' 같은 절단)는 제외한다."""
+    haystack_tokens = documents_tokenize("결제 장애 대응 가이드")
+
+    assert _token_aligned_concat_match("장애대", haystack_tokens) is False
+
+
+def test_token_aligned_concat_match_true_for_full_token_match() -> None:
+    """질의가 haystack 토큰 하나와 정확히 같아도(연속 부분열 길이 1) True."""
+    haystack_tokens = documents_tokenize("결제 장애 대응 가이드")
+
+    assert _token_aligned_concat_match("결제", haystack_tokens) is True
+
+
+def test_token_aligned_concat_match_false_for_empty_query_or_haystack() -> None:
+    """질의 또는 haystack 이 비어 있으면 False."""
+    assert _token_aligned_concat_match("", documents_tokenize("결제 장애")) is False
+    assert _token_aligned_concat_match("결제", []) is False
+
+
+def _row(title: str, url: str = "https://example.test/x") -> DocumentMeta:
+    return DocumentMeta(project="p", source="drive", external_id="x", title=title, url=url)
+
+
+def test_passes_title_gate_true_for_exact_token_overlap() -> None:
+    """filter_tokens 가 title/url 토큰과 정확히 겹치면 통과."""
+    row = _row("결제 오류 안내")
+
+    assert _passes_title_gate(row, {"결제"}, ["결제"]) is True
+
+
+def test_passes_title_gate_false_for_substring_noise() -> None:
+    """부분문자열 잡음('api' ⊂ 'rapid')은 게이트를 통과하지 못한다."""
+    row = _row("Rapid Onboarding Guide")
+
+    assert _passes_title_gate(row, {"api"}, ["api"]) is False
+
+
+def test_passes_title_gate_true_for_original_collapse_match() -> None:
+    """원본 질의의 collapse(연속 부분열) 매치는 통과한다('결제장애' ↔ '결제 장애 대응')."""
+    row = _row("결제 장애 대응 가이드")
+
+    assert _passes_title_gate(row, {"결제장애"}, ["결제장애"]) is True
+
+
+def test_passes_title_gate_true_for_variant_only_full_token_match() -> None:
+    """원본으로는 안 걸리고 variant 토큰 완전 일치로만 걸리는 행도 통과한다(회귀 방지 핵심)."""
+    row = _row("Payment Failure Runbook")
+
+    assert (
+        _passes_title_gate(
+            row, {"결제", "실패", "payment", "failure"}, ["결제 실패", "payment failure"]
+        )
+        is True
+    )
+
+
+def test_passes_title_gate_true_for_url_only_match() -> None:
+    """title 이 아니라 url 로만 매치되는 행도 통과한다."""
+    row = _row("무관한 제목", url="https://example.test/payment-failure")
+
+    assert _passes_title_gate(row, {"payment", "failure"}, ["payment failure"]) is True
+
+
+def test_passes_title_gate_false_for_misaligned_boundary_query() -> None:
+    """경계 어긋난 부분 매치는 title/url 어느 쪽으로도 통과하지 못한다."""
+    row = _row("결제 장애 대응 가이드")
+
+    assert _passes_title_gate(row, {"장애대"}, ["장애대"]) is False

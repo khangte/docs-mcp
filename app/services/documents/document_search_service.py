@@ -42,7 +42,12 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_body_indexer import deterministic_document_id
 from app.services.documents.project_source_resolver import ProjectSourceResolver
-from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
+from app.services.documents.search_scorer import (
+    _body_score,
+    _passes_title_gate,
+    _title_score,
+    documents_tokenize,
+)
 from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
@@ -67,6 +72,13 @@ _RRF_CANDIDATE_WIDTH_MULTIPLIER = 4
 #: `document_search_strategy` 가 이 값일 때만 색인 기반(RRF) 경로를 쓴다.
 #: 그 외(미인식 값 포함)는 모두 기존 fetch 경로로 degrade한다(doc39 §2.7).
 DOCUMENT_SEARCH_STRATEGY_INDEXED = "indexed"
+
+#: title arm 가중치. title 후보는 permissive 한 ILIKE 부분문자열 게이트에서 나오고,
+#: RRF 안에서는 등수 차이가 거의 소멸해(k=60) 사실상 "존재 보너스"로 작동한다.
+#: 본문 신호(keyword/vector) arm 의 절반으로 둬 제목만 스친 문서가 본문 정답 문서와
+#: 동급이 되는 것을 막는다(57번 리뷰 §5 개선3). 평가셋이 없어 튜닝 근거가 없으므로
+#: env 로 노출하지 않고 상수로 고정한다(RRF_K 와 같은 방침).
+TITLE_ARM_WEIGHT = 0.5
 
 #: keyword/vector arm 이 SQL 에서 이미 `chunk_type='section'` 으로 좁혀 조회하므로,
 #: 승자 청크의 chunk_type 은 DB 를 다시 읽지 않고 이 상수로 취급한다(57번 리뷰 §5 개선1).
@@ -652,7 +664,13 @@ class DocumentSearchService:
             if self._vector_fallback_enabled:
                 vector_ids, vector_chunk_by_doc = self._vector_arm(query, project, width, doc_types)
 
-        fused = reciprocal_rank_fuse(keyword_ids, vector_ids, top_k=width, title_ref_ids=title_ids)
+        fused = reciprocal_rank_fuse(
+            keyword_ids,
+            vector_ids,
+            top_k=width,
+            title_ref_ids=title_ids,
+            weights={ARM_TITLE: TITLE_ARM_WEIGHT},
+        )
         if not fused:
             return []
 
@@ -754,6 +772,17 @@ class DocumentSearchService:
         본문 색인이 됐는지와 무관하게(`document_meta.document_id` 가 NULL
         이어도) 동일한 값이 나오므로, keyword/vector arm 의 `Chunk.document_id`
         와 같은 키 공간에서 만난다(doc39 §2.2).
+
+        SQL 1단계 후보(`search_by_tokens`)는 `ILIKE '%token%'` 부분문자열
+        매칭이라 토큰 경계를 무시한다 — 질의 'api' 가 제목의 'rapid' 안에
+        들어 있어도 후보로 올라온다. 정렬 전에 `_passes_title_gate` 로
+        그런 잡음 행을 제외한다(57번 리뷰 §5 개선3 T3 개정) — 원본/variant
+        토큰이 title/url 토큰과 완전 일치하거나 토큰 경계를 지킨 연속
+        부분열로 일치하는 행만 남는다. variant-only 로만 걸린 행(예:
+        원본 "결제 실패" + variant "payment failure", 제목이 영문뿐이라
+        원본 토큰과는 안 겹침)도 이 게이트를 통과해야 한다 — 안 그러면
+        `query_variants` 기능 자체가 무력화된다. 정렬 키·점수 계산은
+        게이트와 무관하게 그대로다.
         """
         rows = self._meta_repo.search_by_tokens(
             sorted(filter_tokens),
@@ -762,6 +791,10 @@ class DocumentSearchService:
             queries=[query, *(query_variants or [])],
         )
         scored = [(row, _title_score(row, score_tokens, query)) for row in rows]
+        queries = [query, *(query_variants or [])]
+        scored = [
+            pair for pair in scored if _passes_title_gate(pair[0], filter_tokens, queries)
+        ]
         scored.sort(key=lambda pair: (pair[1] <= 0.0, -pair[1], pair[0].external_id))
         top = scored[:width]
         ids_by_row = [
