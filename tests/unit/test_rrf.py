@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.services.search.rrf import RRF_K, reciprocal_rank_fuse
+from app.services.search.rrf import ARM_KEYWORD, ARM_TITLE, ARM_VECTOR, RRF_K, reciprocal_rank_fuse
 
 
 def test_keyword_only_hit_gets_keyword_match_type() -> None:
@@ -95,3 +95,29 @@ def test_title_arm_adds_to_score_when_combined_with_other_arms() -> None:
     two_arm_only = reciprocal_rank_fuse(["a"], ["a"], top_k=5)
 
     assert by_ref["a"].score > two_arm_only[0].score
+
+
+# --- 57번 리뷰 개선1: contributing_arms 노출 --------------------------------
+
+
+def test_contributing_arms_lists_only_arms_that_hit_in_fixed_order() -> None:
+    """기여한 arm 만 (title, keyword, vector) 고정 순서로 담긴다."""
+    fused = reciprocal_rank_fuse(["a"], [], top_k=5, title_ref_ids=["a"])
+
+    assert fused[0].contributing_arms == (ARM_TITLE, ARM_KEYWORD)
+
+
+def test_contributing_arms_all_three_when_all_arms_hit() -> None:
+    """세 arm 모두 기여하면 세 값 모두 고정 순서로 담긴다."""
+    fused = reciprocal_rank_fuse(["a"], ["a"], top_k=5, title_ref_ids=["a"])
+
+    assert fused[0].contributing_arms == (ARM_TITLE, ARM_KEYWORD, ARM_VECTOR)
+
+
+def test_contributing_arms_empty_default_on_dataclass() -> None:
+    """FusedResult 기본값은 빈 튜플이다(기존 생성부가 깨지지 않도록)."""
+    from app.services.search.rrf import FusedResult
+
+    result = FusedResult(ref_id="x", score=1.0, match_type="keyword")
+
+    assert result.contributing_arms == ()

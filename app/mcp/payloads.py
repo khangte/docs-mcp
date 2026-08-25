@@ -10,6 +10,7 @@ from app.mcp.types import (
     DocumentSearchResponse,
     DriveSourceItem,
     EndpointDetails,
+    MatchedChunkPayload,
     NotionSourceItem,
     ParameterItem,
     RefreshIndexResult,
@@ -129,6 +130,21 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
             "version": item.version,
             "snippet_as_of": item.snippet_as_of.isoformat() if item.snippet_as_of else None,
             "external_id": item.external_id,
+            "matched_chunks": [
+                cast(
+                    MatchedChunkPayload,
+                    {
+                        "chunk_id": chunk.chunk_id,
+                        "text": chunk.text,
+                        "chunk_type": chunk.chunk_type,
+                        "arm": chunk.arm,
+                    },
+                )
+                for chunk in item.matched_chunks
+            ],
+            "match_reasons": list(item.match_reasons),
+            "modified_at": item.modified_at.isoformat() if item.modified_at else None,
+            "indexed": item.indexed,
         }
         for item in items
     ]

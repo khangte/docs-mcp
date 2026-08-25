@@ -146,12 +146,20 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
 
         Returns:
             items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
-            project, url, snippet, score, version, snippet_as_of, external_id
-            필드를 갖는다. snippet_as_of 는 스니펫이 만들어진 본문 색인
-            시점(ISO8601)이며, 본문 청크 없이 제목 매치만으로 걸린 항목은
-            null 이다. external_id 는 get_document(source, external_id) 에
-            그대로 넘기는 값이다 — 스니펫만으로 부족해 원문을 열어봐야 할 때
-            이 필드로 바로 이어간다(url 을 파싱할 필요 없음). 관련 문서가
+            project, url, snippet, score, version, snippet_as_of, external_id,
+            matched_chunks, match_reasons, modified_at, indexed 필드를 갖는다.
+            snippet_as_of 는 스니펫이 만들어진 본문 색인 시점(ISO8601)이며,
+            본문 청크 없이 제목 매치만으로 걸린 항목은 null 이다. external_id
+            는 get_document(source, external_id) 에 그대로 넘기는 값이다 —
+            스니펫만으로 부족해 원문을 열어봐야 할 때 이 필드로 바로
+            이어간다(url 을 파싱할 필요 없음). matched_chunks 는 어느 arm
+            (keyword/vector/both)이 어떤 본문 조각으로 이 문서를 뽑았는지 —
+            비어 있으면 본문 근거 없이 제목만으로 걸렸다는 뜻이다.
+            match_reasons 는 사람이 읽는 근거 문자열 목록이다. modified_at
+            은 원본 시스템 기준 최종 수정 시각으로 최신성 판단에 쓴다.
+            indexed 가 false 면 본문이 아직 색인되지 않아 제목 매칭만으로
+            걸린 결과라는 뜻이며, 원문 확인이 필요하면 get_document 로
+            이어가라. 관련 문서가
             없으면 빈 리스트다. 검색 중 도메인/외부 연동 오류가 발생하면
             error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
         """

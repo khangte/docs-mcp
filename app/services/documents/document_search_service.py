@@ -41,16 +41,22 @@ from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_body_indexer import deterministic_document_id
+from app.services.documents.project_source_resolver import ProjectSourceResolver
+from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
+from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
 )
-from app.services.documents.project_source_resolver import ProjectSourceResolver
-from app.services.documents.search_scorer import _body_score, _title_score, documents_tokenize
-from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
 from app.services.documents.version_parser import parse_version
 from app.services.indexer.embedding_provider import EmbeddingProvider
-from app.services.search.rrf import reciprocal_rank_fuse
+from app.services.search.rrf import (
+    ARM_KEYWORD,
+    ARM_TITLE,
+    ARM_VECTOR,
+    FusedResult,
+    reciprocal_rank_fuse,
+)
 
 _LOG = get_logger("docs_mcp.documents.search")
 
@@ -61,6 +67,50 @@ _RRF_CANDIDATE_WIDTH_MULTIPLIER = 4
 #: `document_search_strategy` 가 이 값일 때만 색인 기반(RRF) 경로를 쓴다.
 #: 그 외(미인식 값 포함)는 모두 기존 fetch 경로로 degrade한다(doc39 §2.7).
 DOCUMENT_SEARCH_STRATEGY_INDEXED = "indexed"
+
+#: keyword/vector arm 이 SQL 에서 이미 `chunk_type='section'` 으로 좁혀 조회하므로,
+#: 승자 청크의 chunk_type 은 DB 를 다시 읽지 않고 이 상수로 취급한다(57번 리뷰 §5 개선1).
+#: 나중에 다른 chunk_type 이 이 arm 들에 들어오면, 그때는 이 상수 대신 히트 DTO
+#: (`ChunkTextHit`/`ChunkVectorHit`) 에 chunk_type 필드를 얹어야 한다.
+_SECTION_CHUNK_TYPE = "section"
+
+#: `DocumentSearchItem.match_reasons` 에 실리는 고정 문자열(57번 리뷰 §5 개선1).
+#: LLM 이 그대로 파싱하는 계약이므로 임의로 바꾸지 않는다.
+REASON_TITLE_MATCH = "제목·URL 매칭"
+REASON_KEYWORD_MATCH = "본문 키워드 일치"
+REASON_VECTOR_MATCH = "본문 의미 유사"
+REASON_UNINDEXED = "본문 미색인 — 제목 매칭만으로 검색됨"
+REASON_LIVE_FETCH_MATCH = "실시간 본문 매칭"
+_ARM_REASON = {
+    ARM_TITLE: REASON_TITLE_MATCH,
+    ARM_KEYWORD: REASON_KEYWORD_MATCH,
+    ARM_VECTOR: REASON_VECTOR_MATCH,
+}
+
+
+def _filter_match_reasons(project: str | None, source: str | None) -> tuple[str, ...]:
+    """project/source 필터가 지정됐을 때의 근거 문구를 만든다(indexed/fetch 두 전략이 공유)."""
+    reasons: list[str] = []
+    if project:
+        reasons.append(f"프로젝트 필터 일치: {project}")
+    if source:
+        reasons.append(f"출처 필터 일치: {source}")
+    return tuple(reasons)
+
+
+def _build_match_reasons(
+    contributing_arms: tuple[str, ...], project: str | None, source: str | None, indexed: bool
+) -> tuple[str, ...]:
+    """arm 기여 -> 필터 일치 -> 강등 신호 순서로 사람이 읽는 근거 문자열을 만든다.
+
+    순수 함수(모듈 상수 문자열만 사용)라 단위 테스트가 쉽다. `contributing_arms`
+    는 이미 (title, keyword, vector) 고정 순서라 그대로 순회하면 된다.
+    """
+    reasons = [_ARM_REASON[arm] for arm in contributing_arms]
+    reasons.extend(_filter_match_reasons(project, source))
+    if not indexed:
+        reasons.append(REASON_UNINDEXED)
+    return tuple(reasons)
 
 
 def _body_fetch_budget(top_k: int, candidate_count: int) -> int:
@@ -115,8 +165,55 @@ __all__ = [
     "DocumentSearchItem",
     "DocumentContent",
     "DocumentSearchService",
+    "MatchedChunk",
     "documents_tokenize",
 ]
+
+
+@dataclass(frozen=True)
+class MatchedChunk:
+    """`DocumentSearchItem.matched_chunks` 원소 하나(어느 arm 이 어떤 청크로 히트했는지)."""
+
+    chunk_id: str
+    text: str
+    chunk_type: str
+    arm: str
+
+
+def _assemble_matched_chunks(
+    document_id: str | None,
+    keyword_chunk_by_doc: dict[str, str],
+    vector_chunk_by_doc: dict[str, str],
+    chunk_texts: dict[str, str],
+) -> tuple[MatchedChunk, ...]:
+    """문서 한 건의 keyword/vector 승자 청크를 `MatchedChunk` 튜플로 조립한다.
+
+    keyword 승자 -> vector 승자 순서로 훑되, 같은 chunk_id 면 항목 하나로 합쳐
+    `arm="both"` 로 표시한다. text 를 못 찾은 chunk_id(배치 조회 대상에서
+    빠졌거나 삭제된 경우)는 건너뛴다.
+    """
+    arm_by_chunk_id: dict[str, str] = {}
+    ordered_ids: list[str] = []
+    keyword_id = keyword_chunk_by_doc.get(document_id) if document_id else None
+    vector_id = vector_chunk_by_doc.get(document_id) if document_id else None
+    for chunk_id, arm in ((keyword_id, ARM_KEYWORD), (vector_id, ARM_VECTOR)):
+        if not chunk_id:
+            continue
+        if chunk_id in arm_by_chunk_id:
+            arm_by_chunk_id[chunk_id] = "both"
+        else:
+            arm_by_chunk_id[chunk_id] = arm
+            ordered_ids.append(chunk_id)
+    return tuple(
+        MatchedChunk(
+            chunk_id=cid,
+            text=chunk_texts[cid],
+            chunk_type=_SECTION_CHUNK_TYPE,
+            arm=arm_by_chunk_id[cid],
+        )
+        for cid in ordered_ids
+        if cid in chunk_texts
+    )
 
 
 @dataclass(frozen=True)
@@ -159,6 +256,17 @@ class DocumentSearchItem:
     #: 캐시 발췌가 아니므로 None이다. doc36 Phase0-2 가 예고한 유일한 겉면
     #: 계약 변경(스니펫 출처가 동기화 시점 캐시로 바뀔 수 있음)을 명시한다.
     snippet_as_of: datetime | None = None
+    #: 이 문서를 히트시킨 승자 청크들(어느 arm 이 어떤 본문 조각으로 뽑았는지).
+    #: fetch 전략(라이브 fetch)에서는 청크 개념이 없어 항상 빈 튜플이다.
+    matched_chunks: tuple[MatchedChunk, ...] = ()
+    #: 사람이 읽는 근거 문자열 목록(순서 고정, LLM 이 파싱하는 계약).
+    match_reasons: tuple[str, ...] = ()
+    #: 원본 시스템 기준 최종 수정 시각(`document_meta.modified_at`, naive datetime).
+    modified_at: datetime | None = None
+    #: 이 문서의 본문이 색인돼 대응 `document` 행이 있으면 True.
+    #: `document_meta.document_id` 유무로만 판단하며, 청크 존재 여부와 100%
+    #: 동치는 아니다 — False 면 제목 매칭만으로 검색된 결과라는 뜻이다.
+    indexed: bool = False
 
 
 @dataclass(frozen=True)
@@ -259,14 +367,24 @@ class DocumentSearchService:
             )
 
         candidates = self._select_candidates(
-            filter_tokens, query_tokens, normalized_query, replace(options, source=normalized_source)
+            filter_tokens,
+            query_tokens,
+            normalized_query,
+            replace(options, source=normalized_source),
         )
         if not candidates:
             # 2단계를 건너뛴다: 후보가 없으면 외부 API 를 한 번도 호출하지 않는다.
             _LOG.debug("1단계 후보 0건 — 본문 fetch 생략: query=%s", normalized_query)
             return []
 
-        return self._rank_with_body(candidates, query_tokens, normalized_query, options.top_k)
+        return self._rank_with_body(
+            candidates,
+            query_tokens,
+            normalized_query,
+            options.top_k,
+            options.project,
+            normalized_source,
+        )
 
     def get_document(self, source: str, external_id: str) -> DocumentContent:
         """문서 한 건의 최신 원문을 조회한다(캐시된 본문이 아니다).
@@ -388,6 +506,8 @@ class DocumentSearchService:
         query_tokens: set[str],
         query: str,
         top_k: int,
+        project: str | None,
+        source: str | None,
     ) -> list[DocumentSearchItem]:
         """후보 본문을 병렬로 받아 스니펫을 만들고 최종 점수로 재정렬한 뒤 top_k 로 컷한다.
 
@@ -418,7 +538,13 @@ class DocumentSearchService:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(
                 lambda pair: self._fetch_and_score(
-                    pair[0], pair[1], query_tokens, query, sources_by_project[pair[0].project]
+                    pair[0],
+                    pair[1],
+                    query_tokens,
+                    query,
+                    sources_by_project[pair[0].project],
+                    project,
+                    source,
                 ),
                 candidates,
             )
@@ -433,12 +559,16 @@ class DocumentSearchService:
         query_tokens: set[str],
         query: str,
         sources: dict[str, DocumentSource],
+        project: str | None,
+        source: str | None,
     ) -> DocumentSearchItem | None:
         """후보 한 건의 본문을 fetch 해 점수를 매긴다. 실패/미구성이면 None.
 
         `sources` 는 호출측(`_rank_with_body`)이 메인 스레드에서 미리
         resolve 해 둔 값이다 — 이 메서드는 워커 스레드에서 실행되므로
-        Session 을 쓰는 resolve 호출을 여기서 하면 안 된다.
+        Session 을 쓰는 resolve 호출을 여기서 하면 안 된다. `project`/`source`
+        는 요청 필터값(순수 문자열)이라 스레드 안전하며, match_reasons 의
+        필터 일치 문구를 만드는 데만 쓴다.
         """
         document_source = sources.get(row.source)
         if document_source is None:
@@ -470,6 +600,9 @@ class DocumentSearchService:
             score=round(TITLE_SCORE_WEIGHT * title_score + BODY_SCORE_WEIGHT * body_score, 4),
             version=parse_version(row.title),
             external_id=row.external_id,
+            match_reasons=(REASON_LIVE_FETCH_MATCH, *_filter_match_reasons(project, source)),
+            modified_at=row.modified_at,
+            indexed=row.document_id is not None,
         )
 
     # --- indexed 전략: title+keyword+vector 3-arm RRF ---------------------
@@ -510,7 +643,9 @@ class DocumentSearchService:
         vector_ids: list[str] = []
         keyword_chunk_by_doc: dict[str, str] = {}
         vector_chunk_by_doc: dict[str, str] = {}
-        if self._chunk_repo.has_endpoint_chunks(project=project, chunk_type="section"):
+        if self._chunk_repo.has_endpoint_chunks(
+            project=project, chunk_type=_SECTION_CHUNK_TYPE
+        ):
             keyword_ids, keyword_chunk_by_doc = self._keyword_arm(
                 filter_tokens, query_tokens, project, width, doc_types
             )
@@ -527,8 +662,13 @@ class DocumentSearchService:
             if row.document_id:
                 meta_by_doc_id[row.document_id] = row
 
+        #: 스니펫 선택용 병합 dict(벡터 승자를 keyword 승자가 덮어씀, 기존 동작 유지).
         winner_chunk_by_doc = {**vector_chunk_by_doc, **keyword_chunk_by_doc}
-        chunk_texts = self._chunk_repo.get_texts_by_ids(list(set(winner_chunk_by_doc.values())))
+        #: matched_chunks 는 keyword/vector 원본 승자를 각각 보존해야 하므로
+        #: 두 dict 의 값 합집합을 배치 조회한다(호출 횟수는 여전히 1회, id 개수만 최대 2배).
+        chunk_texts = self._chunk_repo.get_texts_by_ids(
+            list(set(keyword_chunk_by_doc.values()) | set(vector_chunk_by_doc.values()))
+        )
 
         items: list[DocumentSearchItem] = []
         for fused_result in fused:
@@ -539,7 +679,16 @@ class DocumentSearchService:
             if source is not None and row.source != source:
                 continue
             item = self._build_indexed_item(
-                row, fused_result.score, winner_chunk_by_doc, chunk_texts, query, query_tokens
+                row,
+                fused_result,
+                keyword_chunk_by_doc,
+                vector_chunk_by_doc,
+                winner_chunk_by_doc,
+                chunk_texts,
+                query,
+                query_tokens,
+                project,
+                source,
             )
             items.append(item)
             if len(items) >= options.top_k:
@@ -549,13 +698,17 @@ class DocumentSearchService:
     def _build_indexed_item(
         self,
         row: DocumentMeta,
-        score: float,
+        fused_result: FusedResult,
+        keyword_chunk_by_doc: dict[str, str],
+        vector_chunk_by_doc: dict[str, str],
         winner_chunk_by_doc: dict[str, str],
         chunk_texts: dict[str, str],
         query: str,
         query_tokens: set[str],
+        project: str | None,
+        source: str | None,
     ) -> DocumentSearchItem:
-        """메타 행 + RRF 점수 + (있으면) 승자 청크 text 로 결과 아이템 한 건을 만든다."""
+        """메타 행 + RRF 융합 결과 + (있으면) 승자 청크 text 로 결과 아이템 한 건을 만든다."""
         winner_chunk_id = row.document_id and winner_chunk_by_doc.get(row.document_id)
         if winner_chunk_id:
             body = chunk_texts.get(winner_chunk_id, "")
@@ -564,16 +717,25 @@ class DocumentSearchService:
         else:
             snippet = _fallback_snippet(row, query)
             snippet_as_of = None
+        indexed = row.document_id is not None
         return DocumentSearchItem(
             title=row.title,
             source=row.source,
             project=row.project,
             url=row.url,
             snippet=snippet,
-            score=score,
+            score=fused_result.score,
             version=parse_version(row.title),
             external_id=row.external_id,
             snippet_as_of=snippet_as_of,
+            matched_chunks=_assemble_matched_chunks(
+                row.document_id, keyword_chunk_by_doc, vector_chunk_by_doc, chunk_texts
+            ),
+            match_reasons=_build_match_reasons(
+                fused_result.contributing_arms, project, source, indexed
+            ),
+            modified_at=row.modified_at,
+            indexed=indexed,
         )
 
     def _title_arm(
@@ -625,7 +787,7 @@ class DocumentSearchService:
             top_k=width,
             project=project,
             score_terms=list(score_tokens),
-            chunk_type="section",
+            chunk_type=_SECTION_CHUNK_TYPE,
             doc_types=doc_types,
         )
         return _dedupe_first_with_chunk(hits)
@@ -642,7 +804,11 @@ class DocumentSearchService:
         assert self._embedding_provider is not None
         query_vec = self._embedding_provider.embed_query(query)
         hits = self._chunk_repo.search_by_vector(
-            query_vec, top_k=width, project=project, chunk_type="section", doc_types=doc_types
+            query_vec,
+            top_k=width,
+            project=project,
+            chunk_type=_SECTION_CHUNK_TYPE,
+            doc_types=doc_types,
         )
         positive_hits = [h for h in hits if h.score > 0.0]
         return _dedupe_first_with_chunk(positive_hits)

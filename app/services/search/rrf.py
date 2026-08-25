@@ -17,6 +17,11 @@ MatchType = Literal["keyword", "vector", "both", "exact"]
 #: env 로 노출하지 않는다(`docs/architect-review/07_search_rrf_reevaluation.md` 5.2).
 RRF_K = 60
 
+#: `FusedResult.contributing_arms` 원소값(57번 리뷰 §5 개선1). 순서는 항상 이 나열 순서다.
+ARM_TITLE = "title"
+ARM_KEYWORD = "keyword"
+ARM_VECTOR = "vector"
+
 
 @dataclass(frozen=True)
 class FusedResult:
@@ -25,6 +30,10 @@ class FusedResult:
     ref_id: str
     score: float
     match_type: MatchType
+    #: 실제로 점수에 기여한 arm 들, 항상 (title, keyword, vector) 순서로 채워진다.
+    #: 기본값 `()` 은 기존 생성부(`FusedResult(ref_id=..., score=..., match_type=...)`)가
+    #: 깨지지 않게 하기 위함이다.
+    contributing_arms: tuple[str, ...] = ()
 
 
 def _dedupe_first(ref_ids: Sequence[str]) -> list[str]:
@@ -51,7 +60,8 @@ def reciprocal_rank_fuse(
     빈 시퀀스)하면 점수·정렬에 전혀 관여하지 않아 기존 2-arm 호출부(엔드포인트
     검색)는 무변경이다. `match_type` 은 title 기여 여부와 무관하게 keyword/vector
     두 arm 만으로 계산한다 — title 단독 히트는 편의상 "vector" 로 표시되며,
-    이 라벨은 문서 검색 계약에 노출되지 않으므로 무해하다.
+    이 라벨은 문서 검색 계약에 노출되지 않으므로 무해하다. 정확한 arm별
+    기여는 `FusedResult.contributing_arms` 를 보라.
     """
     keyword_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(keyword_ref_ids), start=1)}
     vector_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(vector_ref_ids), start=1)}
@@ -70,7 +80,23 @@ def reciprocal_rank_fuse(
         if in_title:
             score += 1.0 / (k + title_ranks[ref_id])
         match_type: MatchType = "both" if in_keyword and in_vector else ("keyword" if in_keyword else "vector")
-        fused.append(FusedResult(ref_id=ref_id, score=score, match_type=match_type))
+        contributing_arms = tuple(
+            arm
+            for arm, hit in (
+                (ARM_TITLE, in_title),
+                (ARM_KEYWORD, in_keyword),
+                (ARM_VECTOR, in_vector),
+            )
+            if hit
+        )
+        fused.append(
+            FusedResult(
+                ref_id=ref_id,
+                score=score,
+                match_type=match_type,
+                contributing_arms=contributing_arms,
+            )
+        )
 
     fused.sort(key=lambda f: (-f.score, f.ref_id))
     return fused[:top_k]

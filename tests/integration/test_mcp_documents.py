@@ -14,9 +14,11 @@ import pytest
 from fastmcp import FastMCP
 from sqlalchemy import text
 
+from app.composition import AppState
 from app.mcp.server import create_mcp_server
-from app.models import DEFAULT_PROJECT
+from app.models import DEFAULT_PROJECT, EMBEDDING_DIM
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
+from app.services.indexer.embedding_provider import HashEmbeddingProvider
 
 DOCUMENT_TOOL_NAMES = {"search_documents", "get_document", "refresh_index"}
 _T1 = datetime(2026, 7, 1, 9, 0, 0)
@@ -42,6 +44,32 @@ async def seeded_mcp(
     fake_drive_source.reset_counts()
     fake_notion_source.reset_counts()
     return mcp_server
+
+
+@pytest.fixture()
+async def fetch_strategy_seeded_mcp(
+    pg_engine,
+    in_memory_fetcher,
+    fake_drive_source,
+    fake_notion_source,
+    seed_default_project_sources,
+) -> FastMCP:
+    """document_search_strategy="fetch"(롤백 스위치) 로 고정한 MCP 서버(57번 리뷰 §5 개선1 T6)."""
+    state = AppState.from_engine(
+        engine=pg_engine,
+        fetcher=in_memory_fetcher,
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
+        vector_fallback_enabled=True,
+        drive_source_builder=lambda folder_id: fake_drive_source,
+        notion_source_builder=lambda notion_id, kind: fake_notion_source,
+        metadata_writeback_enabled=True,
+        document_search_strategy="fetch",
+    )
+    server = create_mcp_server(state)
+    fake_drive_source.put("d1", "로그인 인증 설계서", "OAuth 로그인 흐름 상세", modified_at=_T1)
+    await server.call_tool("refresh_index", arguments={"index_bodies": False})
+    fake_drive_source.reset_counts()
+    return server
 
 
 async def _tool_names(mcp: FastMCP) -> set[str]:
@@ -396,25 +424,51 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
 # --- 기능 7: search_documents --------------------------------------------------
 
 
+_DOCUMENT_SEARCH_ITEM_FIELDS = {
+    "external_id",
+    "title",
+    "source",
+    "project",
+    "url",
+    "snippet",
+    "score",
+    "version",
+    "snippet_as_of",
+    "matched_chunks",
+    "match_reasons",
+    "modified_at",
+    "indexed",
+}
+
+
 @pytest.mark.asyncio()
 async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> None:
-    """결과 항목은 external_id/title/source/project/url/snippet/score/version/
-    snippet_as_of 9개 필드를 갖는다."""
+    """결과 항목은 근거·메타 필드 4개(matched_chunks/match_reasons/modified_at/indexed)를
+    포함해 13개 필드를 갖는다(57번 리뷰 §5 개선1)."""
     items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
 
     assert items
     for item in items:
-        assert set(item) == {
-            "external_id",
-            "title",
-            "source",
-            "project",
-            "url",
-            "snippet",
-            "score",
-            "version",
-            "snippet_as_of",
-        }
+        assert set(item) == _DOCUMENT_SEARCH_ITEM_FIELDS
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_fetch_strategy_has_same_field_set(
+    fetch_strategy_seeded_mcp: FastMCP,
+) -> None:
+    """롤백 스위치인 "fetch" 전략도 indexed 전략과 같은 키 집합을 낸다.
+
+    클라이언트가 전략별로 분기하지 않도록 보장한다(57번 리뷰 §5 개선1 T6).
+    """
+    items = _result(
+        await fetch_strategy_seeded_mcp.call_tool("search_documents", {"query": "로그인"})
+    )["items"]
+
+    assert items
+    for item in items:
+        assert set(item) == _DOCUMENT_SEARCH_ITEM_FIELDS
+        assert item["matched_chunks"] == []
+        assert item["match_reasons"]
 
 
 @pytest.mark.asyncio()

@@ -28,13 +28,21 @@ from app.services.documents.document_search_service import (
     BODY_FETCH_OVERSCAN,
     MAX_BODY_FETCH_CANDIDATES,
     MAX_CONCURRENT_BODY_FETCHES,
+    REASON_KEYWORD_MATCH,
+    REASON_LIVE_FETCH_MATCH,
+    REASON_TITLE_MATCH,
+    REASON_UNINDEXED,
+    REASON_VECTOR_MATCH,
     DocumentSearchOptions,
     DocumentSearchService,
+    _assemble_matched_chunks,
     _body_fetch_budget,
+    _build_match_reasons,
     documents_tokenize,
 )
 from app.services.documents.sources.document_source import FetchedDocument
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
+from app.services.search.rrf import ARM_KEYWORD, ARM_TITLE, ARM_VECTOR
 from tests.fixtures.document_sources import ExplodingDocumentSource
 
 _PROJECT_A = "A"
@@ -1360,4 +1368,195 @@ def test_unrecognized_document_search_strategy_degrades_to_fetch(
     items = service.search("로그인", DocumentSearchOptions())
 
     assert [i.title for i in items] == ["로그인 설계서"]
+
+
+# --- 57번 리뷰 개선1: 근거·메타 필드 -----------------------------------------
+
+
+def test_build_match_reasons_orders_arms_then_filters_then_degrade_signal() -> None:
+    """arm 기여 -> 필터 일치 -> 강등 신호 순서로, 고정 문자열을 낸다."""
+    reasons = _build_match_reasons(
+        contributing_arms=(ARM_TITLE, ARM_KEYWORD, ARM_VECTOR),
+        project="payments",
+        source="drive",
+        indexed=False,
+    )
+
+    assert reasons == (
+        REASON_TITLE_MATCH,
+        REASON_KEYWORD_MATCH,
+        REASON_VECTOR_MATCH,
+        "프로젝트 필터 일치: payments",
+        "출처 필터 일치: drive",
+        REASON_UNINDEXED,
+    )
+
+
+def test_build_match_reasons_no_filters_no_degrade_when_indexed() -> None:
+    """필터가 없고 indexed=True 면 arm 기여 문구만 남는다."""
+    reasons = _build_match_reasons(
+        contributing_arms=(ARM_KEYWORD,), project=None, source=None, indexed=True
+    )
+
+    assert reasons == (REASON_KEYWORD_MATCH,)
+
+
+def test_build_match_reasons_empty_arms_returns_only_filters() -> None:
+    """기여 arm 이 없으면(이론상 발생하지 않지만) 필터 문구만 남는다."""
+    reasons = _build_match_reasons(
+        contributing_arms=(), project=None, source="notion", indexed=True
+    )
+
+    assert reasons == ("출처 필터 일치: notion",)
+
+
+def test_assemble_matched_chunks_two_entries_when_winners_differ() -> None:
+    """keyword 승자와 vector 승자가 다른 청크면 항목 2건이 각 arm 라벨로 담긴다."""
+    chunks = _assemble_matched_chunks(
+        document_id="doc1",
+        keyword_chunk_by_doc={"doc1": "chunk-kw"},
+        vector_chunk_by_doc={"doc1": "chunk-vec"},
+        chunk_texts={"chunk-kw": "키워드 승자 텍스트", "chunk-vec": "벡터 승자 텍스트"},
+    )
+
+    assert [(c.chunk_id, c.arm) for c in chunks] == [
+        ("chunk-kw", ARM_KEYWORD),
+        ("chunk-vec", ARM_VECTOR),
+    ]
+    assert chunks[0].chunk_type == "section"
+
+
+def test_assemble_matched_chunks_merges_same_winner_into_both() -> None:
+    """keyword/vector 승자가 같은 청크면 항목 1건, arm="both" 로 합쳐진다."""
+    chunks = _assemble_matched_chunks(
+        document_id="doc1",
+        keyword_chunk_by_doc={"doc1": "chunk-shared"},
+        vector_chunk_by_doc={"doc1": "chunk-shared"},
+        chunk_texts={"chunk-shared": "공유 승자 텍스트"},
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].chunk_id == "chunk-shared"
+    assert chunks[0].arm == "both"
+
+
+def test_assemble_matched_chunks_skips_chunk_id_missing_text() -> None:
+    """chunk_texts 에 없는 chunk_id 는 건너뛴다."""
+    chunks = _assemble_matched_chunks(
+        document_id="doc1",
+        keyword_chunk_by_doc={"doc1": "chunk-missing"},
+        vector_chunk_by_doc={},
+        chunk_texts={},
+    )
+
+    assert chunks == ()
+
+
+def test_assemble_matched_chunks_no_winners_returns_empty() -> None:
+    """이 문서에 대해 어느 arm 에도 승자 청크가 없으면 빈 튜플이다(예: title 단독 매치)."""
+    chunks = _assemble_matched_chunks(
+        document_id="doc1", keyword_chunk_by_doc={}, vector_chunk_by_doc={}, chunk_texts={}
+    )
+
+    assert chunks == ()
+
+
+def test_indexed_strategy_matched_chunks_single_arm_document(
+    db_session, indexed_search_service
+) -> None:
+    """벡터 arm 이 꺼진 fixture 에서는 keyword 승자 하나만 matched_chunks 에 담긴다."""
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-single-arm",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="single-arm",
+        title="완전히 무관한 제목",
+        url="https://example.test/drive/single-arm",
+        chunk_texts=["첫 섹션에 근거필드테스트어휘 라는 표현이 있다."],
+    )
+
+    items = indexed_search_service.search("근거필드테스트어휘", DocumentSearchOptions())
+
+    assert len(items) == 1
+    item = items[0]
+    assert len(item.matched_chunks) == 1
+    assert item.matched_chunks[0].arm == ARM_KEYWORD
+    assert item.matched_chunks[0].chunk_type == "section"
+    assert item.indexed is True
+    assert item.modified_at is None
+    assert REASON_KEYWORD_MATCH in item.match_reasons
+
+
+def test_indexed_strategy_unindexed_document_marks_degrade_signal(
+    db_session, indexed_search_service
+) -> None:
+    """title arm 단독 매치(document_id NULL)는 match_reasons 에 강등 신호가 들어가고
+
+    indexed=False 다.
+    """
+    _seed_meta(db_session, SOURCE_DRIVE, "unindexed-reason", "미색인근거필드테스트제목")
+
+    items = indexed_search_service.search("미색인근거필드테스트제목", DocumentSearchOptions())
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.indexed is False
+    assert item.matched_chunks == ()
+    assert REASON_UNINDEXED in item.match_reasons
+    assert REASON_TITLE_MATCH in item.match_reasons
+
+
+def test_indexed_strategy_get_texts_by_ids_called_once(
+    db_session, indexed_search_service, monkeypatch
+) -> None:
+    """승자 청크 텍스트 조회(get_texts_by_ids)는 요청당 정확히 1회다(추가 SQL 왕복 0 원칙)."""
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-call-count",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="call-count",
+        title="무관 제목",
+        url="https://example.test/drive/call-count",
+        chunk_texts=["호출횟수테스트어휘 가 여기 있다."],
+    )
+    original = ChunkRepository.get_texts_by_ids
+    call_count = 0
+
+    def _spy(self, chunk_ids):
+        nonlocal call_count
+        call_count += 1
+        return original(self, chunk_ids)
+
+    monkeypatch.setattr(ChunkRepository, "get_texts_by_ids", _spy)
+
+    indexed_search_service.search("호출횟수테스트어휘", DocumentSearchOptions())
+
+    assert call_count == 1
+
+
+def test_fetch_strategy_item_carries_same_evidence_fields(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """fetch 전략(롤백 스위치)도 같은 계약(matched_chunks/match_reasons/modified_at/indexed)을
+
+    채운다.
+    """
+    _seed_meta(
+        db_session, SOURCE_DRIVE, "fetch-evidence", "근거계약테스트문서", project=DEFAULT_PROJECT
+    )
+    fake_drive_source.bodies["fetch-evidence"] = "근거계약테스트문서 본문 내용"
+
+    items = search_service.search(
+        "근거계약테스트문서", DocumentSearchOptions(project=DEFAULT_PROJECT)
+    )
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.matched_chunks == ()
+    assert item.match_reasons[0] == REASON_LIVE_FETCH_MATCH
+    assert f"프로젝트 필터 일치: {DEFAULT_PROJECT}" in item.match_reasons
+    assert item.indexed is False
+    assert item.modified_at is not None
     assert fake_drive_source.fetch_call_count == 1

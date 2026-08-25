@@ -189,12 +189,34 @@ class TagListResult(TypedDict):
     tags: list[TagItem]
 
 
+class MatchedChunkPayload(TypedDict):
+    """search_documents 결과 한 건의 `matched_chunks` 원소(57번 리뷰 §5 개선1).
+
+    어느 arm(keyword/vector/both)이 어떤 본문 조각으로 이 문서를 뽑았는지를
+    담는다. `arm="both"` 는 keyword/vector 승자 청크가 같은 청크였다는 뜻이다.
+    """
+
+    chunk_id: str
+    text: str
+    chunk_type: str
+    arm: Literal["keyword", "vector", "both"]
+
+
 class DocumentSearchItemPayload(TypedDict):
     """search_documents 가 반환하는 결과 한 건.
 
     score 는 기본 indexed 전략에서는 RRF 점수(순서만 유의미)이고, 롤백
     스위치인 fetch 전략에서는 제목·본문 매칭을 합산한 [0,1] 가중합이다 —
     두 전략 간 score 절대값은 비교 불가하다.
+
+    `matched_chunks`: 어느 arm 이 어떤 본문 조각으로 이 문서를 뽑았는지.
+    비어 있으면 본문 근거가 없다(제목 매칭만).
+    `match_reasons`: 사람이 읽는 근거 문자열 목록(순서 고정, 값은 모듈
+    상수라 LLM 이 안정적으로 파싱할 수 있다).
+    `modified_at`: 원본 시스템 기준 최종 수정 시각(최신성 판단용).
+    `indexed`: False 면 이 문서의 본문이 아직 색인되지 않아 **제목 매칭
+    만으로** 걸린 결과라는 뜻이다 — 본문 근거가 전혀 없으므로, 원문 확인이
+    필요하면 get_document 로 이어가야 한다.
     """
 
     title: str
@@ -207,6 +229,10 @@ class DocumentSearchItemPayload(TypedDict):
     snippet_as_of: str | None
     #: get_document(source, external_id) 에 그대로 넘기는 값(45번 리뷰 §3.1).
     external_id: str
+    matched_chunks: list[MatchedChunkPayload]
+    match_reasons: list[str]
+    modified_at: str | None
+    indexed: bool
 
 
 class DocumentSearchResponse(TypedDict):
