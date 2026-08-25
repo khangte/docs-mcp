@@ -31,13 +31,18 @@ Markdown·CSV·PDF/DOCX·OpenAPI(Swagger) 문서와 Google Drive/Notion 협업 �
 검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM 이 반환된 후보(top_k) 중에서 선택합니다 — 서버는 **후보 피더**이고 품질 지표는 recall@k 입니다.
 
 품질은 **Stripe 589 + GitHub 1,220 = 1,809개 실제 엔드포인트**를 프리즈한 코퍼스(n=20 질의)로
-측정합니다. 마감 재측정 기준 `rrf` 전략은 **Recall@3 25%·Recall@10 50%·MRR 0.248**입니다
-(질의 변형 포함 조건).
+측정합니다. 마감 재측정 기준 `rrf` 전략(질의 변형 포함 조건)은 **Recall@3 35~40%·Recall@10
+60%·MRR 0.36~0.37** 수준이며, 벡터 arm `ORDER BY`의 tie-break 누락 결함을 수정한 뒤에도
+n=20의 표준오차(±11%p대)로 인해 Recall@10은 45~60%p 구간에서, MRR·nDCG@10은 소수점대로
+매 실행 흔들립니다 — 단일 수치가 아니라 이 구간 자체가 결과입니다.
 
 초기에는 20개 엔드포인트짜리 합성 하네스에서 Recall@3 88%·@10 95%가 나왔지만, 실 코퍼스로
 다시 재면서 **그 수치가 성능이 아니라 벤치 포화의 증거였음이 드러났습니다.** 경위와 실패 축
-분해(교차언어·흔한 토큰 범람·RRF 회귀 3건)는 아래 문서에 있습니다. n=20 에서 표준오차는
-±11%p 대이므로 라운드 간 몇 %p 변동은 노이즈와 구분되지 않습니다.
+분해(교차언어·흔한 토큰 범람·RRF 회귀 3건)는 아래 문서에 있습니다.
+
+질의 지연(p50/p95/p99, top_k=10·변형 포함, 100 표본)은 **21.7ms / 56.7ms / 63.5ms**이며, 색인
+1,809개 엔드포인트 기준 상주 메모리는 **980MB → 1,721MB**, 검색 비용은 로컬 CPU 임베딩·자체
+호스팅 Postgres라 **$0**입니다.
 
 - [`docs/implementation_journey.md`](docs/implementation_journey.md) — 로드맵 0~5가 실제로 어떤 순서·판단을 거쳐 구현됐는지(커밋·설계문서 매핑, 기각된 개선안 포함)
 - [`docs/search_flow.md`](docs/search_flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
@@ -105,6 +110,7 @@ uv run alembic upgrade head
 | `DOCS_MCP_DOCUMENT_SOURCE_TIMEOUT_SECONDS` | Drive/Notion HTTP 타임아웃(초)                                                           | `15.0`                           |
 | `DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS`        | 문서 본문 fetch 시 잘라낼 최대 문자 수                                                   | `200000`                         |
 | `DOCS_MCP_NOTION_VERSION`                  | Notion REST API 버전(`Notion-Version` 헤더)                                              | `2022-06-28`                     |
+| `DOCS_MCP_METADATA_WRITEBACK_ENABLED`      | 호출 LLM 이 `submit_endpoint_metadata` 로 비즈니스 메타데이터를 저장하는 경로 스위치. `0`/`false`/`no` 면 비활성 | `true`                           |
 
 <!-- /AUTO-GENERATED -->
 

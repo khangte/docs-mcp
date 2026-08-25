@@ -1,5 +1,10 @@
 """엔드포인트 비즈니스 메타데이터 생성 배치 (LLM 호출, 원샷 CLI).
 
+이 CLI 는 기본 경로가 아니라 **옵션 운영 도구**다(docs/architect-review/56 §1.2).
+기본 경로는 호출 LLM write-back(`submit_endpoint_metadata`)이며, 이 CLI 는 유료 API
+크레딧이 있을 때 커버리지를 한 번에 메우는 백필 용도로만 쓴다. 2026-11-30 까지 한 번도
+실행되지 않으면 삭제 대상이다.
+
 docs/architect-review/55 §4: `refresh_documents.py` 와 같은 얇은 CLI 구조
 (argparse → bootstrap_app_state → 서비스 함수 호출 → 종료코드). 재생성
 여부는 `generator.select_targets` 의 skip 규칙이 곧 증분 실행이라 이
