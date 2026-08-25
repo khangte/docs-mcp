@@ -12,6 +12,10 @@
 > 완료되어 1절(항목 7·11), 2절(Hybrid), 5절, 7절 V1, 9절(항목 7)을 갱신했다. 구현 과정에서
 > 원안의 전제 오류가 드러나 게이트 판정 기준을 바꿨다 — 5.2절 참조.
 >
+> **갱신 이력 (2026-08-26, 2)**: 5절 Top 5 개선 #2(메타데이터 hard filter — 날짜 + mimeType)가
+> 구현·리뷰 완료되어 1절(항목 1·3·7·9·10), 2절(Metadata filtering / MCP response schema), 5절,
+> 7절 V1, 9절(항목 3)을 갱신했다. `owner` 는 컬럼·수집만 하고 필터·노출은 후속이다 — 5.4절 참조.
+>
 > 4절 문제점 서술과 8절 65점 평가는 **구현 이전 시점의 진단**이며 이력 보존을 위해 원문 그대로 둔다.
 
 ---
@@ -42,16 +46,16 @@
 
 | #   | 단계                                                                                                                                                                                                                                                                                                                                   | 구현 위치                                                     |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| 1   | 사용자 자연어 → MCP client LLM 이 `search_documents(query, top_k, source, project, query_variants)` 호출                                                                                                                                                                                                                               | LLM 측                                                        |
+| 1   | 사용자 자연어 → MCP client LLM 이 `search_documents(query, top_k, source, project, query_variants, modified_after, modified_before, mime_types)` 호출                                                                                                                                                                                                                               | LLM 측                                                        |
 | 2   | FastMCP 라우팅 → `run_bundle_tool` (워커 스레드 오프로드, 요청 스코프 세션·서비스 조립)                                                                                                                                                                                                                                                | `app/mcp/tools/documents.py`, `_common.py`                    |
-| 3   | 질의 검증(`top_k` 1~50, `source` ∈ {drive, notion}), 소스 구성 여부 확인(미구성이면 `IntegrationError`)                                                                                                                                                                                                                                | `document_search_service.py:225`                              |
+| 3   | 질의 검증(`top_k` 1~50, `source` ∈ {drive, notion}, 날짜 ISO8601·범위 역전·`mime_types` 개수/길이), 소스 구성 여부 확인(미구성이면 `IntegrationError`). 검증 통과분으로 `DocumentMetaFilter` 조립(개선 #2)                                                                                                                                                                                                                                | `document_search_service.py:225`                              |
 | 4   | 토큰화 — `[0-9A-Za-z_]+\|[가-힣]+` 정규식, 소문자화. `query_variants` 는 **필터 토큰에만** 합류(`filter_tokens`), 점수 토큰(`query_tokens`)에는 섞이지 않음                                                                                                                                                                            | `search_scorer.documents_tokenize`                            |
 | 5   | 전략 분기 — `document_search_strategy="indexed"`(기본) → 3-arm RRF. 그 외/의존성 누락 시 `"fetch"`(라이브 fetch + 가중합)로 degrade                                                                                                                                                                                                    | `:255`                                                        |
 | 6   | 후보 폭 결정 — `width = max(top_k*4, 50)`                                                                                                                                                                                                                                                                                              | `_RRF_CANDIDATE_WIDTH_MULTIPLIER`, `_RRF_MIN_CANDIDATE_WIDTH` |
-| 7   | **title arm** — `document_meta.search_by_tokens`: 토큰별 `title/url ILIKE '%token%'` OR 질의 collapse(공백 제거) 패턴, GIN trgm 인덱스 사용. **`_passes_title_gate` 로 토큰 경계를 지키지 않는 부분문자열 잡음 행을 제외**(개선 #3, 2026-08-26)한 뒤 `_title_score`(토큰 겹침 비율 vs collapse 매칭 1/토큰수 의 `max`) 계산·정렬 → 상위 `width` → `deterministic_document_id(project, source, external_id)` 로 문서 ID 리스트화 | `_title_arm`, `_passes_title_gate`                            |
+| 7   | **title arm** — `document_meta.search_by_tokens`: 토큰별 `title/url ILIKE '%token%'` OR 질의 collapse(공백 제거) 패턴, GIN trgm 인덱스 사용. **날짜/mimeType hard filter 를 같은 SQL 의 WHERE 로 AND 결합**(개선 #2). **`_passes_title_gate` 로 토큰 경계를 지키지 않는 부분문자열 잡음 행을 제외**(개선 #3, 2026-08-26)한 뒤 `_title_score`(토큰 겹침 비율 vs collapse 매칭 1/토큰수 의 `max`) 계산·정렬 → 상위 `width` → `deterministic_document_id(project, source, external_id)` 로 문서 ID 리스트화 | `_title_arm`, `_passes_title_gate`                            |
 | 8   | 본문 색인 존재 확인 — `has_endpoint_chunks(project, chunk_type="section")` 이 False 면 keyword/vector arm 을 통째로 생략                                                                                                                                                                                                               | `:512`                                                        |
-| 9   | **keyword arm** — `chunk.text_tsv @@ to_tsquery('simple', t1 \| t2 \| …)`(OR), `ts_rank(text_tsv, 원본토큰 tsquery)` 내림차순, `chunk_type='section'` + `Document.doc_type ∈ {drive, notion}`(또는 지정 source) 필터, `limit width`. 문서별 첫 등장만 남기는 dedupe → 문서 ID 순위 + 승자 청크 ID                                      | `_keyword_arm`, `chunk_repository.search_endpoint_by_text`    |
-| 10  | **vector arm** — `embed_query`(요청당 1회, `query: ` 접두사, LRU 256) → pgvector `<=>` 코사인 거리, HNSW 인덱스(`SET LOCAL hnsw.ef_search = max(100, top_k)`), 유사도 = 1 − 거리, `score > 0` 만 채택, 같은 dedupe. `vector_fallback_enabled=False`(해시 백엔드)면 arm 생략                                                            | `_vector_arm`, `chunk_repository.search_by_vector`            |
+| 9   | **keyword arm** — `chunk.text_tsv @@ to_tsquery('simple', t1 \| t2 \| …)`(OR), `ts_rank(text_tsv, 원본토큰 tsquery)` 내림차순, `chunk_type='section'` + `Document.doc_type ∈ {drive, notion}`(또는 지정 source) 필터, `limit width`, **메타 필터가 있으면 `document_meta` EXISTS 서브쿼리 추가**(개선 #2). 문서별 첫 등장만 남기는 dedupe → 문서 ID 순위 + 승자 청크 ID                                      | `_keyword_arm`, `chunk_repository.search_endpoint_by_text`    |
+| 10  | **vector arm** — `embed_query`(요청당 1회, `query: ` 접두사, LRU 256) → pgvector `<=>` 코사인 거리, HNSW 인덱스(`SET LOCAL hnsw.ef_search = max(100, top_k)`, **메타 필터가 있으면 하한 200 + EXISTS 서브쿼리**, 개선 #2), 유사도 = 1 − 거리, `score > 0` 만 채택, 같은 dedupe. `vector_fallback_enabled=False`(해시 백엔드)면 arm 생략                                                            | `_vector_arm`, `chunk_repository.search_by_vector`            |
 | 11  | **RRF 융합** — `score(d) = Σ_arm w_arm · 1/(60 + rank_arm(d))`, **title 0.5 / keyword 1.0 / vector 1.0**(개선 #3, 2026-08-26), 동점은 ref_id 오름차순. `top_k=width` 로 컷                                                                                                                                                       | `app/services/search/rrf.py`                                  |
 | 12  | 메타 보강 — title arm 에 없던 문서 ID 는 `document_meta.list_by_document_ids` 로 배치 조회                                                                                                                                                                                                                                             | `:522`                                                        |
 | 13  | 스니펫 — 승자 청크 = `{**vector_chunk_by_doc, **keyword_chunk_by_doc}`(**키워드 승자가 벡터 승자를 덮어씀**), `get_texts_by_ids` 배치 조회 → `_build_snippet`(매치 위치 앞 60자부터 300자) 또는 제목 기반 fallback                                                                                                                     | `_build_indexed_item`, `snippet_generator.py`                 |
@@ -66,7 +70,7 @@
 | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------ |
 | Intent parsing            | 없음. 도구 시그니처가 받는 구조화 슬롯은 `source`/`project`/`query_variants` 뿐. LLM 이 날짜·사람·타입을 추출해도 **넘길 곳이 없다**                              | LLM 이 query/people/date_range/doc type/folder 로 구조화해 MCP 에 전달     | 구조화 자체가 아니라 **수용 인터페이스**가 없음                                                                                                                               | 상       | **필요**                 |
 | Query expansion           | 서버는 확장하지 않음. 호출 LLM 이 `query_variants` 로 제공, 후보 필터만 넓히고 점수에는 불참                                                                      | 동의어/약어/영문 일부 확장                                                 | 설계 의도는 일치(확장 주체 = LLM). 다만 variant 가 **title arm 의 SQL 필터에만** 반영되고 chunk FTS 의 `terms` 로도 전달되긴 하나 vector arm 에는 미반영                      | 중       | 부분(현행 유지 + 문서화) |
-| Metadata filtering        | `project`, `source` 만. `document_meta` 에 owner/mimeType/createdTime/폴더 경로 컬럼 자체가 없음. `modified_at` 은 저장되지만 **필터·랭킹·응답 어디에도 안 쓰임** | createdTime/modifiedTime/mimeType/folderId/owner/sharedWith 로 hard filter | 사실상 부재                                                                                                                                                                   | 상       | **필요**                 |
+| Metadata filtering        | `project`, `source` + **`modified_after`/`modified_before`/`mime_types` hard filter**(3 arm 전부 SQL 적용). `document_meta` 에 `mime_type`/`created_at`/`owner` 컬럼 추가 | createdTime/modifiedTime/mimeType/folderId/owner/sharedWith 로 hard filter | 날짜·mimeType 은 해소. `owner` 는 수집만 하고 필터 미노출, `created_at` 은 컬럼만, folderId/sharedWith 는 미구현 | 상       | **날짜·mime 구현 완료 (2026-08-26)** / owner·created_at 후속 |
 | Chunking                  | 헤딩(`#`) 기반 섹션 → 480토큰 초과 시 문단/문장/하드컷 그리디 분할, **overlap 0**, 각 sub 에 `# 제목` 앵커 부착                                                   | Heading/Section 우선, 500~1,000 token, 50~150 overlap                      | 방식은 권장안과 동일 계열. 크기(480)는 권장 하한보다 작고 overlap 이 없음. **PDF/DOCX/Docs 평문 export 는 마크다운 헤딩이 없어 문서 전체가 섹션 1개**로 묶인 뒤 기계적 분할됨 | 중       | 부분                     |
 | Keyword/BM25              | PostgreSQL FTS(`simple` config) + `ts_rank`. term OR 결합, IDF 없음, 문서 길이 정규화 없음(`ts_rank` 기본 normalization=0)                                        | BM25 또는 FTS. 코드/고객사명/사람이름/오류코드에 강해야 함                 | 정확 토큰 매칭은 되지만 **희소어 가중이 없음** — 흔한 토큰이 점수를 지배                                                                                                      | 상       | **필요**                 |
 | Vector/Semantic           | multilingual-e5-small(384d), passage/query 접두사 규약 준수, HNSW+cosine                                                                                          | Embedding 기반 vector search                                               | 구현 충실. 모델 크기가 작은 것 외 구조적 결함 없음                                                                                                                            | 하       | 불필요                   |
@@ -77,7 +81,7 @@
 | Document aggregation      | dedupe-first 가 사실상 "best chunk rank"만 반영. second-best·chunk 수·metadata score 없음                                                                         | best/second-best chunk + metadata 로 document score 산출                   | 증거량(같은 문서 안 여러 청크가 걸린 것)이 순위에 반영 안 됨                                                                                                                  | 중       | 부분                     |
 | Permission/access control | **없음**. 서비스 계정 1개가 본 것 = 모든 MCP 호출자가 검색 가능. 최종 사용자 신원 개념 자체가 없음                                                                | owner/sharedWith 를 필터·시그널로 활용                                     | 권한 모델 부재(설계상 "폴더를 SA 에 공유" 전제)                                                                                                                               | 상(보안) | **필요(정책 명시 최소)** |
 | Result scoring            | RRF 절대값(0.016~0.05 스케일). 전략에 따라 스케일이 달라 **순서 정보만 유효**(코드 주석에 명시)                                                                   | 0~1 정규화 score(예: 0.93)                                                 | LLM 이 임계값 판단 불가                                                                                                                                                       | 중       | 부분                     |
-| MCP response schema       | title/source/project/url/snippet/score/version/snippet_as_of/external_id **+ `matched_chunks[]`·`match_reasons[]`·`modified_at`·`indexed`** | document_id/title/url/score/matched_chunks[]/match_reasons[] | 권장안이 요구한 근거·메타 필드가 채워졌다. 문서 식별자는 `document_id` 대신 `external_id`(+`source`)로 노출한다 — `get_document(source, external_id)` 가 받는 키가 그것이라 클라이언트 변환이 불필요하다. 작성자(owner)는 여전히 부재(개선 #2 소관) | 상       | **구현 완료 (2026-08-25)** |
+| MCP response schema       | title/source/project/url/snippet/score/version/snippet_as_of/external_id **+ `matched_chunks[]`·`match_reasons[]`·`modified_at`·`indexed`·`mime_type`** | document_id/title/url/score/matched_chunks[]/match_reasons[] | 권장안이 요구한 근거·메타 필드가 채워졌다. 문서 식별자는 `document_id` 대신 `external_id`(+`source`)로 노출한다 — `get_document(source, external_id)` 가 받는 키가 그것이라 클라이언트 변환이 불필요하다. 작성자(owner)는 여전히 부재(개선 #2 소관) | 상       | **구현 완료 (2026-08-25)** |
 | Search reason/evidence    | 스니펫(300자) + `matched_chunks[{chunk_id, text, chunk_type, arm}]` + `match_reasons[]`(arm 기여 · 필터 일치 · 미색인 강등)                                          | match_reasons 로 근거 명시                                                 | 해소. arm 별 승자 청크를 각각 노출하고(같은 청크가 양쪽 arm 승자면 `arm="both"`), 근거 문자열은 서비스 모듈 상수라 LLM 이 안정적으로 대조할 수 있다                          | 상       | **구현 완료 (2026-08-25)** |
 | Query rewrite/retry       | 서버에 없음. docstring 이 "결과 0건이면 `query_variants` 로 재호출"하도록 LLM 을 유도                                                                             | confidence 낮으면 재검색                                                   | 재시도 주체를 LLM 에 둔 것은 타당하나, **confidence 신호를 안 주므로** LLM 이 판단 근거가 없음                                                                                | 중       | 부분(신호만 제공)        |
 | Latency                   | 검색 경로에 외부 API 0회. SQL 3~4회 + 로컬 임베딩 1회(CPU, LRU 캐시). 체감 수십~수백 ms                                                                           | 명시 없음                                                                  | 현행이 유리                                                                                                                                                                   | 하       | 불필요(유지)             |
@@ -206,7 +210,7 @@
 | #   | 변경 내용                                                                                                                                                                                                    | 이유                                                                                                                                | 구현 난이도                                | 품질개선 효과                 | latency 영향                     | V1 포함                                     |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------- | -------------------------------- | ------------------------------------------- |
 | 1   | **응답에 근거·메타 추가 — 구현 완료 (2026-08-25)** — `matched_chunks[{chunk_id, text, chunk_type, arm}]`, `match_reasons[]`, `modified_at`, `indexed` 를 `search_documents` 응답 item 에 추가. `rrf.FusedResult.contributing_arms` 로 기여 arm 을 그대로 실어 나른다 | LLM 이 최종 판단을 하려면 근거가 필요한데 현재 스니펫 300자가 전부. `match_type`·`modified_at` 은 **이미 손에 있는 값을 버리는 중** | Low                                        | High                          | ~0 (추가 SQL 없음 — `get_texts_by_ids` 한 번의 id 집합만 확대) | **구현 완료**                                    |
-| 2   | **메타데이터 hard filter 도입** — `document_meta` 에 `mime_type`, `owner`, `created_at` 컬럼 추가(Drive `files.list` fields 확장) + `search_documents(modified_after, modified_before, mime_types)` 파라미터 | 권장안 1·3단계의 전제. LLM 이 추출한 날짜/타입 조건을 받을 그릇이 없어 intent parsing 이 통째로 무력화됨                            | Medium (마이그레이션 + 전량 재동기화 필요) | High                          | ~0 (SQL WHERE 추가, 오히려 감소) | **포함**(날짜+mimeType 우선, owner 는 후속) |
+| 2   | **메타데이터 hard filter 도입 — 날짜·mimeType 구현 완료 (2026-08-26)** — `document_meta` 에 `mime_type`/`created_at`/`owner` 컬럼 추가(Drive `files.list` fields 확장) + `search_documents(modified_after, modified_before, mime_types)` 파라미터. `owner` 필터·`created_at` 필터는 후속(5.4절) | 권장안 1·3단계의 전제. LLM 이 추출한 날짜/타입 조건을 받을 그릇이 없어 intent parsing 이 통째로 무력화됨                            | Medium (마이그레이션 + 전량 재동기화 필요) | High                          | ~0 (SQL WHERE 추가, 오히려 감소) | **날짜·mime 구현 완료** / owner 후속 |
 | 3   | **arm 가중 RRF + title arm 품질 게이트 — 구현 완료 (2026-08-26)** — `reciprocal_rank_fuse(weights=…)` 로 title 0.5 / keyword 1.0 / vector 1.0, `_title_arm` 에서 `_passes_title_gate` 로 토큰 경계 미준수 행 제외(판정 기준은 원안에서 수정, 5.2절) | 제목에 흔한 토큰 하나 겹친 문서가 본문 정답 문서와 동점이 되는 구조적 오류. 코드 변경량 대비 순위 개선 폭이 가장 크다               | Low                                        | Medium~High                   | ~0                               | **구현 완료**                                    |
 | 4   | **keyword arm 의 한글 복합어 대칭 확보** — 질의 토큰에 대해 title arm 과 동일한 collapse 매칭을 본문에도 적용(생성 컬럼 `text_collapsed` + trgm, 또는 질의 측 분해 토큰 추가)                                | recall 구멍 중 가장 자주 발생. 한국어 문서 기반 시스템에서 `"결제장애"` ↔ `"결제 장애"` 미스는 치명적                               | Medium                                     | High                          | 소폭 증가(인덱스 1개 추가)       | **포함**                                    |
 | 5   | **색인 커버리지 가시화** — `refresh_index` 응답에 `unindexed`(본문 없음)/`unsupported`(MIME 미지원)/`folder_limit_reached` 노출, `search_documents` 결과 항목에 `indexed` 플래그(**이 항목만 개선 #1 로 구현 완료**) | "검색에 안 나오는 이유"가 현재 전부 서버 로그에만 있다. 운영자·LLM 모두 조용한 퇴화를 감지할 수 없다                                | Low                                        | Medium (품질보다 신뢰도·운영) | ~0                               | **포함**                                    |
@@ -297,6 +301,72 @@ precision 을 위해 감수한 recall 손실이다.
 - 개선 #3 과 분리한 이유: 게이트는 후보 집합만 건드리지만 이건 **순위 자체**를 바꾸고 두 전략
   모두에 걸린다. 개선 #4(본문 collapse 대칭 확보)와 같은 함수를 손대므로 그때 함께 다루는 편이 낫다.
 
+### 5.4 개선 #2 구현 결과 (2026-08-26)
+
+**스키마.** `document_meta` 에 `mime_type`(String 128) / `created_at`(DateTime) / `owner`(String 320)
+nullable 컬럼과 `ix_document_meta_document_id` 인덱스를 추가했다(마이그레이션 `47fe51335c37`).
+인덱스는 선택이 아니라 필수다 — keyword/vector arm 에 붙는 EXISTS 서브쿼리가
+`document_meta.document_id` 로 조회하는데, PostgreSQL 은 FK 에 인덱스를 자동 생성하지 않는다.
+날짜·mime 전용 인덱스는 만들지 않았다(title arm 은 trgm 후보로 이미 좁혀진 행에, chunk arm 은
+document_id 로 집은 1행에 필터를 걸기 때문).
+
+**수집.** Drive `files.list` fields 에 `createdTime`, `owners(displayName, emailAddress)` 를 더했다
+(`mimeType` 은 원래 있었다). `owner` 는 이메일 우선·표시 이름 폴백이다. Notion 은 `created_at` 만
+채우고 `mime_type`/`owner` 는 NULL 이다 — Notion `created_by` 는 user id 뿐이라 이메일/이름을
+얻으려면 문서마다 users API 를 한 번 더 호출해야 해서 동기화 비용 대비 가치가 없다.
+
+**필터 적용 지점.** `app/repositories/document_filters.py` 의 `DocumentMetaFilter` 를 3 arm 이 공유한다.
+
+- title arm(indexed·fetch 전략 모두): `search_by_tokens` 의 WHERE 에 AND 결합.
+- keyword/vector arm: `document_meta` **EXISTS 서브쿼리**. JOIN 을 쓰지 않은 이유는 같은
+  `document_id` 행이 둘 이상일 때 청크 행이 증식해 조용히 순위를 망가뜨리기 때문이다.
+- 융합 후 파이썬 후처리는 쓰지 않았다 — arm 당 후보 폭이 `width` 로 고정돼 있어 후처리하면
+  필터가 셀수록 결과가 조용히 빈다.
+- 벡터 arm 한정으로, 필터가 있으면 `hnsw.ef_search` 하한을 100 → 200 으로 올린다. HNSW 는 ANN 이
+  먼저 top-N 을 뽑고 그 뒤에 필터가 걸리는 post-filtering 구조라 유효 후보가 줄기 때문이다.
+  평가셋이 없어 근거 없는 값이므로 휴리스틱으로 주석에 명시하고 env 로 노출하지 않았다.
+- `meta_filter` 는 전부 기본값 `None` 이라 엔드포인트 검색(`endpoint_candidate_search`)은 무변경이다.
+
+**의미론(반드시 문서화된 대로).**
+
+- 날짜 경계는 양끝 포함(`>=`, `<=`). `modified_at` 이 NULL 인 문서는 날짜 필터가 하나라도 있으면
+  제외된다(SQL 3값 논리).
+- `mime_types` 는 정확 일치 OR 이며 접두 매칭이 아니다. Notion 문서는 `mime_type` 이 NULL 이라
+  이 필터를 주면 **항상 제외**된다.
+- 검증(`_validate_options`): ISO8601 파싱 실패, `modified_after > modified_before`, 빈 `mime_types`,
+  원소 20개 초과, 원소 128자 초과 → `ValidationError`. 날짜만("2026-08-01") 표기도 허용된다.
+
+**응답.** `mime_type` 만 추가로 노출한다(이미 적재된 `document_meta` 행에서 읽어 추가 SQL 0).
+클라이언트가 다음 질의를 `mime_types` 로 좁히려면 각 결과의 타입을 알아야 하기 때문이다.
+`created_at`·`owner` 는 노출하지 않는다.
+
+**재동기화가 본문 재수집을 부르지 않게 한 것이 이 작업의 핵심 제약이다.**
+`_apply_changes` 의 반환값은 `_stage_upsert` 에서 `needs_body_index` 로 쓰여 본문 재fetch·재색인을
+트리거한다. 새 컬럼을 변경 판정에 넣었다면 백필 첫 실행에서 전 문서가 NULL → 값 으로 바뀌며
+`updated` 로 잡혀 Drive 본문을 전량 다시 받았을 것이다(rate limit·시간 폭발). 그래서 새 필드는
+**무조건 대입만 하고 `is_changed` 판정에서 뺐다** — 백필은 UPDATE 한 번으로 끝나고, `updated`
+집계와 본문 색인 트리거는 기존 의미(제목·URL·수정시각이 실제로 바뀐 문서)를 유지한다.
+같은 함정을 다시 밟지 않도록 이 규약을 `_apply_changes` docstring 에 남겼다.
+
+**운영 순서(릴리스 노트 필수).** `refresh_index` docstring 에 런북으로 남겼다:
+마이그레이션 → 코드 배포 → 프로젝트·소스별 `refresh_index(index_bodies=False)` 1회 →
+`SELECT source, count(*) FILTER (WHERE mime_type IS NULL), count(*) FROM document_meta GROUP BY source;`
+로 백필 확인. **백필 전에는 `mime_types` 필터가 Drive 문서까지 전부 걸러낸다**(값이 NULL 이므로) —
+순서를 지키지 않으면 "검색이 갑자기 0건"으로 보인다.
+
+**개인정보 유의.** Drive `owners[0].emailAddress` 를 저장하므로 문서 소유자 이메일이 DB 에 남는다.
+사내 도구 전제로 진행했으며, 문제가 되면 `_owner_from_raw` 를 표시 이름만 반환하도록 바꾸고
+컬럼을 재백필하면 된다.
+
+### 5.5 개선 #2 에서 남긴 후속 항목 (미착수)
+
+- `owner` 필터(`owner` 파라미터)와 응답 노출. 컬럼·수집은 이미 끝나 있어 재동기화 없이 배선만 하면 된다.
+  컬럼을 미리 넣은 이유가 이것이다 — `files.list` fields 확장은 전량 재동기화를 다시 요구하므로,
+  후속으로 미뤘다면 같은 비용을 두 번 치렀을 것이다.
+- `created_after`/`created_before` 필터. 같은 이유로 값은 이미 쌓인다.
+- folderId(폴더 경로) / sharedWith 필터는 여전히 미구현이며, 폴더 경로는 Drive 계층 순회 비용이
+  걸려 별도 설계가 필요하다.
+
 차순위(V1 제외): document aggregation 정교화(best + second-best 보너스), cross-encoder reranking,
 score 정규화(0~1 매핑).
 
@@ -335,7 +405,7 @@ LLM (MCP client)
         top_k=5)
 MCP Server
  ├─ 1. 검증 + 토큰화 (현행)
- ├─ 2. hard filter 적용 — project/source/modified_at 범위/mime_type   [신규]
+ ├─ 2. hard filter 적용 — project/source/modified_at 범위/mime_type   [구현 완료, 개선 2]
  ├─ 3. title arm  — trgm ILIKE 후보 → 토큰 경계 게이트 → _title_score   [구현 완료, 개선 3]
  ├─ 4. keyword arm — chunk FTS(OR) + collapse 대칭 매칭               [collapse 신규, 개선 4]
  ├─ 5. vector arm  — e5-small 질의 임베딩 → HNSW cosine
@@ -434,7 +504,7 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 | --- | --------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Intent parsing              | 구조화 슬롯이 `source`/`project`/`query_variants` 뿐                                       | LLM 이 query/people/date_range/type/folder 로 구조화해 전달             | **제안 채택 필요(우선순위 3위)** — 추출은 LLM 이 이미 할 수 있고 받을 그릇만 없다. 항목 3(메타데이터 필터)과 같은 작업으로 함께 처리                              |
 | 2   | Query expansion             | 서버 확장 없음, 호출 LLM 이 `query_variants` 제공(후보 필터만, 점수 불참)                  | 동의어·약어·영문 일부 확장                                              | **기존 유지가 적절** — 확장 주체를 LLM 에 둔 경계가 옳다(3절 장점 5, 6절 과도 판정). 서버 내장은 비용·지연·비결정성을 서버가 지는 퇴보                            |
-| 3   | Metadata filtering          | `project`/`source` 만. `modified_at` 은 저장만 하고 미사용                                 | createdTime/modifiedTime/mimeType/folderId/owner/sharedWith hard filter | **제안 채택 필요(우선순위 3위)** — 날짜+mimeType 우선, owner 는 후속. 마이그레이션 + 전량 재동기화 동반이라 난이도 Medium                                         |
+| 3   | Metadata filtering          | `project`/`source` + `modified_after`/`modified_before`/`mime_types` hard filter            | createdTime/modifiedTime/mimeType/folderId/owner/sharedWith hard filter | **날짜·mimeType 구현 완료 (2026-08-26)** — 개선 #2 로 반영. `owner`/`created_at` 은 컬럼·수집까지만(재동기화를 두 번 하지 않으려고 미리 채웠다), folderId/sharedWith 는 미구현 |
 | 4   | Chunking                    | 헤딩 기반 섹션 → 480토큰 초과 시 문단/문장/하드컷 그리디 분할, overlap 0                   | Heading 우선, 500~1,000 token, 50~150 overlap                           | **절충(부분만 채택)** — 480 상한은 임베딩 모델 실측 제약이라 유지가 맞다(3절 장점 7). overlap 도입과 헤딩 없는 PDF/DOCX 의 단일 섹션 문제만 별도 과제             |
 | 5   | Keyword/BM25                | PostgreSQL FTS(`simple`) + `ts_rank`, OR 결합, IDF·길이정규화 없음                         | BM25 또는 FTS, 코드·고유명사에 강할 것                                  | **절충(부분만 채택)** — 별도 BM25 엔진 도입은 과도(6절). 한글 복합어 collapse 대칭 확보는 **우선순위 4위로 채택**, IDF 보정은 V2                                  |
 | 6   | Vector/Semantic             | multilingual-e5-small(384d), passage/query 접두사 규약 준수, HNSW cosine                   | Embedding 기반 vector search                                            | **기존 유지가 적절** — 구조적 결함 없음. 모델 교체는 평가셋이 생긴 뒤의 논의                                                                                      |
@@ -453,6 +523,6 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 
 **요약**: 18개 중 기존 유지 6건(2·6·8·9·16·17), 제안 채택 6건(1·3·12·14·15·18),
 절충 6건(4·5·7·10·11·13). 채택분의 착수 순서는 14·15 → 7 → 1·3 → 5 → 18 이고,
-**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3 으로 2026-08-26 구현 완료** — 다음 착수 대상은
-1·3(메타데이터 필터·질의 확장 계열)이며, 5.3절의 파생 항목을 개선 #4 와 묶어 처리할지 먼저 정한다.
+**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3, 3 은 개선 #2 로 2026-08-26 구현 완료** — 남은 채택분은
+1(intent parsing 계열)·5·12·18 이고, 5.3절의 파생 항목을 개선 #4 와 묶어 처리할지 먼저 정한다.
 12(권한 전제 문서화)는 코드와 무관하게 지금 처리 가능하다.
