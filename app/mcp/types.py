@@ -269,10 +269,30 @@ class RegisteredResyncResult(TypedDict):
     failed: list[str]
 
 
+class RefreshCoverage(TypedDict):
+    """refresh_index 응답의 `coverage` 하위 dict(개선 #5).
+
+    `synced`/`added`/`updated`/`removed` 가 **이번 실행의 변화량**인 것과
+    달리, 이 값들은 **갱신 대상 범위의 현재 상태**라 중첩해서 분리한다.
+
+    `unindexed`: 본문 색인이 없는데(document_id NULL) 지원 MIME 이라 조치가
+    필요한 문서 수. `unsupported`: 텍스트 추출이 불가한 MIME 이라 fetch 자체를
+    건너뛴 문서 수(정상). 둘은 서로소다.
+    `listing_truncated`: 탐색 상한(Drive MAX_FOLDERS/Notion MAX_PAGES)에
+    걸려 목록이 잘린 "<project>/<source>" 목록.
+    """
+
+    unindexed: int
+    unsupported: int
+    listing_truncated: list[str]
+
+
 class RefreshIndexResult(TypedDict):
     """refresh_index 의 반환 타입.
 
     `failed_sources` 는 부분 실패한 소스 이름 목록이다. 비어 있으면 전부 성공.
+    `coverage` 는 항상 존재한다(개선 #5, 하위호환 분기 없음 — 키 추가는
+    MCP 클라이언트에 파괴적이지 않다).
     `registered` 는 include_registered=True 로 호출했을 때만 키가 존재한다.
     """
 
@@ -281,6 +301,7 @@ class RefreshIndexResult(TypedDict):
     updated: int
     removed: int
     failed_sources: list[str]
+    coverage: RefreshCoverage
     registered: NotRequired[RegisteredResyncResult]
 
 

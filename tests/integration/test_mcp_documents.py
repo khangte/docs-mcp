@@ -151,6 +151,23 @@ async def test_refresh_index_reports_counts(
 
 
 @pytest.mark.asyncio()
+async def test_refresh_index_response_includes_coverage_keys(
+    mcp_server: FastMCP, seed_default_project_sources, fake_drive_source, fake_notion_source
+) -> None:
+    """refresh_index 응답에 coverage 3키가 항상 있고 기존 계약은 그대로다(개선 #5 T9)."""
+    fake_drive_source.put("d1", "설계서", "본문", modified_at=_T1)
+    fake_notion_source.put("n1", "회의록", "본문", modified_at=_T1)
+
+    payload = _result(await mcp_server.call_tool("refresh_index", arguments={}))
+
+    assert payload["coverage"].keys() == {"unindexed", "unsupported", "listing_truncated"}
+    assert payload["coverage"]["unindexed"] == 0
+    assert payload["coverage"]["unsupported"] == 0
+    assert payload["coverage"]["listing_truncated"] == []
+    assert {"synced", "added", "updated", "removed", "failed_sources", "coverage"} <= payload.keys()
+
+
+@pytest.mark.asyncio()
 async def test_refresh_index_partial_failure_is_reported(
     mcp_server: FastMCP, seed_default_project_sources, fake_drive_source, fake_notion_source
 ) -> None:

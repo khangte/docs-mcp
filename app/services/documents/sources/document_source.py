@@ -43,6 +43,20 @@ class FileMeta:
 
 
 @dataclass(frozen=True)
+class FileListing:
+    """`list_files()` 한 번의 결과(개선 #5).
+
+    Attributes:
+        files: 조회된 문서 메타데이터 목록.
+        truncated: 탐색 상한(Drive MAX_FOLDERS / Notion MAX_PAGES)에 걸려
+            목록이 불완전하면 True.
+    """
+
+    files: list[FileMeta]
+    truncated: bool = False
+
+
+@dataclass(frozen=True)
 class FetchedDocument:
     """`fetch()` 가 반환하는 본문 한 건.
 
@@ -72,7 +86,7 @@ class DocumentSource(Protocol):
         """`document_meta.source` 에 기록할 소스 식별자(`drive`/`notion`)."""
         ...
 
-    def list_files(self) -> list[FileMeta]:
+    def list_files(self) -> FileListing:
         """설정된 범위 안의 문서 메타데이터 목록을 반환한다.
 
         본문은 가져오지 않는다.
@@ -87,5 +101,13 @@ class DocumentSource(Protocol):
 
         Raises:
             IntegrationError: 문서가 없거나 외부 연동에 실패한 경우.
+        """
+        ...
+
+    def supports_text_extraction(self, mime_type: str | None) -> bool:
+        """이 MIME 타입에서 본문 텍스트를 추출할 수 있으면 True(개선 #5).
+
+        `mime_type` 이 None/빈 문자열이면 True — 판정 실패로 색인을
+        누락시키느니 fetch 가 실패하게 둔다.
         """
         ...

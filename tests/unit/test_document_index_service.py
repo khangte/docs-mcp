@@ -938,3 +938,108 @@ def test_index_bodies_commits_mid_source_when_only_body_indexing_changes(
     assert body_index_deps["document_repo"].get(first_committed_id) is not None
     assert body_index_deps["document_repo"].get(last_committed_id) is not None
     assert body_index_deps["document_repo"].get(rolled_back_id) is None
+
+
+# --- 색인 커버리지 가시화 (개선 #5) ------------------------------------------------
+
+
+def test_unsupported_mime_is_skipped_before_fetch_and_counted_separately(
+    body_index_service, fake_drive_source
+) -> None:
+    """미지원 MIME 은 fetch 전에 걸러지고 unsupported 로, 정상 문서는 unindexed 0 이다."""
+    fake_drive_source.put("d1", "이미지", "본문無", modified_at=_T1, mime_type="image/png")
+    fake_drive_source.put("d2", "정상 문서", "# 정상\n\n본문 내용.", modified_at=_T1)
+    fake_drive_source.unsupported_mime_types = {"image/png"}
+
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.unsupported == 1
+    assert result.unindexed == 0
+    assert "d1" not in fake_drive_source.fetched_ids
+
+
+def test_unsupported_mime_is_never_refetched_across_multiple_refreshes(
+    body_index_service, fake_drive_source
+) -> None:
+    """미지원 MIME 문서는 여러 번 refresh 해도 fetch 를 시도하지 않는다(영구 재시도 회귀 가드)."""
+    fake_drive_source.put("d1", "이미지", "본문無", modified_at=_T1, mime_type="image/png")
+    fake_drive_source.unsupported_mime_types = {"image/png"}
+
+    body_index_service.refresh(index_bodies=True)
+    assert "d1" not in fake_drive_source.fetched_ids
+    fake_drive_source.reset_counts()
+
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert "d1" not in fake_drive_source.fetched_ids
+    assert result.unsupported == 1
+
+
+def test_index_bodies_false_marks_scope_unindexed_except_unsupported(
+    index_service, fake_drive_source
+) -> None:
+    """index_bodies=False 면 범위 전체가 unindexed, 미지원 MIME 문서만 unsupported 다."""
+    fake_drive_source.put("d1", "정상 문서", "본문", modified_at=_T1)
+    fake_drive_source.put("d2", "이미지", "본문無", modified_at=_T1, mime_type="image/png")
+    fake_drive_source.unsupported_mime_types = {"image/png"}
+
+    result = index_service.refresh(index_bodies=False)
+
+    assert result.unindexed == 1
+    assert result.unsupported == 1
+
+
+def test_fetch_failure_on_supported_mime_is_counted_as_unindexed(
+    body_index_service, fake_drive_source
+) -> None:
+    """지원 MIME 문서의 fetch 실패는 unindexed 로 잡힌다."""
+    fake_drive_source.put("d1", "실패 문서", "본문", modified_at=_T1)
+    fake_drive_source.failing_fetch_ids = {"d1"}
+
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.unindexed == 1
+    assert result.unsupported == 0
+
+
+def test_whitespace_only_body_is_counted_as_unindexed(
+    body_index_service, fake_drive_source
+) -> None:
+    """본문이 공백뿐이라 document_id 가 NULL 로 남는 문서는 unindexed 다."""
+    fake_drive_source.put("d1", "빈 문서", "   \n\n  ", modified_at=_T1)
+
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.unindexed == 1
+
+
+def test_listing_truncated_aggregates_labels_across_sources(
+    index_service, fake_drive_source, fake_notion_source
+) -> None:
+    """절단된 소스 1개 + 정상 소스 1개 → listing_truncated 에 절단된 소스만 라벨로 담긴다."""
+    fake_drive_source.put("d1", "드라이브 문서", "본문", modified_at=_T1)
+    fake_notion_source.put("n1", "노션 문서", "본문", modified_at=_T1)
+    fake_drive_source.listing_truncated = True
+
+    result = index_service.refresh()
+
+    assert result.listing_truncated == (f"{DEFAULT_PROJECT}/{SOURCE_DRIVE}",)
+
+
+def test_partial_failure_coverage_reflects_only_committed_batch(
+    db_session, meta_repo, fake_drive_source, make_project_resolver
+) -> None:
+    """중간에 실패해도 coverage(unindexed) 는 커밋된 배치까지만 집계된다."""
+    resolver = make_project_resolver(
+        drive_mapping={DEFAULT_PROJECT: ("folder-default", fake_drive_source)}
+    )
+    service = DocumentIndexService(session=db_session, meta_repo=meta_repo, resolver=resolver)
+    total = BATCH_SIZE + 5
+    for index in range(total):
+        fake_drive_source.put(f"d{index}", f"문서 {index}", "본문", modified_at=_T1)
+    fake_drive_source.fail_listing_at_index = BATCH_SIZE + 2
+
+    result = service.refresh(index_bodies=False)
+
+    assert result.failed_sources == (f"{DEFAULT_PROJECT}/{SOURCE_DRIVE}",)
+    assert result.unindexed == BATCH_SIZE

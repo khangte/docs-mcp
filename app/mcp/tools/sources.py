@@ -91,6 +91,12 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
             실패한 항목이 failed_sources 에 담긴다. 대상이 하나도 구성돼
             있지 않거나 전부 실패하면 error/code/message 필드를 담은
             ErrorPayload를 대신 반환한다.
+            coverage 키는 항상 존재한다(개선 #5): unindexed(본문 색인이
+            없어 조치가 필요한 문서 수), unsupported(텍스트 추출 불가 MIME
+            이라 fetch 를 건너뛴 문서 수, 정상), listing_truncated(탐색
+            상한에 걸려 목록이 잘린 "<project>/<source>" 목록). 위 4개
+            변화량 카운터와 같은 커밋 경계를 타므로, 부분 실패 시 unindexed/
+            unsupported 도 커밋된 배치까지만 반영된다.
             include_registered=True 면 registered 키(total/reindexed/
             skipped/failed)가 추가된다. failed 는 resync 에 실패한
             document_id 목록이며, 개별 실패는 다른 문서 처리를 막지 않는다.

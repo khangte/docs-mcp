@@ -71,7 +71,12 @@ class _SlowTrackingDocumentSource:
         return self._source_name
 
     def list_files(self):  # pragma: no cover - list_files 는 검색 경로에서 안 쓰임
-        return []
+        from app.services.documents.sources.document_source import FileListing
+
+        return FileListing(files=[])
+
+    def supports_text_extraction(self, mime_type: str | None) -> bool:  # pragma: no cover
+        return True
 
     def fetch(self, external_id: str) -> FetchedDocument:
         with self._lock:

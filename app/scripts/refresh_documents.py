@@ -90,6 +90,10 @@ def _execute(
 
     if refresh_result.failed_sources:
         logger.warning("일부 소스 갱신 실패: %s", ", ".join(refresh_result.failed_sources))
+    if refresh_result.listing_truncated:
+        logger.warning(
+            "탐색 상한 도달로 목록이 잘린 소스: %s", ", ".join(refresh_result.listing_truncated)
+        )
 
     registered_summary = ""
     if registered_result is not None:
@@ -100,11 +104,13 @@ def _execute(
             f"failed={len(registered_result['failed'])})"
         )
     logger.info(
-        "동기화 완료: synced=%d added=%d updated=%d removed=%d%s",
+        "동기화 완료: synced=%d added=%d updated=%d removed=%d unindexed=%d unsupported=%d%s",
         refresh_result.synced,
         refresh_result.added,
         refresh_result.updated,
         refresh_result.removed,
+        refresh_result.unindexed,
+        refresh_result.unsupported,
         registered_summary,
     )
     return EXIT_OK

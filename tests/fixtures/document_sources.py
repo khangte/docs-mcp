@@ -13,7 +13,11 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.core.errors import IntegrationError
-from app.services.documents.sources.document_source import FetchedDocument, FileMeta
+from app.services.documents.sources.document_source import (
+    FetchedDocument,
+    FileListing,
+    FileMeta,
+)
 
 
 class _FailingFileList(list):
@@ -71,13 +75,17 @@ class FakeDocumentSource:
         #: 이 집합에 든 external_id 는 fetch 시 truncated=True 로 반환한다
         #: (search 경로가 truncated 를 무시하는지 검증하는 용도).
         self.truncated_ids: set[str] = set()
+        #: `list_files()` 가 반환할 FileListing.truncated 값(개선 #5).
+        self.listing_truncated = False
+        #: 이 집합에 든 MIME 타입은 `supports_text_extraction()` 이 False 를 반환한다.
+        self.unsupported_mime_types: set[str] = set()
 
     @property
     def source_name(self) -> str:
         """`document_meta.source` 에 기록할 소스 식별자."""
         return self._source_name
 
-    def list_files(self) -> list[FileMeta]:
+    def list_files(self) -> FileListing:
         """등록된 메타데이터 목록을 반환하고 호출 횟수를 기록한다.
 
         `fail_listing_at_index` 가 설정돼 있으면 목록 조회 자체는 성공하되,
@@ -87,12 +95,21 @@ class FakeDocumentSource:
         if self.list_should_fail:
             raise IntegrationError(f"fake {self._source_name} list failure")
         if self.fail_listing_at_index is not None:
-            return _FailingFileList(
-                list(self.files),
-                self.fail_listing_at_index,
-                f"fake {self._source_name} failure while saving",
+            return FileListing(
+                files=_FailingFileList(
+                    list(self.files),
+                    self.fail_listing_at_index,
+                    f"fake {self._source_name} failure while saving",
+                ),
+                truncated=self.listing_truncated,
             )
-        return list(self.files)
+        return FileListing(files=list(self.files), truncated=self.listing_truncated)
+
+    def supports_text_extraction(self, mime_type: str | None) -> bool:
+        """`unsupported_mime_types` 에 등록된 MIME 이 아니면 True(개선 #5)."""
+        if not mime_type:
+            return True
+        return mime_type not in self.unsupported_mime_types
 
     def fetch(self, external_id: str) -> FetchedDocument:
         """본문을 반환하고 호출 횟수/대상 ID 를 기록한다."""
@@ -162,7 +179,7 @@ class ExplodingDocumentSource:
         """`document_meta.source` 에 기록할 소스 식별자."""
         return self._source_name
 
-    def list_files(self) -> list[FileMeta]:
+    def list_files(self) -> FileListing:
         """호출되면 AssertionError 를 발생시킨다."""
         raise AssertionError(
             f"list_files() 가 호출되면 안 되는 경로에서 호출됨: {self._source_name}"

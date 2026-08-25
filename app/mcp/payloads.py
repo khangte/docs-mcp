@@ -13,6 +13,7 @@ from app.mcp.types import (
     MatchedChunkPayload,
     NotionSourceItem,
     ParameterItem,
+    RefreshCoverage,
     RefreshIndexResult,
     RelatedEndpointItem,
     RequestBodyItem,
@@ -166,12 +167,18 @@ def _to_document_content_payload(content: DocumentContent) -> DocumentContentPay
 
 def _to_refresh_payload(result: RefreshResult) -> RefreshIndexResult:
     """메타 캐시 갱신 집계를 MCP 응답 dict 로 변환한다."""
+    coverage: RefreshCoverage = {
+        "unindexed": result.unindexed,
+        "unsupported": result.unsupported,
+        "listing_truncated": list(result.listing_truncated),
+    }
     return {
         "synced": result.synced,
         "added": result.added,
         "updated": result.updated,
         "removed": result.removed,
         "failed_sources": list(result.failed_sources),
+        "coverage": coverage,
     }
 
 

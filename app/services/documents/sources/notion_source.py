@@ -17,7 +17,11 @@ import httpx
 from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_NOTION
-from app.services.documents.sources.document_source import FetchedDocument, FileMeta
+from app.services.documents.sources.document_source import (
+    FetchedDocument,
+    FileListing,
+    FileMeta,
+)
 from app.services.documents.sources.notion_blocks import (
     block_plain_text,
     child_page_to_file_meta,
@@ -142,9 +146,19 @@ class NotionSource:
                 self._collect_child_pages(client, page_id, acc, visited, 0)
         return acc
 
-    def list_files(self) -> list[FileMeta]:
-        """`DocumentSource` Protocol 호환 별칭. `list_pages()` 와 동일하다."""
-        return self.list_pages()
+    def list_files(self) -> FileListing:
+        """`DocumentSource` Protocol 호환 어댑터. `list_pages()` 결과를 감싼다.
+
+        Notion 은 `MAX_PAGES` 도달 시 여러 지점에서 return 하므로, 내부
+        재귀 구조를 고치는 대신 여기서 결과 건수만으로 절단 여부를
+        판정한다(상한에 도달한 목록은 정의상 잘린 것이다).
+        """
+        pages = self.list_pages()
+        return FileListing(files=pages, truncated=len(pages) >= MAX_PAGES)
+
+    def supports_text_extraction(self, mime_type: str | None) -> bool:
+        """Notion 페이지는 항상 텍스트 추출이 가능하다(mime_type 이 없음)."""
+        return True
 
     def fetch(self, external_id: str) -> FetchedDocument:
         """페이지 속성 + 본문(블록 트리)을 평문 텍스트로 반환한다.

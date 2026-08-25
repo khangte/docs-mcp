@@ -180,7 +180,12 @@ class _FakeDriveSource:
     source_name = SOURCE_DRIVE
 
     def list_files(self):  # pragma: no cover - 벤치에서는 쓰지 않음
-        return []
+        from app.services.documents.sources.document_source import FileListing
+
+        return FileListing(files=[])
+
+    def supports_text_extraction(self, mime_type: str | None) -> bool:  # pragma: no cover
+        return True
 
     def fetch(self, external_id: str):
         from app.services.documents.sources.document_source import FetchedDocument

@@ -20,7 +20,11 @@ import httpx
 from app.core.errors import IntegrationError, ParserError
 from app.core.logging import get_logger
 from app.models.document_meta import SOURCE_DRIVE
-from app.services.documents.sources.document_source import FetchedDocument, FileMeta
+from app.services.documents.sources.document_source import (
+    FetchedDocument,
+    FileListing,
+    FileMeta,
+)
 from app.services.documents.sources.time_parsing import parse_rfc3339
 from app.services.parser import docx_parser, pdf_parser, pptx_parser, xlsx_parser
 
@@ -195,7 +199,7 @@ class GoogleDriveSource:
         """`document_meta.source` 에 기록할 소스 식별자."""
         return SOURCE_DRIVE
 
-    def list_files(self) -> list[FileMeta]:
+    def list_files(self) -> FileListing:
         """대상 폴더와 그 하위 폴더 안의 파일 메타데이터를 모두 반환한다.
 
         폴더 자체는 결과에 포함하지 않고 탐색 큐에만 넣는다.
@@ -223,7 +227,21 @@ class GoogleDriveSource:
             _LOG.warning(
                 "drive 폴더 탐색 상한(%d)에 도달해 일부 하위 폴더를 건너뜀", MAX_FOLDERS
             )
-        return collected
+        return FileListing(files=collected, truncated=bool(pending))
+
+    def supports_text_extraction(self, mime_type: str | None) -> bool:
+        """이 MIME 타입에서 본문 텍스트를 추출할 수 있으면 True(개선 #5).
+
+        fetch() 가 실제로 쓰는 것과 같은 상수(`NATIVE_EXPORT_MIME_TYPES`/
+        `BINARY_TEXT_EXTRACTORS`)로 판정해 두 곳이 갈라지지 않게 한다.
+        """
+        if not mime_type:
+            return True
+        if mime_type.startswith(GOOGLE_NATIVE_MIME_PREFIX):
+            return mime_type in NATIVE_EXPORT_MIME_TYPES
+        if mime_type.startswith("text/"):
+            return True
+        return mime_type in BINARY_TEXT_EXTRACTORS
 
     def fetch(self, external_id: str) -> FetchedDocument:
         """Drive 파일 본문을 평문으로 반환한다.

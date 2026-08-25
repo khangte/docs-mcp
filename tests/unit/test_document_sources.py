@@ -15,6 +15,7 @@ import pytest
 
 from app.core.errors import IntegrationError
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION
+from app.services.documents.sources import google_drive_source, notion_source
 from app.services.documents.sources.document_source import (
     DocumentSource,
     FetchedDocument,
@@ -173,11 +174,13 @@ def test_drive_list_files_recurses_into_subfolders(monkeypatch: pytest.MonkeyPat
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    files = source.list_files()
+    listing = source.list_files()
+    files = listing.files
 
     assert [f.external_id for f in files] == ["f1", "f2"]
     assert files[0].url == "https://drive.test/f1"
     assert files[1].modified_at == datetime(2026, 7, 2, 0, 0, 0)
+    assert listing.truncated is False
 
 
 def test_drive_list_files_populates_mime_type_created_at_owner(
@@ -198,7 +201,7 @@ def test_drive_list_files_populates_mime_type_created_at_owner(
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, lambda request: _json(files))
 
-    (meta,) = source.list_files()
+    (meta,) = source.list_files().files
 
     assert meta.mime_type == GOOGLE_DOC_MIME_TYPE
     assert meta.created_at == datetime(2026, 6, 1, 0, 0, 0)
@@ -222,7 +225,7 @@ def test_drive_list_files_owner_falls_back_to_display_name_without_email(
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, lambda request: _json(files))
 
-    (meta,) = source.list_files()
+    (meta,) = source.list_files().files
 
     assert meta.owner == "홍길동"
 
@@ -235,7 +238,7 @@ def test_drive_list_files_owner_none_without_owners_field(
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, lambda request: _json(files))
 
-    (meta,) = source.list_files()
+    (meta,) = source.list_files().files
 
     assert meta.owner is None
 
@@ -259,7 +262,7 @@ def test_drive_list_files_follows_pagination(monkeypatch: pytest.MonkeyPatch) ->
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, handler)
 
-    assert [f.external_id for f in source.list_files()] == ["f1", "f2"]
+    assert [f.external_id for f in source.list_files().files] == ["f1", "f2"]
 
 
 def test_drive_list_files_empty_folder_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -267,7 +270,28 @@ def test_drive_list_files_empty_folder_returns_empty(monkeypatch: pytest.MonkeyP
     source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
     _patch_client(monkeypatch, source, lambda request: _json({"files": []}))
 
-    assert source.list_files() == []
+    listing = source.list_files()
+    assert listing.files == []
+    assert listing.truncated is False
+
+
+def test_drive_list_files_truncated_when_folder_search_hits_max_folders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """탐색한 폴더 수가 MAX_FOLDERS 를 넘으면 truncated=True 다(개선 #5 T6)."""
+    monkeypatch.setattr(google_drive_source, "MAX_FOLDERS", 1)
+    root_children = {
+        "files": [
+            {"id": "sub1", "name": "하위1", "mimeType": FOLDER_MIME_TYPE},
+            {"id": "sub2", "name": "하위2", "mimeType": FOLDER_MIME_TYPE},
+        ]
+    }
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, lambda request: _json(root_children))
+
+    listing = source.list_files()
+
+    assert listing.truncated is True
 
 
 # --- Drive: fetch ---------------------------------------------------------------
@@ -747,7 +771,22 @@ def test_notion_list_files_is_alias_of_list_pages(monkeypatch: pytest.MonkeyPatc
         lambda request: _json({"results": [{"id": "p1", "properties": {}}]}),
     )
 
-    assert source.list_files() == source.list_pages()
+    assert source.list_files().files == source.list_pages()
+
+
+def test_notion_list_files_truncated_when_page_count_hits_max_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """조회된 페이지 수가 MAX_PAGES 이상이면 truncated=True 다(개선 #5 T7)."""
+    monkeypatch.setattr(notion_source, "MAX_PAGES", 1)
+    source = NotionSource(token="t1")
+    _patch_client(
+        monkeypatch,
+        source,
+        lambda request: _json({"results": [{"id": "p1", "properties": {}}]}),
+    )
+
+    assert source.list_files().truncated is True
 
 
 # --- Notion: fetch --------------------------------------------------------------

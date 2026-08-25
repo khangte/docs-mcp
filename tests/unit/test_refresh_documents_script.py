@@ -103,6 +103,24 @@ def test_partial_failure_returns_ok_with_warning(caplog) -> None:
     assert any("일부 소스 갱신 실패" in r.message for r in caplog.records)
 
 
+def test_listing_truncated_logs_warning(caplog) -> None:
+    """목록이 잘린 소스가 있으면 WARN 로그로 알린다(개선 #5)."""
+    result = RefreshResult(
+        synced=5, added=1, updated=0, removed=0, listing_truncated=("default/drive",)
+    )
+    index_service = _FakeDocumentIndexService(result=result)
+    bundle = _FakeBundle(index_service)
+
+    with caplog.at_level(logging.INFO):
+        code = _execute(bundle, _args(), lock_acquire=lambda: True)
+
+    assert code == EXIT_OK
+    assert any(
+        "탐색 상한 도달로 목록이 잘린 소스" in r.message and "default/drive" in r.message
+        for r in caplog.records
+    )
+
+
 def test_success_returns_ok_and_logs_aggregate(caplog) -> None:
     """정상 완료 시 exit 0, 집계가 INFO 로그에 담긴다."""
     result = RefreshResult(synced=3, added=1, updated=1, removed=0, failed_sources=())

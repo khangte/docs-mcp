@@ -69,6 +69,13 @@ class RefreshResult:
         updated: `modified_at`/제목/URL 이 실제로 바뀌어 갱신된 행 수.
         removed: 소스에서 사라져 캐시에서 제거된 행 수.
         failed_sources: 갱신에 실패한 "<project>/<source>" 목록(부분 실패 허용).
+        unindexed: 본문 색인이 없는데(document_id NULL) 지원 MIME 이라 조치가
+            필요한 문서 수(개선 #5). added/updated 와 같은 커밋 경계를 타므로,
+            부분 실패 시 이 값도 **커밋된 배치까지만** 반영된다.
+        unsupported: 텍스트 추출이 불가한 MIME 이라 fetch 자체를 건너뛴 문서
+            수(정상). `unindexed` 와 서로소.
+        listing_truncated: 탐색 상한(Drive MAX_FOLDERS/Notion MAX_PAGES)에
+            걸려 목록이 잘린 "<project>/<source>" 목록.
     """
 
     synced: int
@@ -76,6 +83,9 @@ class RefreshResult:
     updated: int
     removed: int
     failed_sources: tuple[str, ...] = ()
+    unindexed: int = 0
+    unsupported: int = 0
+    listing_truncated: tuple[str, ...] = ()
 
 
 @dataclass
@@ -87,6 +97,12 @@ class _SourceCounts:
     updated: int = 0
     removed: int = 0
     fetched_bodies: int = 0
+    unindexed: int = 0
+    unsupported: int = 0
+    #: list_files() 가 반환한 FileListing.truncated 값(개선 #5). 커밋 경계와
+    #: 무관하게 list_files() 성공 시점에 이미 확정되는 값이라 배치 집계와
+    #: 별도로 보관한다.
+    listing_truncated: bool = False
 
     @property
     def total_changes(self) -> int:
@@ -165,7 +181,8 @@ class DocumentIndexService:
                 플래그와 무관하게 항상 수행된다.
 
         Returns:
-            added/updated/removed/synced 집계와 실패한 "<project>/<source>" 목록.
+            added/updated/removed/synced 집계, 실패한 "<project>/<source>"
+            목록, 커버리지(unindexed/unsupported/listing_truncated, 개선 #5).
 
         Raises:
             IntegrationError: 대상이 하나도 구성돼 있지 않거나, 갱신을 시도한
@@ -192,6 +209,7 @@ class DocumentIndexService:
 
         totals = _SourceCounts()
         failed: list[str] = []
+        truncated_labels: list[str] = []
         for target_project, document_source in targets:
             label = f"{target_project}/{document_source.source_name}"
             try:
@@ -200,10 +218,14 @@ class DocumentIndexService:
                 # 부분 실패 허용: 실패한 소스라도 이미 커밋된 배치는 집계에 넣는다.
                 # (`_refresh_source` 가 미커밋 배치만 롤백하고 확정분을 실어 보낸다)
                 _merge_counts(totals, exc.committed)
+                if exc.committed.listing_truncated:
+                    truncated_labels.append(label)
                 _LOG.warning("문서 소스 갱신 실패(다음 갱신에서 재시도 가능): %s (%s)", label, exc)
                 failed.append(label)
                 continue
             _merge_counts(totals, counts)
+            if counts.listing_truncated:
+                truncated_labels.append(label)
 
         # 모든 대상이 실패했고 커밋된 변경도 전혀 없으면 "조용한 무동작"이 되므로
         # 예외로 알린다. 반대로 일부라도 커밋됐다면 그 사실이 집계와
@@ -219,6 +241,9 @@ class DocumentIndexService:
             updated=totals.updated,
             removed=totals.removed,
             failed_sources=tuple(failed),
+            unindexed=totals.unindexed,
+            unsupported=totals.unsupported,
+            listing_truncated=tuple(truncated_labels),
         )
 
     def _resolve_targets(
@@ -265,10 +290,11 @@ class DocumentIndexService:
         """
         source_name = document_source.source_name
         try:
-            remote_files = document_source.list_files()
+            listing = document_source.list_files()
         except Exception as exc:
             # 목록 조회 실패: 이 소스는 아무 행도 건드리지 않았다(확정분 0건).
             raise _PartialRefreshError(exc, _SourceCounts()) from exc
+        remote_files = listing.files
         # project 로 좁힌 기존 행만 삭제 감지 기준 집합으로 쓴다. 다른
         # 프로젝트가 같은 source_name 을 쓰더라도 그 행은 여기 섞이지 않는다.
         existing = {
@@ -277,7 +303,7 @@ class DocumentIndexService:
         }
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        committed = _SourceCounts(synced=len(remote_files))
+        committed = _SourceCounts(synced=len(remote_files), listing_truncated=listing.truncated)
         pending = _SourceCounts()
         seen: set[str] = set()
         try:
@@ -354,9 +380,19 @@ class DocumentIndexService:
         # index_document_body 내부에서 처리한다. document_id NULL 은 "본문 미색인"
         # 신호이므로, 색인 성공 시 채워지는 document_id 가 다음 실행부터 이 조건을
         # 자동으로 다시 좁힌다(비용 자기 종료, doc36 §6-2 백필 회귀 수정).
-        if index_bodies and (needs_body_index or row.document_id is None):
+        # 미지원 MIME(개선 #5)은 애초에 fetch 를 시도하지 않는다 — 안 그러면
+        # document_id 가 영원히 NULL 로 남아 매 refresh 마다 같은 파일을
+        # 다시 fetch 하는 영구 재시도가 된다.
+        supported = document_source.supports_text_extraction(meta.mime_type)
+        if index_bodies and supported and (needs_body_index or row.document_id is None):
             if self._index_body(project, source_name, meta, document_source, row):
                 pending.fetched_bodies += 1
+
+        if row.document_id is None:
+            if supported:
+                pending.unindexed += 1
+            else:
+                pending.unsupported += 1
 
     def _index_body(
         self,
@@ -461,6 +497,8 @@ class DocumentIndexService:
         committed.updated += pending.updated
         committed.removed += pending.removed
         committed.fetched_bodies += pending.fetched_bodies
+        committed.unindexed += pending.unindexed
+        committed.unsupported += pending.unsupported
         return _SourceCounts()
 
 
@@ -471,6 +509,8 @@ def _merge_counts(totals: _SourceCounts, counts: _SourceCounts) -> None:
     totals.updated += counts.updated
     totals.removed += counts.removed
     totals.fetched_bodies += counts.fetched_bodies
+    totals.unindexed += counts.unindexed
+    totals.unsupported += counts.unsupported
 
 
 def _new_row(project: str, source_name: str, meta: FileMeta, now: datetime) -> DocumentMeta:
