@@ -12,7 +12,6 @@ from __future__ import annotations
 import hashlib
 import json
 
-
 from app.models import (
     ApiEndpoint,
     ApiParameter,
@@ -26,7 +25,7 @@ from app.models import (
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.indexer.chunk_builder import build_chunks
-from app.services.indexer.embedding_provider import EmbeddingProvider, TOKEN_WARNING_THRESHOLD
+from app.services.indexer.embedding_provider import TOKEN_WARNING_THRESHOLD, EmbeddingProvider
 from app.services.parser.openapi_parser import (
     ParsedDocument,
     ParsedEndpoint,
@@ -102,6 +101,7 @@ class IndexerService:
             )
             self._endpoint_repo.add_section(section_entity)
 
+        business_metadata = self._endpoint_repo.list_business_metadata_by_document(document.id)
         count_tokens = getattr(self._embedding_provider, "count_tokens", None)
         built_chunks = build_chunks(
             parsed,
@@ -110,6 +110,7 @@ class IndexerService:
             schema_ids,
             count_tokens=count_tokens,
             token_limit=TOKEN_WARNING_THRESHOLD,
+            business_metadata=business_metadata,
         )
         texts = [c.text for c in built_chunks]
         labels = [f"{document.id}:{c.chunk_type}:{c.ref_id}" for c in built_chunks]

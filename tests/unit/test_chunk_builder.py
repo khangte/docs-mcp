@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.models import EndpointBusinessMetadata
 from app.services.indexer.chunk_builder import build_chunks, build_endpoint_chunk_text
 from app.services.parser.openapi_parser import (
     ParsedDocument,
@@ -106,6 +107,73 @@ def test_endpoint_chunk_text_places_structured_fields_before_description() -> No
     description_idx = next(i for i, line in enumerate(lines) if line == "장문 설명 텍스트")
     responses_idx = len(lines)
     assert 0 < params_idx < body_idx < description_idx < responses_idx
+
+
+def test_endpoint_chunk_text_strips_html_tags_from_description() -> None:
+    """docs/architect-review/53/54 arm B: description의 HTML 태그를 제거한다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/v1/charges",
+        operation_id=None,
+        summary="",
+        description="<p>Retrieves a <strong>charge</strong>.</p>",
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    assert "<p>" not in text
+    assert "<strong>" not in text
+    assert "Retrieves a charge." in text
+
+
+def test_endpoint_chunk_text_truncates_description_to_300_chars() -> None:
+    """docs/architect-review/54: HTML strip 후 description을 앞 300자에서 자른다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/v1/charges",
+        operation_id=None,
+        summary="",
+        description="x" * 500,
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    description_line = next(line for line in text.splitlines() if line.startswith("x"))
+    assert len(description_line) == 300
+
+
+def test_endpoint_chunk_text_without_metadata_has_no_keywords_or_phrases_lines() -> None:
+    """metadata 미주입(기본값)이면 Keywords:/Phrases: 줄이 생기지 않는다(52 §(2))."""
+    endpoint = ParsedEndpoint(
+        method="GET", path="/v1/charges", operation_id=None, summary="", description=""
+    )
+    text = build_endpoint_chunk_text(endpoint)
+    assert "Keywords:" not in text
+    assert "Phrases:" not in text
+
+
+def test_endpoint_chunk_text_with_metadata_places_keywords_and_phrases_after_header() -> None:
+    """docs/architect-review/52 §(3)/54 §4: Keywords:/Phrases:는 header 직후에 온다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/v1/charges",
+        operation_id="getCharge",
+        summary="Get a charge",
+        description="설명",
+    )
+    metadata = EndpointBusinessMetadata(
+        document_id="doc-1", method="GET", path="/v1/charges", business_description="비즈니스 설명"
+    )
+    metadata.keywords = ["결제", "환불"]
+    metadata.user_phrases = ["결제 취소하는 법"]
+    text = build_endpoint_chunk_text(endpoint, metadata=metadata)
+    lines = text.splitlines()
+    assert lines[0].startswith("[GET]")
+    keywords_idx = next(i for i, line in enumerate(lines) if line.startswith("Keywords:"))
+    phrases_idx = next(i for i, line in enumerate(lines) if line.startswith("Phrases:"))
+    operation_id_idx = next(i for i, line in enumerate(lines) if line.startswith("OperationId:"))
+    assert keywords_idx == 1
+    assert phrases_idx == 2
+    assert operation_id_idx > phrases_idx
+    assert "결제, 환불" in text
+    assert "결제 취소하는 법" in text
+    assert "비즈니스 설명" in text
 
 
 def test_schema_chunk_created(sample_openapi_3: str) -> None:

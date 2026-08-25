@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from app.models import EndpointBusinessMetadata
+
 
 def test_index_document_creates_endpoints_and_chunks(
     services_factory, sample_openapi_3: str
@@ -101,3 +103,49 @@ def test_resync_force_reindexes_even_with_same_hash(
         document_id, force=True, raw_override=sample_openapi_3
     )
     assert result.status == "reindexed"
+
+
+def test_index_document_with_no_business_metadata_has_no_keywords_lines(
+    services_factory, sample_openapi_3: str
+) -> None:
+    """docs/architect-review/52 §(2) 회귀 확인: metadata 테이블이 비어 있으면
+    (아직 3단계 CLI가 없어 항상 이 상태다) 기존 청크 텍스트와 동일해야 한다."""
+    services = services_factory()
+    result = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
+    chunks = services.chunk_repo.list_by_document(result.document.id)
+    endpoint_chunks = [c for c in chunks if c.chunk_type == "endpoint"]
+    assert endpoint_chunks
+    assert all("Keywords:" not in c.text and "Phrases:" not in c.text for c in endpoint_chunks)
+
+
+def test_reindex_applies_business_metadata_by_method_path(
+    services_factory, sample_openapi_3: str
+) -> None:
+    """docs/architect-review/52 §(2): IndexerService가 (document_id, method, path)
+    로 metadata를 조회해 build_chunks에 넘긴다. api_endpoint.id 를 거치지 않으므로
+    재색인(endpoint 행 전부 교체) 후에도 값이 청크에 반영된다."""
+    services = services_factory()
+    first = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
+    document_id = first.document.id
+
+    metadata = EndpointBusinessMetadata(document_id=document_id, method="GET", path="/pet/{petId}")
+    metadata.keywords = ["adopt"]
+    services.session.add(metadata)
+    services.session.commit()
+
+    modified = json.loads(sample_openapi_3)
+    modified["info"]["title"] = "Petstore API V2"
+    result = services.sync_service.resync(document_id, raw_override=json.dumps(modified))
+    assert result.status == "reindexed"
+
+    chunks = services.chunk_repo.list_by_document(document_id)
+    endpoint_chunk = next(
+        c
+        for c in chunks
+        if c.chunk_type == "endpoint" and "/pet/{petId}" in c.text and "[GET]" in c.text
+    )
+    assert "Keywords: adopt" in endpoint_chunk.text

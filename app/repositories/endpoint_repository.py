@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.models import ApiEndpoint, ApiSchema, Document, DocumentSection
+from app.models import ApiEndpoint, ApiSchema, Document, DocumentSection, EndpointBusinessMetadata
 
 
 class EndpointRepository:
@@ -140,6 +140,21 @@ class EndpointRepository:
             )
         stmt = stmt.order_by(ApiEndpoint.id)
         return self._session.execute(stmt).scalars().all()
+
+    def list_business_metadata_by_document(
+        self, document_id: str
+    ) -> dict[tuple[str, str], EndpointBusinessMetadata]:
+        """문서의 비즈니스 메타데이터를 (method, path) → 행 매핑으로 반환한다.
+
+        docs/architect-review/52 §(2): `api_endpoint` 와 달리 재색인에도 살아남는
+        테이블이라 (method, path) 로 조회한다. 없으면 빈 매핑(청크 빌더는
+        `None` 취급과 동일하게 동작).
+        """
+        stmt = select(EndpointBusinessMetadata).where(
+            EndpointBusinessMetadata.document_id == document_id
+        )
+        rows = self._session.execute(stmt).scalars().all()
+        return {(row.method, row.path): row for row in rows}
 
     def get_schema_by_name(self, document_id: str, name: str) -> ApiSchema | None:
         """문서 내 스키마 이름으로 컴포넌트 스키마를 조회한다."""

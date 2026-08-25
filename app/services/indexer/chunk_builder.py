@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from app.core.logging import get_logger
+from app.models import EndpointBusinessMetadata
 from app.services.indexer.section_splitter import CountTokens, build_section_chunks
 from app.services.parser.openapi_parser import (
     ParsedDocument,
@@ -14,6 +16,9 @@ from app.services.parser.openapi_parser import (
 )
 
 _LOG = get_logger("docs_mcp.indexer.chunk_builder")
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_DESCRIPTION_MAX_CHARS = 300
 
 
 @dataclass
@@ -25,16 +30,21 @@ class BuiltChunk:
     text: str
 
 
-def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
+def build_endpoint_chunk_text(
+    endpoint: ParsedEndpoint, metadata: EndpointBusinessMetadata | None = None
+) -> str:
     """엔드포인트 단위 청크 텍스트.
 
     포맷:
         [METHOD] PATH — SUMMARY
+        Keywords: k1, k2       (metadata 주입 시)
+        Phrases: p1; p2        (metadata 주입 시)
         OperationId: operationId
         Params: name(in,required), ...
         Body: field1, field2, ...
         Tags: t1, t2
         DESCRIPTION
+        BusinessDesc: ...      (metadata 주입 시)
         Responses: 200, 404
 
     docs/architect-review/30 §9.2: request body는 필드명만 나열한다(설명 텍스트
@@ -45,11 +55,17 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
     docs/architect-review/30 §11.2: SentenceTransformer는 입력 꼬리를 자른다.
     구조 필드(Params·Body)를 저신호 free-text(description)보다 앞에 둬 overflow
     시 고신호 필드명이 먼저 잘리지 않게 한다(header는 선두 고정).
+
+    docs/architect-review/53,54: description은 HTML 태그 제거 후 앞 300자로
+    절단한다(arm B) — 480토큰 예산에서 구조 필드가 밀려나지 않게 한다.
+    docs/architect-review/52 §(3)/54 §4: metadata 주입 시 Keywords/Phrases는
+    header 직후에 온다. business_description은 description을 대체하지 않고
+    병기한다(52 §측정 계획 2단계 포맷 조건).
     """
 
     summary = endpoint.summary or ""
     header = f"[{endpoint.method}] {endpoint.path} — {summary}".rstrip(" —")
-    description = endpoint.description or ""
+    description = _HTML_TAG_RE.sub("", endpoint.description or "")[:_DESCRIPTION_MAX_CHARS]
     operation_id = endpoint.operation_id or ""
     tags = ", ".join(endpoint.tags) if endpoint.tags else ""
     params_desc = ", ".join(
@@ -63,6 +79,10 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
             body_desc = ", ".join(sorted(str(k) for k in properties.keys()))
     responses_desc = ", ".join(r.status_code for r in endpoint.responses)
     lines = [header]
+    if metadata is not None and metadata.keywords:
+        lines.append(f"Keywords: {', '.join(metadata.keywords)}")
+    if metadata is not None and metadata.user_phrases:
+        lines.append(f"Phrases: {'; '.join(metadata.user_phrases)}")
     if operation_id:
         lines.append(f"OperationId: {operation_id}")
     if params_desc:
@@ -73,6 +93,8 @@ def build_endpoint_chunk_text(endpoint: ParsedEndpoint) -> str:
         lines.append(f"Tags: {tags}")
     if description:
         lines.append(description)
+    if metadata is not None and metadata.business_description:
+        lines.append(f"BusinessDesc: {metadata.business_description}")
     if responses_desc:
         lines.append(f"Responses: {responses_desc}")
     return "\n".join(lines)
@@ -107,6 +129,7 @@ def build_chunks(
     schema_ids: dict[int, str] | None = None,
     count_tokens: CountTokens | None = None,
     token_limit: int = 480,
+    business_metadata: dict[tuple[str, str], EndpointBusinessMetadata] | None = None,
 ) -> list[BuiltChunk]:
     """문서 내 모든 엔드포인트/스키마/섹션에 대해 청크를 생성한다.
 
@@ -115,6 +138,9 @@ def build_chunks(
     `schema_ids` 는 스키마 순서 인덱스 → schema_id 매핑(`ApiSchema.id`와 동일값).
     `count_tokens` 가 주어지면 상한(`token_limit`) 초과 섹션을 `section_splitter`
     로 sub-chunk N개로 분할한다(docs/23). `None`이면 섹션당 청크 1개(기존 동작).
+    `business_metadata` 는 (method, path) → `EndpointBusinessMetadata` 매핑
+    (docs/architect-review/52 §(2)). `None`이거나 키가 없으면 해당 엔드포인트는
+    metadata 없이 빌드된다(기존 동작과 동일).
     """
 
     chunks: list[BuiltChunk] = []
@@ -122,11 +148,12 @@ def build_chunks(
         eid = endpoint_ids.get((endpoint.method, endpoint.path))
         if not eid:
             continue
+        metadata = (business_metadata or {}).get((endpoint.method, endpoint.path))
         chunks.append(
             BuiltChunk(
                 chunk_type="endpoint",
                 ref_id=eid,
-                text=build_endpoint_chunk_text(endpoint),
+                text=build_endpoint_chunk_text(endpoint, metadata=metadata),
             )
         )
     for idx, schema in enumerate(document.schemas):

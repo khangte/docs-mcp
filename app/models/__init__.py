@@ -16,11 +16,18 @@ from typing import Any
 
 from sqlalchemy import text
 
-from app.models.base import Base, DEFAULT_PROJECT, PROJECT_MAX_LENGTH, SCHEMA
-from app.models.chunk import Chunk, EMBEDDING_DIM, TEXT_TSV_EXPRESSION
+from app.models.base import DEFAULT_PROJECT, PROJECT_MAX_LENGTH, SCHEMA, Base
+from app.models.chunk import EMBEDDING_DIM, TEXT_TSV_EXPRESSION, Chunk
 from app.models.document import Document, DocumentSection, DocumentSyncHistory
 from app.models.document_meta import ALLOWED_SOURCES, SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
-from app.models.openapi import ApiEndpoint, ApiParameter, ApiRequestBody, ApiResponse, ApiSchema
+from app.models.openapi import (
+    ApiEndpoint,
+    ApiParameter,
+    ApiRequestBody,
+    ApiResponse,
+    ApiSchema,
+    EndpointBusinessMetadata,
+)
 from app.models.project_source import ProjectSource
 
 __all__ = [
@@ -39,6 +46,7 @@ __all__ = [
     "ApiRequestBody",
     "ApiResponse",
     "ApiSchema",
+    "EndpointBusinessMetadata",
     "ALLOWED_SOURCES",
     "SOURCE_DRIVE",
     "SOURCE_NOTION",
