@@ -72,7 +72,7 @@
 | Query expansion           | 서버는 확장하지 않음. 호출 LLM 이 `query_variants` 로 제공, 후보 필터만 넓히고 점수에는 불참                                                                      | 동의어/약어/영문 일부 확장                                                 | 설계 의도는 일치(확장 주체 = LLM). 다만 variant 가 **title arm 의 SQL 필터에만** 반영되고 chunk FTS 의 `terms` 로도 전달되긴 하나 vector arm 에는 미반영                      | 중       | 부분(현행 유지 + 문서화) |
 | Metadata filtering        | `project`, `source` + **`modified_after`/`modified_before`/`mime_types` hard filter**(3 arm 전부 SQL 적용). `document_meta` 에 `mime_type`/`created_at`/`owner` 컬럼 추가 | createdTime/modifiedTime/mimeType/folderId/owner/sharedWith 로 hard filter | 날짜·mimeType 은 해소. `owner` 는 수집만 하고 필터 미노출, `created_at` 은 컬럼만, folderId/sharedWith 는 미구현 | 상       | **날짜·mime 구현 완료 (2026-08-26)** / owner·created_at 후속 |
 | Chunking                  | 헤딩(`#`) 기반 섹션 → 480토큰 초과 시 문단/문장/하드컷 그리디 분할, **overlap 0**, 각 sub 에 `# 제목` 앵커 부착                                                   | Heading/Section 우선, 500~1,000 token, 50~150 overlap                      | 방식은 권장안과 동일 계열. 크기(480)는 권장 하한보다 작고 overlap 이 없음. **PDF/DOCX/Docs 평문 export 는 마크다운 헤딩이 없어 문서 전체가 섹션 1개**로 묶인 뒤 기계적 분할됨 | 중       | 부분                     |
-| Keyword/BM25              | PostgreSQL FTS(`simple` config) + `ts_rank`. term OR 결합, IDF 없음, 문서 길이 정규화 없음(`ts_rank` 기본 normalization=0)                                        | BM25 또는 FTS. 코드/고객사명/사람이름/오류코드에 강해야 함                 | 정확 토큰 매칭은 되지만 **희소어 가중이 없음** — 흔한 토큰이 점수를 지배                                                                                                      | 상       | **필요**                 |
+| Keyword/BM25              | PostgreSQL FTS(`simple` config) + `ts_rank`. term OR 결합, **질의 측 복합어 분해(concat term + `<->` 2분할 phrase)로 한글 띄어쓰기 변형 흡수**, IDF 없음, 문서 길이 정규화 없음(`ts_rank` 기본 normalization=0) | BM25 또는 FTS. 코드/고객사명/사람이름/오류코드에 강해야 함                 | 정확 토큰 매칭과 복합어 띄어쓰기 대칭은 해소. 남은 격차는 **희소어 가중(IDF) 부재** — 흔한 토큰이 점수를 지배                                                                 | 상       | **복합어 대칭 구현 완료 (2026-08-26)** / IDF 는 V2 |
 | Vector/Semantic           | multilingual-e5-small(384d), passage/query 접두사 규약 준수, HNSW+cosine                                                                                          | Embedding 기반 vector search                                               | 구현 충실. 모델 크기가 작은 것 외 구조적 결함 없음                                                                                                                            | 하       | 불필요                   |
 | Hybrid                    | RRF(k=60) 3-arm(title/keyword/vector), **title 0.5 · keyword 1.0 · vector 1.0 가중**                                                                              | weighted sum 또는 RRF, semantic+lexical+metadata                           | arm 가중은 `reciprocal_rank_fuse(weights=…)` 로 도입 완료. metadata arm 은 여전히 부재(평가셋 없어 보류, 6절)                                                                  | 중       | **가중 구현 완료 (2026-08-26)** / metadata arm 은 보류 |
 | Candidate retrieval       | arm 당 `width = max(top_k*4, 50)` → 기본 top_k=5 면 arm 당 50건, 합집합 최대 150건                                                                                | BM25 Top30 + Vector Top30 → 30~50 candidate                                | 후보 폭은 권장안 이상. 문제 없음                                                                                                                                              | 하       | 불필요                   |
@@ -212,7 +212,7 @@
 | 1   | **응답에 근거·메타 추가 — 구현 완료 (2026-08-25)** — `matched_chunks[{chunk_id, text, chunk_type, arm}]`, `match_reasons[]`, `modified_at`, `indexed` 를 `search_documents` 응답 item 에 추가. `rrf.FusedResult.contributing_arms` 로 기여 arm 을 그대로 실어 나른다 | LLM 이 최종 판단을 하려면 근거가 필요한데 현재 스니펫 300자가 전부. `match_type`·`modified_at` 은 **이미 손에 있는 값을 버리는 중** | Low                                        | High                          | ~0 (추가 SQL 없음 — `get_texts_by_ids` 한 번의 id 집합만 확대) | **구현 완료**                                    |
 | 2   | **메타데이터 hard filter 도입 — 날짜·mimeType 구현 완료 (2026-08-26)** — `document_meta` 에 `mime_type`/`created_at`/`owner` 컬럼 추가(Drive `files.list` fields 확장) + `search_documents(modified_after, modified_before, mime_types)` 파라미터. `owner` 필터·`created_at` 필터는 후속(5.4절) | 권장안 1·3단계의 전제. LLM 이 추출한 날짜/타입 조건을 받을 그릇이 없어 intent parsing 이 통째로 무력화됨                            | Medium (마이그레이션 + 전량 재동기화 필요) | High                          | ~0 (SQL WHERE 추가, 오히려 감소) | **날짜·mime 구현 완료** / owner 후속 |
 | 3   | **arm 가중 RRF + title arm 품질 게이트 — 구현 완료 (2026-08-26)** — `reciprocal_rank_fuse(weights=…)` 로 title 0.5 / keyword 1.0 / vector 1.0, `_title_arm` 에서 `_passes_title_gate` 로 토큰 경계 미준수 행 제외(판정 기준은 원안에서 수정, 5.2절) | 제목에 흔한 토큰 하나 겹친 문서가 본문 정답 문서와 동점이 되는 구조적 오류. 코드 변경량 대비 순위 개선 폭이 가장 크다               | Low                                        | Medium~High                   | ~0                               | **구현 완료**                                    |
-| 4   | **keyword arm 의 한글 복합어 대칭 확보** — 질의 토큰에 대해 title arm 과 동일한 collapse 매칭을 본문에도 적용(생성 컬럼 `text_collapsed` + trgm, 또는 질의 측 분해 토큰 추가)                                | recall 구멍 중 가장 자주 발생. 한국어 문서 기반 시스템에서 `"결제장애"` ↔ `"결제 장애"` 미스는 치명적                               | Medium                                     | High                          | 소폭 증가(인덱스 1개 추가)       | **포함**                                    |
+| 4   | **keyword arm 의 한글 복합어 대칭 확보 — 구현 완료 (2026-08-26)** — 질의 측 분해 채택: 인접 토큰 concat term + 순수 한글 토큰의 2분할을 tsquery 구문 연산자 `<->` 로 묶은 phrase term 을 본문 FTS 에 OR 로 추가. 생성 컬럼 `text_collapsed` + trgm 은 미채택(5.6절). 5.3절 파생 항목(`_collapse_match_score` 토큰 경계)도 같이 해소 | recall 구멍 중 가장 자주 발생. 한국어 문서 기반 시스템에서 `"결제장애"` ↔ `"결제 장애"` 미스는 치명적                               | Medium                                     | High                          | ~0 (새 인덱스·마이그레이션 없음, tsquery operand 만 증가·상한 32) | **구현 완료**                                    |
 | 5   | **색인 커버리지 가시화** — `refresh_index` 응답에 `unindexed`(본문 없음)/`unsupported`(MIME 미지원)/`folder_limit_reached` 노출, `search_documents` 결과 항목에 `indexed` 플래그(**이 항목만 개선 #1 로 구현 완료**) | "검색에 안 나오는 이유"가 현재 전부 서버 로그에만 있다. 운영자·LLM 모두 조용한 퇴화를 감지할 수 없다                                | Low                                        | Medium (품질보다 신뢰도·운영) | ~0                               | **포함**                                    |
 
 ### 5.1 개선 #1 구현 결과 (2026-08-25)
@@ -288,7 +288,7 @@ precision 을 위해 감수한 recall 손실이다.
 본문 `_body_score` 로 재정렬되며 잡음이 강등되고, 롤백 스위치 경로라 표면적을 넓히지 않는다).
 `RRF_K`·스니펫 선택·`endpoint_candidate_search` 무변경.
 
-### 5.3 개선 #3 에서 파생된 후속 항목 (미착수)
+### 5.3 개선 #3 에서 파생된 후속 항목 (개선 #4 와 함께 해소, 2026-08-26)
 
 **`_collapse_match_score` 의 토큰 경계 무시는 점수 계산에도 그대로 남아 있다.** 게이트를 통과한
 행이라도, 단일 토큰 질의 `'api'` 가 제목 `'Rapid …'` 에 대해 `1/1 = 1.0`, 즉 title 만점을 받는다
@@ -300,6 +300,9 @@ precision 을 위해 감수한 recall 손실이다.
   바꾸거나, collapse 매치 점수 상한을 `1/token_count` 보다 낮게(예: 토큰 1개 겹침의 절반) 잡는다.
 - 개선 #3 과 분리한 이유: 게이트는 후보 집합만 건드리지만 이건 **순위 자체**를 바꾸고 두 전략
   모두에 걸린다. 개선 #4(본문 collapse 대칭 확보)와 같은 함수를 손대므로 그때 함께 다루는 편이 낫다.
+- **해소(2026-08-26).** 개선 #4 의 T1 로 처리했다 — 수정 방향 두 가지 중 "`_token_aligned_concat_match` 와
+  같은 토큰 경계 기준으로 바꾼다"를 택했다(상한을 낮추는 안은 미채택: 경계를 존중하는 순간
+  그 점수는 "토큰 1개가 실제로 겹친 것"과 동등한 신호라 더 깎을 근거가 없다). 상세는 5.6절.
 
 ### 5.4 개선 #2 구현 결과 (2026-08-26)
 
@@ -369,6 +372,80 @@ document_id 로 집은 1행에 필터를 걸기 때문).
 
 차순위(V1 제외): document aggregation 정교화(best + second-best 보너스), cross-encoder reranking,
 score 정규화(0~1 매핑).
+
+### 5.6 개선 #4 구현 결과 (2026-08-26)
+
+설계·판정 문서: `docs/architect-review/58_keyword_arm_compound_symmetry_design.md`,
+`docs/architect-review/59_keyword_arm_compound_symmetry_code_verdict.md`. 커밋 `985e44d`.
+
+**수단 선택 — 생성 컬럼이 아니라 질의 측 분해.** 원안이 제시한 두 후보 중 `text_collapsed`
+생성 컬럼 + trgm 은 채택하지 않았다. (1) `chunk.text` 사본을 하나 더 들게 돼 시스템에서 가장
+큰 테이블이 최대 2배가 되고 긴 텍스트 trgm GIN 의 크기·빌드·INSERT 비용이 붙는다.
+(2) 본문에 대한 부분문자열 매칭은 5.3절이 지적한 경계 무시 왜곡의 확대 재생산이다 — 제목에서
+그 성질을 없애는 T1 과 방향이 정반대다. (3) trgm 히트는 `ts_rank` 가 없어 arm 안에 두 번째
+점수 경로와 근거 없는 상수가 또 생긴다. (4) 되돌리기 비용이 마이그레이션 + 전량 재기록이다.
+평가셋이 없어 효과를 사전 계측할 수 없는 상황에서는 되돌리기가 싼 쪽을 먼저 넣는 것이 맞다.
+
+**T1 — `_collapse_match_score` 토큰 경계 정렬(5.3절 해소).** 판정을
+`_token_aligned_concat_match`(개선 #3 에서 게이트용으로 만든 함수) 위임으로 바꿨다. 점수 값
+`1/token_count` 와 `max(token_score, collapsed_score)` 합성 규칙은 그대로다. 함께
+`_title_score` 의 `collapse(title) + collapse(url)` 이어붙이기를 title 토큰열·url 토큰열 개별
+판정 후 `max` 로 분리했다 — 이어붙인 경계를 걸쳐 매치되던 유령 매치를 없애고
+`_passes_title_gate` 와 판단 기준을 일치시킨다. `_match_positions`(스니펫 위치)는 그대로 뒀다:
+점수가 엄격해지는 방향이라 "점수는 매치인데 스니펫 위치가 없다"는 불일치가 생기지 않는다
+(느슨한 쪽이 항상 상위집합).
+
+부수 효과로 **fetch 전략이 양방향 복합어 대칭을 자동으로 얻었다.** `_body_score` 가
+`_token_aligned_concat_match(query, documents_tokenize(body))` 를 쓰게 되면서 질의 `'결제장애'`
+↔ 본문 `['결제','장애','대응']`, 질의 `'결제 장애'` ↔ 본문 `['결제장애']` 가 모두 잡힌다.
+즉 T1 = 파이썬 경로의 대칭, T2 = SQL 경로의 대칭이다.
+
+**T2 — keyword arm 질의 측 분해.** 두 방향을 각각 다른 수단으로 덮는다.
+
+| 미스 방향 | 예 | 수단 |
+| --- | --- | --- |
+| 질의 띄어씀 / 본문 붙여씀 | 질의 `'결제 장애'`, 본문 `'결제장애'` | **concat term** — 인접 토큰의 연속 run 을 이어붙인 lexeme 을 OR 로 추가 |
+| 질의 붙여씀 / 본문 띄어씀 | 질의 `'결제장애'`, 본문 `'결제 장애'` | **split phrase term** — 순수 한글 토큰의 2분할을 tsquery 구문 연산자 `<->` 로 묶어 OR 로 추가 |
+
+- 분할은 사전 없이 경계를 알 수 없어 **가능한 2분할을 전부** 넣는다(양쪽 조각 2음절 이상).
+  엉뚱한 분할은 `<->` 인접성 강제로 사실상 걸러진다 — 매치된다면 본문에 실제로 그 두 조각이
+  붙어 있다는 뜻이다.
+- concat run 은 **스크립트 경계를 넘지 않을 때만** 만든다. `TEXT_TSV_EXPRESSION` 이 ASCII ↔ 한글
+  경계에 공백을 넣으므로 `'get요청'` 같은 혼합 lexeme 은 본문에 존재할 수 없고, 만들어봐야
+  죽은 term 이다.
+- `COMPOUND_TERM_LIMIT = 32` 로 파생 term 총량을 캡한다(`query` 길이·`query_variants` 개수에
+  검증이 없어서다). 생성 단계에서 상한 도달 즉시 멈추고, 원본 질의 파생이 예산을 먼저 쓰며
+  variant 는 남은 예산만 나눠 쓴다 — variant 수가 늘어도 전체 상한은 고정이다. 평가셋이 없어
+  근거 있는 값이 아니므로 `RRF_K`·`TITLE_ARM_WEIGHT` 와 같은 방침으로 모듈 상수 고정, env 미노출.
+- **필터와 점수의 분리 규약은 유지된다.** 필터 측(`terms`/`phrase_terms`)은 원본 + 각 variant
+  문자열에서 개별 파생하고(variant 끼리·원본과 variant 를 가로질러 concat 하지 않는다), 점수
+  측(`score_terms`/`score_phrase_terms`)은 **원본 질의 파생만** 쓴다. 파생 term 을 점수에 넣는
+  것은 기존 "variant 는 점수에서 제외" 규약과 충돌하지 않는다 — variant 는 호출자가 넣은 다른
+  표현이지만 concat/split term 은 같은 표층 문자열의 띄어쓰기 변형이다. 여기서 점수를 빼면
+  복합어로만 걸린 문서가 keyword arm 최하위로 밀려 개선 #4 자체가 무력해진다.
+- 저장소는 `search_endpoint_by_text(..., phrase_terms=None, score_phrase_terms=None)` 로 받는다.
+  **두 인자가 `None` 이면 생성되는 tsquery 문자열이 기존과 완전히 동일**하므로 엔드포인트 검색
+  (`endpoint_candidate_search`)은 무변경이다(개선 #2·#3 과 같은 규약). phrase 조각도
+  `_quote_tsquery_lexeme` 를 통과시켜 tsquery 연산자로 오인되지 않게 한다.
+
+**비용.** 마이그레이션·재색인·새 인덱스 없음. 기존 `ix_chunk_text_tsv`(GIN)를 그대로 쓰고
+증가분은 tsquery operand 수뿐이다(상한 32). 5절 표의 "소폭 증가(인덱스 1개 추가)" 예상치는
+생성 컬럼 안 기준이었으므로 실제는 그보다 낮다.
+
+**동작 변화(의도된 것).** 부분문자열로만 걸리던 collapse 매치는 점수 0 이 된다 — 개선 #3
+게이트와 같은 성격의 precision 교환이다. `'api'` 가 제목 `'Rapid Onboarding Guide'` 에 대해
+받던 1.0 만점이 사라진다.
+
+**남긴 것.**
+
+- ASCII 복합어(`'apikey'` ↔ `'api key'`)의 분할은 v1 범위 밖이다. 한국어가 문제의 축이고,
+  ASCII 를 열면 잡음 분할이 급증한다. 필요해지면 상수 하나로 연다.
+- 3분할 이상 복합어(`'결제장애대응'` 질의 → 본문 `'결제 장애 대응'`)는 2분할만으로는 못 잡는다.
+  계측 수단이 생기기 전에는 투기적 확장이라 미룬다.
+- 스크립트가 번갈아 나오는 병적인 질의는 concat 생성이 전부 게이트에 걸려 조기 중단이 발동하지
+  않으므로 run 열거가 O(n^2) 남는다(문자열은 만들지 않아 메모리 폭증은 없다). 실사용 질의
+  규모에서는 무시할 수준이라 후속 선택 항목으로 둔다(59절 F6).
+- IDF·문서 길이 정규화는 여전히 부재다(9절 항목 5, V2).
 
 ---
 
@@ -474,6 +551,10 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 그 다음 순서: 개선 3(title arm 게이트 + 가중 RRF, 저비용 고효과) → 개선 2(메타데이터 필터,
 마이그레이션 동반) → 개선 4(한글 복합어 대칭) → 개선 5(커버리지 가시화).
 
+**진행 상황(2026-08-26): 개선 1·3·2·4 구현 완료(5.1·5.2·5.4·5.6절). 남은 것은 개선 5**
+(커버리지 가시화 — `indexed` 플래그만 개선 #1 로 반영됐고 `refresh_index` 응답 노출은 미착수)
+**와 후속 항목**(개선 #2 의 `owner`/`created_at` 필터 — 5.5절).
+
 ### (3) 완성도 평가 — **65 / 100**
 
 | 항목                                  | 배점    | 점수   | 근거                                                                                               |
@@ -506,7 +587,7 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 | 2   | Query expansion             | 서버 확장 없음, 호출 LLM 이 `query_variants` 제공(후보 필터만, 점수 불참)                  | 동의어·약어·영문 일부 확장                                              | **기존 유지가 적절** — 확장 주체를 LLM 에 둔 경계가 옳다(3절 장점 5, 6절 과도 판정). 서버 내장은 비용·지연·비결정성을 서버가 지는 퇴보                            |
 | 3   | Metadata filtering          | `project`/`source` + `modified_after`/`modified_before`/`mime_types` hard filter            | createdTime/modifiedTime/mimeType/folderId/owner/sharedWith hard filter | **날짜·mimeType 구현 완료 (2026-08-26)** — 개선 #2 로 반영. `owner`/`created_at` 은 컬럼·수집까지만(재동기화를 두 번 하지 않으려고 미리 채웠다), folderId/sharedWith 는 미구현 |
 | 4   | Chunking                    | 헤딩 기반 섹션 → 480토큰 초과 시 문단/문장/하드컷 그리디 분할, overlap 0                   | Heading 우선, 500~1,000 token, 50~150 overlap                           | **절충(부분만 채택)** — 480 상한은 임베딩 모델 실측 제약이라 유지가 맞다(3절 장점 7). overlap 도입과 헤딩 없는 PDF/DOCX 의 단일 섹션 문제만 별도 과제             |
-| 5   | Keyword/BM25                | PostgreSQL FTS(`simple`) + `ts_rank`, OR 결합, IDF·길이정규화 없음                         | BM25 또는 FTS, 코드·고유명사에 강할 것                                  | **절충(부분만 채택)** — 별도 BM25 엔진 도입은 과도(6절). 한글 복합어 collapse 대칭 확보는 **우선순위 4위로 채택**, IDF 보정은 V2                                  |
+| 5   | Keyword/BM25                | PostgreSQL FTS(`simple`) + `ts_rank`, OR 결합, **질의 측 복합어 분해(concat + `<->` phrase)**, IDF·길이정규화 없음 | BM25 또는 FTS, 코드·고유명사에 강할 것                                  | **절충(부분만 채택) — 복합어 대칭은 구현 완료 (2026-08-26)** — 별도 BM25 엔진 도입은 과도(6절). 한글 복합어 collapse 대칭은 개선 #4 로 반영(질의 측 분해 채택, 생성 컬럼 미채택 — 5.6절), IDF 보정은 V2 |
 | 6   | Vector/Semantic             | multilingual-e5-small(384d), passage/query 접두사 규약 준수, HNSW cosine                   | Embedding 기반 vector search                                            | **기존 유지가 적절** — 구조적 결함 없음. 모델 교체는 평가셋이 생긴 뒤의 논의                                                                                      |
 | 7   | Hybrid retrieval            | RRF(k=60), title 0.5 / keyword 1.0 / vector 1.0 가중                                       | semantic+lexical+metadata weighted sum 또는 RRF                         | **구현 완료 (2026-08-26)** — 개선 #3 로 arm 가중 도입. metadata score 혼합은 평가셋 없이는 근거 없는 튜닝이라 계속 보류(6절)                                       |
 | 8   | Candidate retrieval         | arm 당 `width = max(top_k*4, 50)`, 합집합 최대 150건                                       | BM25 Top30 + Vector Top30 → 30~50                                       | **기존 유지가 적절** — 후보 폭이 이미 권장안 이상. 외부 호출 0 구조라 넓은 스캔 부담도 없다                                                                       |
@@ -523,6 +604,6 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 
 **요약**: 18개 중 기존 유지 6건(2·6·8·9·16·17), 제안 채택 6건(1·3·12·14·15·18),
 절충 6건(4·5·7·10·11·13). 채택분의 착수 순서는 14·15 → 7 → 1·3 → 5 → 18 이고,
-**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3, 3 은 개선 #2 로 2026-08-26 구현 완료** — 남은 채택분은
-1(intent parsing 계열)·5·12·18 이고, 5.3절의 파생 항목을 개선 #4 와 묶어 처리할지 먼저 정한다.
+**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3, 3 은 개선 #2, 5 는 개선 #4 로 2026-08-26 구현 완료**
+(5.3절 파생 항목은 개선 #4 의 T1 로 함께 해소) — 남은 채택분은 1(intent parsing 계열)·12·18 이다.
 12(권한 전제 문서화)는 코드와 무관하게 지금 처리 가능하다.
