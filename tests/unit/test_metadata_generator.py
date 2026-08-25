@@ -4,15 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from app.models import EndpointBusinessMetadata
-from app.services.metadata.generator import (
-    _clip_items,
-    _truncate_and_validate,
-    generate_business_metadata,
-    select_targets,
-)
+from app.services.metadata.generator import generate_business_metadata, select_targets
 
 
 class _FakeLLMClient:
@@ -161,48 +154,3 @@ def test_generate_business_metadata_records_failure_without_aborting(
     assert len(summary.failed) == result.endpoints_count
     rows = services.session.query(EndpointBusinessMetadata).all()
     assert rows == []
-
-
-@pytest.mark.parametrize(
-    ("field", "value", "expected_truncated"),
-    [
-        ("business_description", "x" * 200, True),
-        ("business_description", "short", False),
-    ],
-)
-def test_truncate_and_validate_description(
-    field: str, value: str, expected_truncated: bool
-) -> None:
-    description, _keywords, _phrases, truncated = _truncate_and_validate({field: value})
-    assert truncated is expected_truncated
-    assert len(description) <= 120
-
-
-def test_truncate_and_validate_caps_keyword_count_and_length() -> None:
-    data = {"keywords": ["x" * 50] * 10}
-    _description, keywords, _phrases, truncated = _truncate_and_validate(data)
-    assert truncated is True
-    assert len(keywords) == 5
-    assert all(len(k) <= 30 for k in keywords)
-
-
-def test_truncate_and_validate_caps_phrase_count_and_length() -> None:
-    data = {"user_phrases": ["y" * 60] * 10}
-    _description, _keywords, phrases, truncated = _truncate_and_validate(data)
-    assert truncated is True
-    assert len(phrases) == 4
-    assert all(len(p) <= 40 for p in phrases)
-
-
-def test_truncate_and_validate_handles_missing_fields() -> None:
-    description, keywords, phrases, truncated = _truncate_and_validate({})
-    assert description == ""
-    assert keywords == []
-    assert phrases == []
-    assert truncated is False
-
-
-def test_clip_items_no_truncation_when_within_limit() -> None:
-    clipped, truncated = _clip_items(["ok"], max_chars=10)
-    assert clipped == ["ok"]
-    assert truncated is False

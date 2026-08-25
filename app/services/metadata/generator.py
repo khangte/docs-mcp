@@ -20,21 +20,16 @@ from app.core.errors import IntegrationError
 from app.core.logging import get_logger
 from app.models import ApiEndpoint, Document, EndpointBusinessMetadata
 from app.services.metadata.llm_client import AnthropicClient
-from app.services.metadata.prompt import (
-    SYSTEM_PROMPT,
-    EndpointMetadataInput,
+from app.services.metadata.prompt import SYSTEM_PROMPT, build_user_prompt
+from app.services.metadata.spec_payload import (
+    build_endpoint_input,
     build_payload_json,
-    build_user_prompt,
     compute_source_hash,
 )
+from app.services.metadata.validation import sanitize_and_clip
 
 _LOG = get_logger("docs_mcp.metadata.generator")
 
-_KEYWORDS_MAX_COUNT = 5
-_KEYWORDS_MAX_CHARS = 30
-_PHRASES_MAX_COUNT = 4
-_PHRASES_MAX_CHARS = 40
-_DESCRIPTION_MAX_CHARS = 120
 _COMMIT_EVERY = 20
 
 
@@ -74,7 +69,7 @@ def select_targets(
     existing_rows = _load_existing(session, endpoints)
     targets: list[_Target] = []
     for endpoint in endpoints:
-        payload_json = build_payload_json(_build_input(endpoint))
+        payload_json = build_payload_json(build_endpoint_input(endpoint))
         source_hash = compute_source_hash(payload_json)
         existing = existing_rows.get((endpoint.document_id, endpoint.method, endpoint.path))
         if force or _needs_generation(existing, source_hash, model):
@@ -136,14 +131,25 @@ def generate_business_metadata(
                 )
                 summary.failed.append(f"{target.endpoint.method} {target.endpoint.path}")
                 continue
-            description, keywords, phrases, truncated = _truncate_and_validate(data)
-            if truncated:
+            sanitized = sanitize_and_clip(
+                data.get("business_description"),
+                data.get("keywords"),
+                data.get("user_phrases"),
+            )
+            if sanitized.truncated:
                 _LOG.warning(
                     "메타데이터 상한 초과로 절단됨: %s %s",
                     target.endpoint.method,
                     target.endpoint.path,
                 )
-            _upsert(session, target, description, keywords, phrases, llm_client.model)
+            _upsert(
+                session,
+                target,
+                sanitized.business_description,
+                sanitized.keywords,
+                sanitized.user_phrases,
+                llm_client.model,
+            )
             summary.generated += 1
             processed += 1
             if processed % _COMMIT_EVERY == 0:
@@ -182,23 +188,6 @@ def _load_existing(
     return {(row.document_id, row.method, row.path): row for row in rows}
 
 
-def _build_input(endpoint: ApiEndpoint) -> EndpointMetadataInput:
-    """ORM 엔드포인트에서 LLM 입력 payload 원본 필드를 뽑는다(55 §2.4)."""
-    body_field_names: list[str] = []
-    if endpoint.request_body is not None:
-        body_field_names = sorted((endpoint.request_body.schema or {}).get("properties", {}))
-    return EndpointMetadataInput(
-        method=endpoint.method,
-        path=endpoint.path,
-        summary=endpoint.summary,
-        description=endpoint.description,
-        operation_id=endpoint.operation_id or "",
-        param_names=[p.name for p in endpoint.parameters],
-        body_field_names=body_field_names,
-        tags=endpoint.tags,
-    )
-
-
 def _needs_generation(
     existing: EndpointBusinessMetadata | None, source_hash: str, model: str
 ) -> bool:
@@ -208,43 +197,6 @@ def _needs_generation(
     if existing.source_hash != source_hash:
         return True
     return existing.model != model
-
-
-def _truncate_and_validate(data: dict[str, object]) -> tuple[str, list[str], list[str], bool]:
-    """LLM 출력에 개수·길이 상한을 강제하고, 잘렸으면 `truncated=True` 를 반환한다(55 §2.3)."""
-    truncated = False
-
-    description = str(data.get("business_description") or "")
-    if len(description) > _DESCRIPTION_MAX_CHARS:
-        description = description[:_DESCRIPTION_MAX_CHARS]
-        truncated = True
-
-    raw_keywords = list(data.get("keywords") or [])
-    if len(raw_keywords) > _KEYWORDS_MAX_COUNT:
-        truncated = True
-    keywords, kw_truncated = _clip_items(raw_keywords[:_KEYWORDS_MAX_COUNT], _KEYWORDS_MAX_CHARS)
-    truncated = truncated or kw_truncated
-
-    raw_phrases = list(data.get("user_phrases") or [])
-    if len(raw_phrases) > _PHRASES_MAX_COUNT:
-        truncated = True
-    phrases, ph_truncated = _clip_items(raw_phrases[:_PHRASES_MAX_COUNT], _PHRASES_MAX_CHARS)
-    truncated = truncated or ph_truncated
-
-    return description, keywords, phrases, truncated
-
-
-def _clip_items(items: list[object], max_chars: int) -> tuple[list[str], bool]:
-    """문자열 리스트 각 항목을 `max_chars` 로 자른다."""
-    truncated = False
-    clipped: list[str] = []
-    for item in items:
-        text = str(item)
-        if len(text) > max_chars:
-            text = text[:max_chars]
-            truncated = True
-        clipped.append(text)
-    return clipped, truncated
 
 
 def _upsert(
