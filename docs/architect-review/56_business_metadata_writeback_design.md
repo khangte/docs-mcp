@@ -12,14 +12,14 @@
 
 ## 0. 요약 — 무엇을 만들고 무엇을 버리는가
 
-| 항목 | 결정 |
-| --- | --- |
-| 새 MCP 도구 | `submit_endpoint_metadata` 1개 신설(쓰기 전용, 엔드포인트 1건/호출) |
-| 트리거 위치 | `get_endpoint_details` 응답에 `metadata_request` 키를 **없거나 낡았을 때만** 추가 |
-| `search_endpoints` | 변경 없음 |
-| 즉시 반영 | 해당 엔드포인트 청크 1건만 재조립 + 재임베딩(로컬 모델, 무료) |
-| stage3 CLI | **유지(강등)** — LLM 호출부(`llm_client.py`/`generator.py`/`prompt.py`/CLI)는 그대로 두고, 순수 로직만 분리해 write-back 과 공유 |
-| 스키마 변경 | **없음** — `source_hash`/`generated_at`/`model` 컬럼을 그대로 재사용 |
+| 항목               | 결정                                                                                                                             |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 새 MCP 도구        | `submit_endpoint_metadata` 1개 신설(쓰기 전용, 엔드포인트 1건/호출)                                                              |
+| 트리거 위치        | `get_endpoint_details` 응답에 `metadata_request` 키를 **없거나 낡았을 때만** 추가                                                |
+| `search_endpoints` | 변경 없음                                                                                                                        |
+| 즉시 반영          | 해당 엔드포인트 청크 1건만 재조립 + 재임베딩(로컬 모델, 무료)                                                                    |
+| stage3 CLI         | **유지(강등)** — LLM 호출부(`llm_client.py`/`generator.py`/`prompt.py`/CLI)는 그대로 두고, 순수 로직만 분리해 write-back 과 공유 |
+| 스키마 변경        | **없음** — `source_hash`/`generated_at`/`model` 컬럼을 그대로 재사용                                                             |
 
 ---
 
@@ -107,11 +107,13 @@ async def submit_endpoint_metadata(
 - 반환:
 
 ```json
-{"status": "stored | already_current | rejected",
- "endpoint_id": "...",
- "reindexed": true,
- "truncated": false,
- "reason": "..."}
+{
+  "status": "stored | already_current | rejected",
+  "endpoint_id": "...",
+  "reindexed": true,
+  "truncated": false,
+  "reason": "..."
+}
 ```
 
 `reason` 은 `status != "stored"` 일 때만 채운다. `reindexed=false` 는 저장은 됐지만 즉시 색인 반영에 실패했다는
@@ -194,11 +196,11 @@ list_endpoints_missing_metadata(document_id: str | None, project: str | None, li
 
 ### 4.2 provenance 컬럼 채우기
 
-| 컬럼 | write-back 에서의 값 |
-| --- | --- |
+| 컬럼           | write-back 에서의 값                                                  |
+| -------------- | --------------------------------------------------------------------- |
 | `generated_at` | 서버 시각 `datetime.now(UTC)` (관측용, 판단에 쓰지 않음 — 55 §3 유지) |
-| `model` | 상수 `"client-writeback"` |
-| `source_hash` | 서버가 `ApiEndpoint` 에서 payload 를 조립해 계산(CLI 와 동일 함수) |
+| `model`        | 상수 `"client-writeback"`                                             |
+| `source_hash`  | 서버가 `ApiEndpoint` 에서 payload 를 조립해 계산(CLI 와 동일 함수)    |
 
 `model` 을 호출 LLM 이 자기 신고하게 만들지 않는다 — 검증 불가능한 값이고, 55 의 "model 불일치 시 재생성" 규칙과
 맞물리면 클라 모델이 바뀔 때마다 전량 재생성이 도는 사고가 난다. 상수 1개면 "이 행은 write-back 산" 을
@@ -212,12 +214,12 @@ list_endpoints_missing_metadata(document_id: str | None, project: str | None, li
 
 행은 `(document_id, method, path)` 유니크 1건만 유지한다(누적 없음). upsert 판정:
 
-| 기존 행 | 판정 |
-| --- | --- |
-| 없음 | 저장 (`stored`) |
-| 있음 + `source_hash` 불일치(스펙 변경) | 덮어쓰기 (`stored`) |
+| 기존 행                                          | 판정                                  |
+| ------------------------------------------------ | ------------------------------------- |
+| 없음                                             | 저장 (`stored`)                       |
+| 있음 + `source_hash` 불일치(스펙 변경)           | 덮어쓰기 (`stored`)                   |
 | 있음 + 해시 일치 + `model == "client-writeback"` | **덮어쓰지 않음** (`already_current`) |
-| 있음 + 해시 일치 + CLI 생성분 | **덮어쓰지 않음** (`already_current`) |
+| 있음 + 해시 일치 + CLI 생성분                    | **덮어쓰지 않음** (`already_current`) |
 
 해시가 같은데 덮어쓰기를 허용하면 세션마다 문구가 흔들리고 그때마다 재임베딩이 돌아 검색 결과가
 비결정적으로 움직인다(`fb61dc9` 에서 없앤 종류의 문제를 다시 만든다). 대신 **잘못 들어간 값을 고치는 경로는
@@ -248,14 +250,14 @@ ORM 에서 `ParsedEndpoint` 를 역조립하지 않고 재파싱하는 이유는
 
 ## 5. 기존 자산 확인 — 2단계/1b 는 전부 그대로다
 
-| 자산 | 상태 |
-| --- | --- |
-| `endpoint_business_metadata` 테이블·마이그레이션 2건 | **변경 없음.** 컬럼 추가/삭제 없음 |
-| `(document_id, method, path)` 키 설계(재색인 생존) | **더 중요해졌다** — write-back 산 데이터가 재색인에 살아남아야 한다 |
-| 청크 포맷(헤더 직후 `Keywords`/`Phrases`, description 뒤 `BusinessDesc`) | **변경 없음** |
-| description HTML strip + 300자 절단 (53/54) | **변경 없음** |
-| `IndexerService` 의 옵셔널 주입 | **변경 없음** — write-back 은 같은 테이블을 채울 뿐 |
-| `EndpointRepository.list_business_metadata_by_document` | **변경 없음.** 조회 메서드 1개 추가만 |
+| 자산                                                                     | 상태                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `endpoint_business_metadata` 테이블·마이그레이션 2건                     | **변경 없음.** 컬럼 추가/삭제 없음                                  |
+| `(document_id, method, path)` 키 설계(재색인 생존)                       | **더 중요해졌다** — write-back 산 데이터가 재색인에 살아남아야 한다 |
+| 청크 포맷(헤더 직후 `Keywords`/`Phrases`, description 뒤 `BusinessDesc`) | **변경 없음**                                                       |
+| description HTML strip + 300자 절단 (53/54)                              | **변경 없음**                                                       |
+| `IndexerService` 의 옵셔널 주입                                          | **변경 없음** — write-back 은 같은 테이블을 채울 뿐                 |
+| `EndpointRepository.list_business_metadata_by_document`                  | **변경 없음.** 조회 메서드 1개 추가만                               |
 
 즉 이번 재설계는 **생산자만 교체**하는 변경이다. 소비자(청크 조립·검색)는 손대지 않는다.
 

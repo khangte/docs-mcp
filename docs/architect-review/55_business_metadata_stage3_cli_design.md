@@ -47,23 +47,23 @@ POST https://api.anthropic.com/v1/messages
 
 ### 설정 (`app/core/config.py` 에 필드 3개 추가)
 
-| 필드 | 환경변수 | 기본값 |
-|------|----------|--------|
-| `metadata_api_key` | `DOCS_MCP_ANTHROPIC_API_KEY` → 없으면 `ANTHROPIC_API_KEY` | `None` |
-| `metadata_model` | `DOCS_MCP_METADATA_MODEL` | §5 T5 결과로 확정 |
-| `metadata_api_base` | `DOCS_MCP_METADATA_API_BASE` | `https://api.anthropic.com` |
+| 필드                | 환경변수                                                  | 기본값                      |
+| ------------------- | --------------------------------------------------------- | --------------------------- |
+| `metadata_api_key`  | `DOCS_MCP_ANTHROPIC_API_KEY` → 없으면 `ANTHROPIC_API_KEY` | `None`                      |
+| `metadata_model`    | `DOCS_MCP_METADATA_MODEL`                                 | §5 T5 결과로 확정           |
+| `metadata_api_base` | `DOCS_MCP_METADATA_API_BASE`                              | `https://api.anthropic.com` |
 
 `Settings` 는 서버도 로드하지만 값을 읽기만 하고 아무것도 import 하지 않으므로 경계를 깨지 않는다.
 키가 없으면 CLI 는 시작 시점에 명확한 메시지와 함께 종료한다(호출 도중에 실패하지 않게).
 
 ### 모듈 배치와 경계
 
-| 파일 | 역할 |
-|------|------|
-| `app/services/metadata/llm_client.py` | httpx 호출 + 재시도 + JSON 파싱. Anthropic 고유 부분은 전부 여기 |
-| `app/services/metadata/prompt.py` | 시스템/유저 프롬프트 조립, `PROMPT_VERSION`, 입력 payload 직렬화 |
-| `app/services/metadata/generator.py` | 대상 선별 → 호출 → 검증/절단 → upsert. 순수 로직, 테스트 대상 |
-| `app/scripts/generate_business_metadata.py` | argparse + `bootstrap_app_state()` + 종료코드. 얇게 |
+| 파일                                        | 역할                                                             |
+| ------------------------------------------- | ---------------------------------------------------------------- |
+| `app/services/metadata/llm_client.py`       | httpx 호출 + 재시도 + JSON 파싱. Anthropic 고유 부분은 전부 여기 |
+| `app/services/metadata/prompt.py`           | 시스템/유저 프롬프트 조립, `PROMPT_VERSION`, 입력 payload 직렬화 |
+| `app/services/metadata/generator.py`        | 대상 선별 → 호출 → 검증/절단 → upsert. 순수 로직, 테스트 대상    |
+| `app/scripts/generate_business_metadata.py` | argparse + `bootstrap_app_state()` + 종료코드. 얇게              |
 
 `refresh_documents.py` → `app/services/documents/registered_resync.py` 와 같은 구조다.
 CLI 는 얇고 로직은 서비스에 둔다.
@@ -110,12 +110,12 @@ list ↔ get all/fetch 류). 이 규칙 하나가 q13 유형 전체를 겨냥한
 1b가 얻은 이득(C7 0% → 33%)은 description 을 300자로 줄여 구조 필드 `Body:` 를 살린 데서 나왔다.
 **메타데이터를 넉넉하게 넣으면 그 이득을 그대로 반납한다.**
 
-| 필드 | 상한 | 근사 토큰 |
-|------|------|-----------|
-| `keywords` | 5개, 각 30자 | ~25 |
-| `user_phrases` | 4개(한 2 + 영 2), 각 40자 | ~60 |
-| `business_description` | 1문장, 120자 | ~70 |
-| 합계 | | **~155 토큰** |
+| 필드                   | 상한                      | 근사 토큰     |
+| ---------------------- | ------------------------- | ------------- |
+| `keywords`             | 5개, 각 30자              | ~25           |
+| `user_phrases`         | 4개(한 2 + 영 2), 각 40자 | ~60           |
+| `business_description` | 1문장, 120자              | ~70           |
+| 합계                   |                           | **~155 토큰** |
 
 상한은 프롬프트에만 적지 않는다 — **`generator.py` 가 저장 직전에 강제로 자르고, 잘렸으면
 WARNING 을 남긴다.** 프롬프트 준수에 예산을 맡기면 언젠가 넘친다.
@@ -141,7 +141,7 @@ description 을 600자로 주는 것은 청크의 300자 절단과 다른 값이
 strict JSON 만 반환하게 하고, assistant 턴을 `{` 로 prefill 해 서두 산문을 원천 차단한다.
 
 ```json
-{"business_description": "...", "keywords": ["..."], "user_phrases": ["..."]}
+{ "business_description": "...", "keywords": ["..."], "user_phrases": ["..."] }
 ```
 
 파싱 실패 시 1회 재시도, 그래도 실패하면 해당 엔드포인트를 건너뛰고 ERROR 로그를 남긴다
@@ -210,17 +210,17 @@ CLI 에 `--reindex` 를 붙이지 않는다 — 52 §(c)가 분리한 이유(색
 
 ## 5. 태스크 분해 (developer)
 
-| # | 태스크 | 산출 |
-|---|--------|------|
-| T1 | `source_hash` 컬럼 마이그레이션 + 모델 필드 | alembic revision, `app/models/openapi.py` |
-| T2 | `app/core/config.py` 설정 필드 3개 | §1 표 |
-| T3 | `app/services/metadata/prompt.py` — `PROMPT_VERSION`, payload 직렬화, 시스템/유저 프롬프트, 해시 함수 | §2, §3 |
-| T4 | `app/services/metadata/llm_client.py` — httpx 호출, 백오프 재시도, JSON prefill 파싱 | §1 |
-| T5 | **파일럿**: `--limit 50 --dry-run` 으로 payload 확인 → 같은 50건을 `claude-sonnet-5` / `claude-haiku-4-5-20251001` 로 각 1회 생성해 출력 품질 비교 후 기본 모델 확정 | 비교 결과 보고 |
-| T6 | `app/services/metadata/generator.py` — 대상 선별(skip 규칙), 상한 강제 절단, upsert, 20건 커밋 | §2.3, §3 |
-| T7 | `app/scripts/generate_business_metadata.py` — argparse, 종료코드, 진행/완료 로그 | §4 |
-| T8 | 단위 테스트 — skip 규칙 4분기, 상한 절단, JSON 파싱 실패 폴백, 경계 테스트(`test_metadata_boundary.py`) | §1 |
-| T9 | 전체 생성 실행 → 재색인 → 4단계 A/B 4조건 측정 | **T5 보고 후 lead 승인을 받고 착수** |
+| #   | 태스크                                                                                                                                                               | 산출                                      |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| T1  | `source_hash` 컬럼 마이그레이션 + 모델 필드                                                                                                                          | alembic revision, `app/models/openapi.py` |
+| T2  | `app/core/config.py` 설정 필드 3개                                                                                                                                   | §1 표                                     |
+| T3  | `app/services/metadata/prompt.py` — `PROMPT_VERSION`, payload 직렬화, 시스템/유저 프롬프트, 해시 함수                                                                | §2, §3                                    |
+| T4  | `app/services/metadata/llm_client.py` — httpx 호출, 백오프 재시도, JSON prefill 파싱                                                                                 | §1                                        |
+| T5  | **파일럿**: `--limit 50 --dry-run` 으로 payload 확인 → 같은 50건을 `claude-sonnet-5` / `claude-haiku-4-5-20251001` 로 각 1회 생성해 출력 품질 비교 후 기본 모델 확정 | 비교 결과 보고                            |
+| T6  | `app/services/metadata/generator.py` — 대상 선별(skip 규칙), 상한 강제 절단, upsert, 20건 커밋                                                                       | §2.3, §3                                  |
+| T7  | `app/scripts/generate_business_metadata.py` — argparse, 종료코드, 진행/완료 로그                                                                                     | §4                                        |
+| T8  | 단위 테스트 — skip 규칙 4분기, 상한 절단, JSON 파싱 실패 폴백, 경계 테스트(`test_metadata_boundary.py`)                                                              | §1                                        |
+| T9  | 전체 생성 실행 → 재색인 → 4단계 A/B 4조건 측정                                                                                                                       | **T5 보고 후 lead 승인을 받고 착수**      |
 
 ### T9 에 승인 게이트를 두는 이유
 
