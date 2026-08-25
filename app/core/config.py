@@ -94,6 +94,23 @@ class Settings:
             os.environ.get("DOCS_MCP_DOCUMENT_FETCH_MAX_CHARS", "200000")
         )
     )
+    # --- 비즈니스 메타데이터 생성 (docs/architect-review/55) ---
+    #: DOCS_MCP_ANTHROPIC_API_KEY 가 없으면 ANTHROPIC_API_KEY 로 폴백한다.
+    metadata_api_key: str | None = field(
+        default_factory=lambda: (
+            os.environ.get("DOCS_MCP_ANTHROPIC_API_KEY")
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or None
+        )
+    )
+    metadata_model: str | None = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_METADATA_MODEL") or None
+    )
+    metadata_api_base: str = field(
+        default_factory=lambda: os.environ.get(
+            "DOCS_MCP_METADATA_API_BASE", "https://api.anthropic.com"
+        )
+    )
 
 
 def get_settings() -> Settings:

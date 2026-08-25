@@ -214,6 +214,9 @@ class EndpointBusinessMetadata(Base):
     user_phrases_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: 프롬프트 입력 payload + PROMPT_VERSION 의 sha256. 재생성 판단 키(55 §3) —
+    #: generated_at 은 판단에 쓰지 않고 관측용으로만 쓴다.
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
 
     @property
     def keywords(self) -> list[str]:
