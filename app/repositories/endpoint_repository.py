@@ -156,6 +156,21 @@ class EndpointRepository:
         rows = self._session.execute(stmt).scalars().all()
         return {(row.method, row.path): row for row in rows}
 
+    def get_business_metadata(
+        self, document_id: str, method: str, path: str
+    ) -> EndpointBusinessMetadata | None:
+        """엔드포인트 1건의 비즈니스 메타데이터를 조회한다(없으면 None).
+
+        docs/architect-review/56 §4.3: 키는 `(document_id, method, path)` 이며
+        유니크 제약이 걸려 있어 최대 1건이다.
+        """
+        stmt = select(EndpointBusinessMetadata).where(
+            EndpointBusinessMetadata.document_id == document_id,
+            EndpointBusinessMetadata.method == method,
+            EndpointBusinessMetadata.path == path,
+        )
+        return self._session.execute(stmt).scalars().first()
+
     def get_schema_by_name(self, document_id: str, name: str) -> ApiSchema | None:
         """문서 내 스키마 이름으로 컴포넌트 스키마를 조회한다."""
         stmt = select(ApiSchema).where(

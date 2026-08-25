@@ -66,6 +66,28 @@ class ChunkRepository:
         """청크 한 건을 세션에 추가한다."""
         self._session.add(chunk)
 
+    def update_endpoint_chunk(
+        self, *, document_id: str, ref_id: str, text: str, embedding: list[float]
+    ) -> bool:
+        """엔드포인트 청크 1건의 텍스트/임베딩을 갱신한다(없으면 False).
+
+        docs/architect-review/56 §4.4: write-back 직후 해당 엔드포인트 청크만
+        갱신해 다음 검색부터 반영되게 한다. `text_tsv` 는 STORED generated
+        컬럼이라 여기서 건드리지 않아도 FTS 가 함께 갱신된다.
+        """
+        stmt = select(Chunk).where(
+            Chunk.document_id == document_id,
+            Chunk.chunk_type == "endpoint",
+            Chunk.ref_id == ref_id,
+        )
+        chunk = self._session.execute(stmt).scalars().first()
+        if chunk is None:
+            return False
+        chunk.text = text
+        chunk.embedding = embedding
+        self._session.flush()
+        return True
+
     def delete_by_document(self, document_id: str) -> int:
         """주어진 문서의 모든 청크를 삭제하고 삭제된 행 수를 반환한다."""
         stmt = delete(Chunk).where(Chunk.document_id == document_id)

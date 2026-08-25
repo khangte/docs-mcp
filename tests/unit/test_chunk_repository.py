@@ -733,3 +733,49 @@ def test_search_by_vector_chunk_type_param_selects_section(db_session) -> None:
     hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5, chunk_type="section")
 
     assert [h.chunk_id for h in hits] == ["chunk-section"]
+
+
+def test_update_endpoint_chunk_updates_text_and_embedding(db_session) -> None:
+    """docs/architect-review/56 §4.4: 청크 1건만 갱신(text_tsv 는 generated 라 자동)."""
+    db_session.add(
+        Document(
+            id="doc-cu",
+            project="default",
+            source_url=None,
+            title="t",
+            version="1",
+            doc_type="openapi",
+            content_hash="h",
+            raw_text="{}",
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            id="doc-cu:chunk:0",
+            document_id="doc-cu",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="old text",
+            embedding=[0.0] * EMBEDDING_DIM,
+        )
+    )
+    db_session.flush()
+
+    repo = ChunkRepository(db_session)
+    updated = repo.update_endpoint_chunk(
+        document_id="doc-cu",
+        ref_id="ep-1",
+        text="new text",
+        embedding=[1.0] * EMBEDDING_DIM,
+    )
+    assert updated is True
+    assert db_session.get(Chunk, "doc-cu:chunk:0").text == "new text"
+
+    missing = repo.update_endpoint_chunk(
+        document_id="doc-cu",
+        ref_id="ep-없음",
+        text="x",
+        embedding=[0.0] * EMBEDDING_DIM,
+    )
+    assert missing is False

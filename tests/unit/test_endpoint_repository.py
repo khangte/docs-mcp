@@ -288,3 +288,36 @@ def test_list_by_operation_id_scopes_to_document(db_session) -> None:
     result = repo.list_by_operation_id("getPetById", document_id="doc-1")
 
     assert [e.id for e in result] == ["ep-1"]
+
+
+def test_get_business_metadata_returns_row_or_none(db_session) -> None:
+    """docs/architect-review/56 §4.3: (document_id, method, path) 단건 조회."""
+    from app.models import Document, EndpointBusinessMetadata
+    from app.repositories.endpoint_repository import EndpointRepository
+
+    db_session.add(
+        Document(
+            id="doc-bm",
+            project="default",
+            source_url=None,
+            title="t",
+            version="1",
+            doc_type="openapi",
+            content_hash="h",
+            raw_text="{}",
+        )
+    )
+    db_session.flush()
+    row = EndpointBusinessMetadata(
+        document_id="doc-bm",
+        method="POST",
+        path="/orders",
+        business_description="주문 생성",
+        source_hash="abc",
+    )
+    db_session.add(row)
+    db_session.flush()
+
+    repo = EndpointRepository(db_session)
+    assert repo.get_business_metadata("doc-bm", "POST", "/orders") is not None
+    assert repo.get_business_metadata("doc-bm", "GET", "/orders") is None
