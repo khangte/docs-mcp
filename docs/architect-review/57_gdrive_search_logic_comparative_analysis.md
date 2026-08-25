@@ -7,6 +7,11 @@
 - 비교 기준: 사용자가 제시한 13단계 "권장 검색 로직"(Intent parsing ~ Query rewrite/retry)
 > **갱신 이력 (2026-08-25)**: 5절 Top 5 개선 #1(응답에 근거·메타 추가)이 구현·리뷰 완료되어
 > 2절(MCP response schema / Search reason·evidence), 5절, 9절(항목 14·15)을 실제 코드 기준으로 갱신했다.
+>
+> **갱신 이력 (2026-08-26)**: 5절 Top 5 개선 #3(arm 가중 RRF + title arm 품질 게이트)이 구현·리뷰
+> 완료되어 1절(항목 7·11), 2절(Hybrid), 5절, 7절 V1, 9절(항목 7)을 갱신했다. 구현 과정에서
+> 원안의 전제 오류가 드러나 게이트 판정 기준을 바꿨다 — 5.2절 참조.
+>
 > 4절 문제점 서술과 8절 65점 평가는 **구현 이전 시점의 진단**이며 이력 보존을 위해 원문 그대로 둔다.
 
 ---
@@ -43,11 +48,11 @@
 | 4   | 토큰화 — `[0-9A-Za-z_]+\|[가-힣]+` 정규식, 소문자화. `query_variants` 는 **필터 토큰에만** 합류(`filter_tokens`), 점수 토큰(`query_tokens`)에는 섞이지 않음                                                                                                                                                                            | `search_scorer.documents_tokenize`                            |
 | 5   | 전략 분기 — `document_search_strategy="indexed"`(기본) → 3-arm RRF. 그 외/의존성 누락 시 `"fetch"`(라이브 fetch + 가중합)로 degrade                                                                                                                                                                                                    | `:255`                                                        |
 | 6   | 후보 폭 결정 — `width = max(top_k*4, 50)`                                                                                                                                                                                                                                                                                              | `_RRF_CANDIDATE_WIDTH_MULTIPLIER`, `_RRF_MIN_CANDIDATE_WIDTH` |
-| 7   | **title arm** — `document_meta.search_by_tokens`: 토큰별 `title/url ILIKE '%token%'` OR 질의 collapse(공백 제거) 패턴, GIN trgm 인덱스 사용. Python 에서 `_title_score`(토큰 겹침 비율 vs collapse 매칭 1/토큰수 의 `max`) 계산 후 정렬 → 상위 `width` → `deterministic_document_id(project, source, external_id)` 로 문서 ID 리스트화 | `_title_arm`                                                  |
+| 7   | **title arm** — `document_meta.search_by_tokens`: 토큰별 `title/url ILIKE '%token%'` OR 질의 collapse(공백 제거) 패턴, GIN trgm 인덱스 사용. **`_passes_title_gate` 로 토큰 경계를 지키지 않는 부분문자열 잡음 행을 제외**(개선 #3, 2026-08-26)한 뒤 `_title_score`(토큰 겹침 비율 vs collapse 매칭 1/토큰수 의 `max`) 계산·정렬 → 상위 `width` → `deterministic_document_id(project, source, external_id)` 로 문서 ID 리스트화 | `_title_arm`, `_passes_title_gate`                            |
 | 8   | 본문 색인 존재 확인 — `has_endpoint_chunks(project, chunk_type="section")` 이 False 면 keyword/vector arm 을 통째로 생략                                                                                                                                                                                                               | `:512`                                                        |
 | 9   | **keyword arm** — `chunk.text_tsv @@ to_tsquery('simple', t1 \| t2 \| …)`(OR), `ts_rank(text_tsv, 원본토큰 tsquery)` 내림차순, `chunk_type='section'` + `Document.doc_type ∈ {drive, notion}`(또는 지정 source) 필터, `limit width`. 문서별 첫 등장만 남기는 dedupe → 문서 ID 순위 + 승자 청크 ID                                      | `_keyword_arm`, `chunk_repository.search_endpoint_by_text`    |
 | 10  | **vector arm** — `embed_query`(요청당 1회, `query: ` 접두사, LRU 256) → pgvector `<=>` 코사인 거리, HNSW 인덱스(`SET LOCAL hnsw.ef_search = max(100, top_k)`), 유사도 = 1 − 거리, `score > 0` 만 채택, 같은 dedupe. `vector_fallback_enabled=False`(해시 백엔드)면 arm 생략                                                            | `_vector_arm`, `chunk_repository.search_by_vector`            |
-| 11  | **RRF 융합** — `score(d) = Σ_arm 1/(60 + rank_arm(d))`, 3 arm 동일 가중, 동점은 ref_id 오름차순. `top_k=width` 로 컷                                                                                                                                                                                                                   | `app/services/search/rrf.py`                                  |
+| 11  | **RRF 융합** — `score(d) = Σ_arm w_arm · 1/(60 + rank_arm(d))`, **title 0.5 / keyword 1.0 / vector 1.0**(개선 #3, 2026-08-26), 동점은 ref_id 오름차순. `top_k=width` 로 컷                                                                                                                                                       | `app/services/search/rrf.py`                                  |
 | 12  | 메타 보강 — title arm 에 없던 문서 ID 는 `document_meta.list_by_document_ids` 로 배치 조회                                                                                                                                                                                                                                             | `:522`                                                        |
 | 13  | 스니펫 — 승자 청크 = `{**vector_chunk_by_doc, **keyword_chunk_by_doc}`(**키워드 승자가 벡터 승자를 덮어씀**), `get_texts_by_ids` 배치 조회 → `_build_snippet`(매치 위치 앞 60자부터 300자) 또는 제목 기반 fallback                                                                                                                     | `_build_indexed_item`, `snippet_generator.py`                 |
 | 14  | 최종 컷 — 융합 순서대로 순회하며 `top_k` 개 채우면 중단(재정렬 없음)                                                                                                                                                                                                                                                                   | `:544`                                                        |
@@ -65,7 +70,7 @@
 | Chunking                  | 헤딩(`#`) 기반 섹션 → 480토큰 초과 시 문단/문장/하드컷 그리디 분할, **overlap 0**, 각 sub 에 `# 제목` 앵커 부착                                                   | Heading/Section 우선, 500~1,000 token, 50~150 overlap                      | 방식은 권장안과 동일 계열. 크기(480)는 권장 하한보다 작고 overlap 이 없음. **PDF/DOCX/Docs 평문 export 는 마크다운 헤딩이 없어 문서 전체가 섹션 1개**로 묶인 뒤 기계적 분할됨 | 중       | 부분                     |
 | Keyword/BM25              | PostgreSQL FTS(`simple` config) + `ts_rank`. term OR 결합, IDF 없음, 문서 길이 정규화 없음(`ts_rank` 기본 normalization=0)                                        | BM25 또는 FTS. 코드/고객사명/사람이름/오류코드에 강해야 함                 | 정확 토큰 매칭은 되지만 **희소어 가중이 없음** — 흔한 토큰이 점수를 지배                                                                                                      | 상       | **필요**                 |
 | Vector/Semantic           | multilingual-e5-small(384d), passage/query 접두사 규약 준수, HNSW+cosine                                                                                          | Embedding 기반 vector search                                               | 구현 충실. 모델 크기가 작은 것 외 구조적 결함 없음                                                                                                                            | 하       | 불필요                   |
-| Hybrid                    | RRF(k=60) 3-arm(title/keyword/vector) **동일 가중**                                                                                                               | weighted sum 또는 RRF, semantic+lexical+metadata                           | metadata arm 부재. arm 가중치 조절 수단 없음(상수 고정)                                                                                                                       | 중       | 부분                     |
+| Hybrid                    | RRF(k=60) 3-arm(title/keyword/vector), **title 0.5 · keyword 1.0 · vector 1.0 가중**                                                                              | weighted sum 또는 RRF, semantic+lexical+metadata                           | arm 가중은 `reciprocal_rank_fuse(weights=…)` 로 도입 완료. metadata arm 은 여전히 부재(평가셋 없어 보류, 6절)                                                                  | 중       | **가중 구현 완료 (2026-08-26)** / metadata arm 은 보류 |
 | Candidate retrieval       | arm 당 `width = max(top_k*4, 50)` → 기본 top_k=5 면 arm 당 50건, 합집합 최대 150건                                                                                | BM25 Top30 + Vector Top30 → 30~50 candidate                                | 후보 폭은 권장안 이상. 문제 없음                                                                                                                                              | 하       | 불필요                   |
 | Dedup                     | arm 별 "문서 첫 등장 등수만 채택"(`_dedupe_first_with_chunk`). 문서 1건이 섹션 수만큼 슬롯을 먹는 것을 차단                                                       | merge/dedup                                                                | 동등                                                                                                                                                                          | 하       | 불필요                   |
 | Reranking                 | **없음**. 융합 순서가 곧 최종 순서                                                                                                                                | 상위 candidate 를 query 와 재비교해 정밀 정렬                              | 전면 부재                                                                                                                                                                     | 중       | V2                       |
@@ -202,7 +207,7 @@
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------- | -------------------------------- | ------------------------------------------- |
 | 1   | **응답에 근거·메타 추가 — 구현 완료 (2026-08-25)** — `matched_chunks[{chunk_id, text, chunk_type, arm}]`, `match_reasons[]`, `modified_at`, `indexed` 를 `search_documents` 응답 item 에 추가. `rrf.FusedResult.contributing_arms` 로 기여 arm 을 그대로 실어 나른다 | LLM 이 최종 판단을 하려면 근거가 필요한데 현재 스니펫 300자가 전부. `match_type`·`modified_at` 은 **이미 손에 있는 값을 버리는 중** | Low                                        | High                          | ~0 (추가 SQL 없음 — `get_texts_by_ids` 한 번의 id 집합만 확대) | **구현 완료**                                    |
 | 2   | **메타데이터 hard filter 도입** — `document_meta` 에 `mime_type`, `owner`, `created_at` 컬럼 추가(Drive `files.list` fields 확장) + `search_documents(modified_after, modified_before, mime_types)` 파라미터 | 권장안 1·3단계의 전제. LLM 이 추출한 날짜/타입 조건을 받을 그릇이 없어 intent parsing 이 통째로 무력화됨                            | Medium (마이그레이션 + 전량 재동기화 필요) | High                          | ~0 (SQL WHERE 추가, 오히려 감소) | **포함**(날짜+mimeType 우선, owner 는 후속) |
-| 3   | **arm 가중 RRF + title arm 품질 게이트** — `reciprocal_rank_fuse` 에 arm 별 weight 인자 추가(title 0.5 등), `_title_arm` 에서 `_title_score <= 0` 행 제외                                                    | 제목에 흔한 토큰 하나 겹친 문서가 본문 정답 문서와 동점이 되는 구조적 오류. 코드 변경량 대비 순위 개선 폭이 가장 크다               | Low                                        | Medium~High                   | ~0                               | **포함**                                    |
+| 3   | **arm 가중 RRF + title arm 품질 게이트 — 구현 완료 (2026-08-26)** — `reciprocal_rank_fuse(weights=…)` 로 title 0.5 / keyword 1.0 / vector 1.0, `_title_arm` 에서 `_passes_title_gate` 로 토큰 경계 미준수 행 제외(판정 기준은 원안에서 수정, 5.2절) | 제목에 흔한 토큰 하나 겹친 문서가 본문 정답 문서와 동점이 되는 구조적 오류. 코드 변경량 대비 순위 개선 폭이 가장 크다               | Low                                        | Medium~High                   | ~0                               | **구현 완료**                                    |
 | 4   | **keyword arm 의 한글 복합어 대칭 확보** — 질의 토큰에 대해 title arm 과 동일한 collapse 매칭을 본문에도 적용(생성 컬럼 `text_collapsed` + trgm, 또는 질의 측 분해 토큰 추가)                                | recall 구멍 중 가장 자주 발생. 한국어 문서 기반 시스템에서 `"결제장애"` ↔ `"결제 장애"` 미스는 치명적                               | Medium                                     | High                          | 소폭 증가(인덱스 1개 추가)       | **포함**                                    |
 | 5   | **색인 커버리지 가시화** — `refresh_index` 응답에 `unindexed`(본문 없음)/`unsupported`(MIME 미지원)/`folder_limit_reached` 노출, `search_documents` 결과 항목에 `indexed` 플래그(**이 항목만 개선 #1 로 구현 완료**) | "검색에 안 나오는 이유"가 현재 전부 서버 로그에만 있다. 운영자·LLM 모두 조용한 퇴화를 감지할 수 없다                                | Low                                        | Medium (품질보다 신뢰도·운영) | ~0                               | **포함**                                    |
 
@@ -235,6 +240,62 @@
   `match_type` 의 기존 의미는 그대로라 `endpoint_candidate_search` 는 손대지 않았다.
 - 추가 SQL 없음: 기존 `get_texts_by_ids` 호출의 id 집합만 넓혔다.
   랭킹·정렬·스니펫 선택 로직은 변경하지 않았다(노출 전용).
+
+### 5.2 개선 #3 구현 결과 (2026-08-26)
+
+**arm 가중.** `reciprocal_rank_fuse` 에 `weights: Mapping[str, float] | None` 키워드를 추가해
+`score(d) = Σ_arm w_arm · 1/(k + rank_arm(d))` 로 바꿨다. `weights=None`(기본값)이면 전 arm 1.0 이라
+가중치를 넘기지 않는 엔드포인트 검색(`endpoint_candidate_search`)은 점수·순서가 무변경이다.
+문서 검색만 `weights={ARM_TITLE: TITLE_ARM_WEIGHT}`(`TITLE_ARM_WEIGHT = 0.5`)를 넘긴다.
+가중치는 **점수에만** 적용되고 `match_type`/`contributing_arms` 는 기존대로 존재 여부로만 계산한다.
+
+0.5 의 근거: title 후보는 permissive 한 `ILIKE '%token%'` 게이트에서 나오는데다, `k=60` 이라
+arm 내 등수 차이가 거의 소멸한다(rank 1 = 1/61 = 0.0164, rank 50 = 1/110 = 0.0091). 즉 title arm 은
+사실상 "존재 보너스"이므로 본문 신호 arm 의 절반으로 둔다. 평가셋이 없어 튜닝 근거가 없으므로
+`RRF_K` 와 같은 방침으로 모듈 상수 고정, env 미노출이다.
+
+**품질 게이트 — 원안 대비 판정 기준 수정.** 원안은 "`_title_score <= 0` 행 제외"였으나 구현 중
+전제가 두 군데 틀린 것이 확인돼 기준을 바꿨다.
+
+1. `_title_score` 의 점수용 토큰은 원본 질의 토큰뿐이라, **variant 로만 걸린 정상 매칭 행도 0.0** 이다.
+   원안대로 하드컷하면 본문 미색인 문서(= title arm 이 유일한 경로)에서 `query_variants` 기능이
+   통째로 무력화된다.
+2. 더 결정적으로, `_title_score` 는 애초에 그 잡음을 걸러내지 못한다. `_collapse_match_score` 가
+   `collapse(query) in collapsed_haystack` 부분문자열 판정이라 토큰 경계를 모른다 —
+   질의 `'api'` 는 제목 `'Rapid Onboarding Guide'` 에 대해 0.0 이 아니라 **1.0**(단일 토큰 질의라
+   `1/1`)을 반환한다. SQL `ILIKE` 와 정확히 같은 수준의 permissive 매칭이라 게이트로 쓸 수 없다.
+
+그래서 게이트를 `search_scorer.py` 의 별도 헬퍼로 만들었다.
+
+- `_token_aligned_concat_match(query, haystack_tokens)`: 양쪽 다 `documents_tokenize` 로 토큰화한 뒤,
+  질의 토큰 concat 이 haystack 토큰들의 **연속 부분열** concat 과 정확히 일치할 때만 True
+  (토큰 시작·끝 오프셋 집합으로 경계 정렬을 확인).
+- `_passes_title_gate(row, filter_tokens, queries)`: (원본 ∪ variant 토큰)이 title/url 토큰과
+  완전 일치하거나, 어떤 질의가 위 연속 부분열 매치에 걸리면 통과. title 토큰열과 url 토큰열은 따로 본다.
+
+판정 결과: `'api'` / `'Rapid Onboarding Guide'` → **제외**, `'결제장애'` / `'결제 장애 대응'` →
+**통과**(`'결제'+'장애'` 연속 부분열), variant `'payment failure'` 로만 걸린 영문 제목 → **통과**,
+경계가 어긋난 절단 질의 → 제외. `_title_arm` 은 이 게이트로 필터만 하고 정렬 키·점수식은 무변경이다.
+
+**동작 변화(의도된 것).** 부분문자열로만 걸렸고 본문 색인도 없는 문서는 결과에서 완전히 사라진다.
+precision 을 위해 감수한 recall 손실이다.
+
+**범위 밖으로 남긴 것.** fetch 전략의 `_title_candidates` 에는 게이트를 넣지 않았다(2단계에서
+본문 `_body_score` 로 재정렬되며 잡음이 강등되고, 롤백 스위치 경로라 표면적을 넓히지 않는다).
+`RRF_K`·스니펫 선택·`endpoint_candidate_search` 무변경.
+
+### 5.3 개선 #3 에서 파생된 후속 항목 (미착수)
+
+**`_collapse_match_score` 의 토큰 경계 무시는 점수 계산에도 그대로 남아 있다.** 게이트를 통과한
+행이라도, 단일 토큰 질의 `'api'` 가 제목 `'Rapid …'` 에 대해 `1/1 = 1.0`, 즉 title 만점을 받는다
+(겹치는 다른 토큰이 하나라도 있어 게이트를 통과한 경우). 짧은 질의일수록 분모(`token_count`)가
+작아 과대평가 폭이 커진다.
+
+- 영향 범위: `_title_score`·`_body_score` 양쪽 + fetch 전략의 후보 순서(`_title_candidates`)까지.
+- 수정 방향: `_collapse_match_score` 도 `_token_aligned_concat_match` 와 같은 토큰 경계 기준으로
+  바꾸거나, collapse 매치 점수 상한을 `1/token_count` 보다 낮게(예: 토큰 1개 겹침의 절반) 잡는다.
+- 개선 #3 과 분리한 이유: 게이트는 후보 집합만 건드리지만 이건 **순위 자체**를 바꾸고 두 전략
+  모두에 걸린다. 개선 #4(본문 collapse 대칭 확보)와 같은 함수를 손대므로 그때 함께 다루는 편이 낫다.
 
 차순위(V1 제외): document aggregation 정교화(best + second-best 보너스), cross-encoder reranking,
 score 정규화(0~1 매핑).
@@ -275,10 +336,10 @@ LLM (MCP client)
 MCP Server
  ├─ 1. 검증 + 토큰화 (현행)
  ├─ 2. hard filter 적용 — project/source/modified_at 범위/mime_type   [신규]
- ├─ 3. title arm  — trgm ILIKE 후보 → _title_score, score<=0 제외      [게이트 신규, 개선 3]
+ ├─ 3. title arm  — trgm ILIKE 후보 → 토큰 경계 게이트 → _title_score   [구현 완료, 개선 3]
  ├─ 4. keyword arm — chunk FTS(OR) + collapse 대칭 매칭               [collapse 신규, 개선 4]
  ├─ 5. vector arm  — e5-small 질의 임베딩 → HNSW cosine
- ├─ 6. weighted RRF (title 0.5 / keyword 1.0 / vector 1.0, k=60)      [가중치 신규, 개선 3]
+ ├─ 6. weighted RRF (title 0.5 / keyword 1.0 / vector 1.0, k=60)      [구현 완료, 개선 3]
  ├─ 7. dedupe-first → 문서 단위 순위, 승자 청크 = 최상위 arm 기준     [병합 규칙 수정]
  └─ 8. 응답 조립 — matched_chunks[], match_reasons(arm 기여+필터 일치),
         modified_at, indexed 플래그                                   [신규, 개선 1·5]
@@ -377,7 +438,7 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 | 4   | Chunking                    | 헤딩 기반 섹션 → 480토큰 초과 시 문단/문장/하드컷 그리디 분할, overlap 0                   | Heading 우선, 500~1,000 token, 50~150 overlap                           | **절충(부분만 채택)** — 480 상한은 임베딩 모델 실측 제약이라 유지가 맞다(3절 장점 7). overlap 도입과 헤딩 없는 PDF/DOCX 의 단일 섹션 문제만 별도 과제             |
 | 5   | Keyword/BM25                | PostgreSQL FTS(`simple`) + `ts_rank`, OR 결합, IDF·길이정규화 없음                         | BM25 또는 FTS, 코드·고유명사에 강할 것                                  | **절충(부분만 채택)** — 별도 BM25 엔진 도입은 과도(6절). 한글 복합어 collapse 대칭 확보는 **우선순위 4위로 채택**, IDF 보정은 V2                                  |
 | 6   | Vector/Semantic             | multilingual-e5-small(384d), passage/query 접두사 규약 준수, HNSW cosine                   | Embedding 기반 vector search                                            | **기존 유지가 적절** — 구조적 결함 없음. 모델 교체는 평가셋이 생긴 뒤의 논의                                                                                      |
-| 7   | Hybrid retrieval            | RRF(k=60), title/keyword/vector 3-arm **동일 가중**                                        | semantic+lexical+metadata weighted sum 또는 RRF                         | **절충(부분만 채택)** — RRF 채택은 옳다(3절 장점 2). arm 가중치 도입만 **우선순위 2위로 채택**, metadata score 혼합은 평가셋 없이는 근거 없는 튜닝이라 보류(6절)  |
+| 7   | Hybrid retrieval            | RRF(k=60), title 0.5 / keyword 1.0 / vector 1.0 가중                                       | semantic+lexical+metadata weighted sum 또는 RRF                         | **구현 완료 (2026-08-26)** — 개선 #3 로 arm 가중 도입. metadata score 혼합은 평가셋 없이는 근거 없는 튜닝이라 계속 보류(6절)                                       |
 | 8   | Candidate retrieval         | arm 당 `width = max(top_k*4, 50)`, 합집합 최대 150건                                       | BM25 Top30 + Vector Top30 → 30~50                                       | **기존 유지가 적절** — 후보 폭이 이미 권장안 이상. 외부 호출 0 구조라 넓은 스캔 부담도 없다                                                                       |
 | 9   | Dedup                       | arm 별 문서 첫 등장 등수만 채택                                                            | merge/dedup                                                             | **기존 유지가 적절** — 권장안과 동등하며 문서 1건이 슬롯을 독식하는 것도 막힌다                                                                                   |
 | 10  | Reranking                   | 없음. 융합 순서가 곧 최종 순서                                                             | 상위 candidate 를 query 와 재비교해 정밀 정렬                           | **절충(V2 로 연기)** — cross-encoder 는 현 규모에 과도(6절, 0.6~2.5초 추가). 근거 노출(항목 14)이 먼저이며, 착수 조건은 평가 코퍼스 확보                          |
@@ -392,5 +453,6 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 
 **요약**: 18개 중 기존 유지 6건(2·6·8·9·16·17), 제안 채택 6건(1·3·12·14·15·18),
 절충 6건(4·5·7·10·11·13). 채택분의 착수 순서는 14·15 → 7 → 1·3 → 5 → 18 이고,
-**14·15 는 개선 #1 로 2026-08-25 구현 완료** — 다음 착수 대상은 7(RRF arm 가중)이다.
+**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3 으로 2026-08-26 구현 완료** — 다음 착수 대상은
+1·3(메타데이터 필터·질의 확장 계열)이며, 5.3절의 파생 항목을 개선 #4 와 묶어 처리할지 먼저 정한다.
 12(권한 전제 문서화)는 코드와 무관하게 지금 처리 가능하다.
