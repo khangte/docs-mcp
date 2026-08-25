@@ -16,9 +16,11 @@ from app.mcp.types import (
     EndpointDetails,
     EndpointSearchResponse,
     ErrorPayload,
+    MetadataSubmitResult,
     ResolvedSchemaResult,
     TagListResult,
 )
+from app.services.metadata.writeback_service import WritebackResult
 from app.services.search.endpoint_candidate_search import CandidateSearchOptions
 
 _LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)
@@ -117,12 +119,76 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             related_endpoints 필드를 갖는 dict. include_example=True 이면
             example_code 가 추가된다. endpoint_id가 존재하지 않으면
             error/code/message 필드를 담은 ErrorPayload를 대신 반환한다.
+            메타데이터가 없거나 스펙 변경으로 낡은 경우에만 metadata_request
+            (reason/instruction)가 추가된다 — 지시문대로 만들어
+            submit_endpoint_metadata 로 보내면 이후 검색 품질이 개선된다.
         """
         def _inner(bundle: ServiceBundle) -> EndpointDetails:
             result = bundle.endpoint_details_service.get_details(
                 endpoint_id, include_example=include_example
             )
-            return _to_endpoint_details_payload(result)
+            payload = _to_endpoint_details_payload(result)
+            # 56 §3.1: 상세를 본 뒤라야 근거 있는 메타데이터를 만들 수 있으므로
+            # 기여 요청 힌트는 search_endpoints 가 아니라 여기에만 붙인다.
+            hint = bundle.metadata_writeback_service.build_request_hint(endpoint_id)
+            if hint is not None:
+                payload["metadata_request"] = {
+                    "reason": hint.reason,
+                    "instruction": hint.instruction,
+                }
+            return payload
+        return await run_bundle_tool(app_state, _inner)
+
+    @mcp.tool()
+    async def submit_endpoint_metadata(
+        endpoint_id: str,
+        business_description: str,
+        keywords: list[str],
+        user_phrases: list[str],
+    ) -> MetadataSubmitResult | ErrorPayload:
+        """엔드포인트 검색용 비즈니스 메타데이터를 서버에 저장한다.
+
+        get_endpoint_details 응답에 metadata_request 가 실렸을 때, 그 상세
+        정보를 근거로 만든 메타데이터를 되돌려주는 도구다. 저장된 값은 해당
+        엔드포인트의 검색 청크에 즉시 반영돼 이후 검색 품질을 높인다.
+
+        한 번 저장된 값은 스펙이 바뀌기 전까지 덮어쓰지 않는다(같은 내용을
+        다시 보내면 status="already_current"). 잘못 저장된 값의 수정은
+        운영자 경로로만 가능하므로, 상세에 없는 사실을 만들어 보내지 않는다.
+
+        Args:
+            endpoint_id: get_endpoint_details 로 상세를 확인한 엔드포인트 식별자.
+            business_description: 이 엔드포인트가 하는 일을 설명하는 한국어
+                1문장(최대 120자, 초과분은 서버가 절단).
+            keywords: 검색에 걸릴 만한 영어/한국어 용어(최대 5개, 각 30자).
+            user_phrases: 사용자가 실제로 쓸 법한 표현. 한국어 2개 + 영어 2개
+                (최대 4개, 각 40자). summary 의 동사와 다른 표현을 최소 1개
+                포함한다(cancel<->delete/remove, create<->add/register).
+
+        Returns:
+            status("stored" | "already_current" | "rejected"), endpoint_id,
+            reindexed(즉시 색인 반영 여부), truncated(상한 초과로 절단됐는지)
+            를 담은 dict. status 가 "stored" 가 아니면 reason 이 함께 온다.
+            endpoint_id 가 없으면 code="endpoint_not_found", write-back 이
+            서버 설정으로 꺼져 있으면 code="writeback_disabled" 에러
+            페이로드를 반환한다.
+        """
+        def _inner(bundle: ServiceBundle) -> MetadataSubmitResult:
+            result: WritebackResult = bundle.metadata_writeback_service.submit(
+                endpoint_id=endpoint_id,
+                business_description=business_description,
+                keywords=keywords,
+                user_phrases=user_phrases,
+            )
+            payload: MetadataSubmitResult = {
+                "status": result.status,
+                "endpoint_id": result.endpoint_id,
+                "reindexed": result.reindexed,
+                "truncated": result.truncated,
+            }
+            if result.reason is not None:
+                payload["reason"] = result.reason
+            return payload
         return await run_bundle_tool(app_state, _inner)
 
     @mcp.tool()

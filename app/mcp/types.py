@@ -101,6 +101,32 @@ class RelatedEndpointItem(TypedDict):
     path: str
 
 
+class MetadataRequestPayload(TypedDict):
+    """get_endpoint_details 응답의 메타데이터 기여 요청 힌트(56 §3.2).
+
+    메타데이터가 이미 최신이면 상위 응답에 이 키 자체가 없다.
+    """
+
+    reason: str
+    instruction: str
+
+
+class MetadataSubmitResult(TypedDict):
+    """submit_endpoint_metadata 의 반환 타입.
+
+    `status` 는 "stored"(저장됨) | "already_current"(해시 동일해 무시) |
+    "rejected"(정규화 후 내용 없음). `reason` 은 status 가 "stored" 가 아닐
+    때만 키가 존재한다. `reindexed=False` 는 저장은 됐지만 즉시 색인 반영에
+    실패했다는 뜻으로, 다음 전체 재색인에서 반영된다(56 §4.4).
+    """
+
+    status: str
+    endpoint_id: str
+    reindexed: bool
+    truncated: bool
+    reason: NotRequired[str]
+
+
 class EndpointDetails(TypedDict):
     """get_endpoint_details 의 반환 타입.
 
@@ -108,6 +134,7 @@ class EndpointDetails(TypedDict):
     `referenced_schema_refs`/`related_endpoints` 는 순회 힌트다 — 서버가
     다음 홉을 자동 호출하지 않고 후보만 노출한다(밟을지는 호출측 판단,
     `docs/architect-review/12_rag_depth_directions.md` 후보2 얇은 버전).
+    `metadata_request` 는 기여 요청 힌트이며 최신이면 키가 없다.
     """
 
     endpoint_id: str
@@ -123,6 +150,9 @@ class EndpointDetails(TypedDict):
     example_code: NotRequired[str]
     referenced_schema_refs: list[str]
     related_endpoints: list[RelatedEndpointItem]
+    #: 메타데이터가 없거나 스펙 변경으로 낡았을 때만 존재한다(56 §3.2).
+    #: 최신이거나 write-back 이 꺼져 있으면 키 자체가 없다(토큰 오버헤드 0).
+    metadata_request: NotRequired[MetadataRequestPayload]
 
 
 class SchemaFieldItem(TypedDict):

@@ -134,8 +134,25 @@ def app_state(pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_sourc
         vector_fallback_enabled=True,
         drive_source_builder=lambda folder_id: fake_drive_source,
         notion_source_builder=lambda notion_id, kind: fake_notion_source,
+        metadata_writeback_enabled=True,
     )
     return state
+
+
+@pytest.fixture()
+def app_state_writeback_disabled(
+    pg_engine, in_memory_fetcher, fake_drive_source, fake_notion_source
+):
+    """write-back 킬스위치가 꺼진 AppState(docs/architect-review/56 §2.3)."""
+    return AppState.from_engine(
+        engine=pg_engine,
+        fetcher=in_memory_fetcher,
+        embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
+        vector_fallback_enabled=True,
+        drive_source_builder=lambda folder_id: fake_drive_source,
+        notion_source_builder=lambda notion_id, kind: fake_notion_source,
+        metadata_writeback_enabled=False,
+    )
 
 
 @pytest.fixture()

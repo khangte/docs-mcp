@@ -38,6 +38,7 @@ from app.services.indexer.embedding_provider import (
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
+from app.services.metadata.writeback_service import MetadataWritebackService
 from app.services.schema_resolution.schema_ref_resolver import SchemaRefResolver
 from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
 from app.services.search.keyword_search import KeywordSearch
@@ -60,6 +61,9 @@ class AppState:
     #: "indexed"(기본, doc36 Phase3 RRF) | "fetch"(롤백 스위치). `DocumentSearchService` 로
     #: 그대로 전달된다.
     document_search_strategy: str = "indexed"
+    #: 호출 LLM write-back 활성화 여부(docs/architect-review/56 §2.3).
+    #: `MetadataWritebackService` 로 그대로 전달된다.
+    metadata_writeback_enabled: bool = True
     #: Drive 서비스 계정 토큰 발급기. 자격증명이 없으면 None. project 마다
     #: 새로 만들지 않고 재사용해 credentials 캐싱 중복을 막는다.
     drive_token_provider: ServiceAccountTokenProvider | None = None
@@ -81,6 +85,7 @@ class AppState:
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
         search_strategy: str | None = None,
         document_search_strategy: str | None = None,
+        metadata_writeback_enabled: bool | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
 
@@ -123,6 +128,11 @@ class AppState:
                 settings.document_search_strategy
                 if document_search_strategy is None
                 else document_search_strategy
+            ),
+            metadata_writeback_enabled=(
+                settings.business_metadata_writeback_enabled
+                if metadata_writeback_enabled is None
+                else metadata_writeback_enabled
             ),
             drive_token_provider=build_drive_token_provider(settings),
             drive_source_builder=drive_source_builder,
@@ -173,6 +183,7 @@ class ServiceBundle:
     project_source_repo: ProjectSourceRepository
     project_source_service: ProjectSourceService
     project_source_resolver: ProjectSourceResolver
+    metadata_writeback_service: MetadataWritebackService
 
 
 def build_services(state: AppState) -> Iterator[ServiceBundle]:
@@ -254,6 +265,14 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             chunk_repo=chunk_repo,
             indexer=indexer,
         )
+        metadata_writeback_service = MetadataWritebackService(
+            session=session,
+            endpoint_repo=endpoint_repo,
+            document_repo=document_repo,
+            chunk_repo=chunk_repo,
+            embedding_provider=state.embedding_provider,
+            enabled=state.metadata_writeback_enabled,
+        )
         yield ServiceBundle(
             session=session,
             document_repo=document_repo,
@@ -272,6 +291,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             project_source_repo=project_source_repo,
             project_source_service=project_source_service,
             project_source_resolver=project_source_resolver,
+            metadata_writeback_service=metadata_writeback_service,
         )
     finally:
         session.close()

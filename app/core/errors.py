@@ -66,5 +66,15 @@ class RefreshInProgressError(DomainError):
         )
 
 
+class WritebackDisabledError(DomainError):
+    """비즈니스 메타데이터 write-back 이 설정으로 꺼져 있을 때 발생."""
+
+    def __init__(self) -> None:
+        """비활성 메시지와 코드를 보관한다."""
+        super().__init__(
+            "business metadata write-back is disabled", code="writeback_disabled"
+        )
+
+
 class IntegrationError(Exception):
     """외부 HTTP/LLM/임베딩 실패."""

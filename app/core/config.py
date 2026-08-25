@@ -111,6 +111,15 @@ class Settings:
             "DOCS_MCP_METADATA_API_BASE", "https://api.anthropic.com"
         )
     )
+    #: 호출 LLM write-back 쓰기 경로 킬스위치(docs/architect-review/56 §2.3).
+    #: 쓰기 도구를 LLM 에게 여는 설계라 코드 수정 없이 닫을 수단을 둔다.
+    #: "0"/"false"/"no"(대소문자 무시) 이면 비활성.
+    business_metadata_writeback_enabled: bool = field(
+        default_factory=lambda: os.environ.get(
+            "DOCS_MCP_METADATA_WRITEBACK_ENABLED", "true"
+        ).strip().lower()
+        not in ("0", "false", "no")
+    )
 
 
 def get_settings() -> Settings:
