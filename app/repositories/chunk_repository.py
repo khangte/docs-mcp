@@ -60,6 +60,31 @@ def _quote_tsquery_lexeme(term: str) -> str:
     return "'" + term.replace("'", "''") + "'"
 
 
+def _normalize_phrase_groups(
+    phrase_terms: Sequence[Sequence[str]] | None,
+) -> list[list[str]]:
+    """phrase 그룹을 정규화한다(None 이면 빈 리스트, 빈 원소가 든 그룹은 통째로 버림)."""
+    if not phrase_terms:
+        return []
+    groups: list[list[str]] = []
+    for group in phrase_terms:
+        parts = list(group)
+        if not parts or any(not p for p in parts):
+            continue
+        groups.append(parts)
+    return groups
+
+
+def _build_tsquery_str(terms: Sequence[str], phrase_groups: Sequence[Sequence[str]]) -> str:
+    """`terms`(OR lexeme) 와 `phrase_groups`(각 그룹은 `<->` 로 묶은 구문)를 `|` 로 결합한다."""
+    clauses = [_quote_tsquery_lexeme(t) for t in terms]
+    clauses.extend(
+        "(" + " <-> ".join(_quote_tsquery_lexeme(part) for part in group) + ")"
+        for group in phrase_groups
+    )
+    return " | ".join(clauses)
+
+
 class ChunkRepository:
     """`chunk` CRUD + document 별 일괄 교체."""
 
@@ -163,6 +188,8 @@ class ChunkRepository:
         chunk_type: str = "endpoint",
         doc_types: Sequence[str] | None = None,
         meta_filter: DocumentMetaFilter | None = None,
+        phrase_terms: Sequence[Sequence[str]] | None = None,
+        score_phrase_terms: Sequence[Sequence[str]] | None = None,
     ) -> list[ChunkTextHit]:
         """`chunk_type` 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
 
@@ -182,6 +209,15 @@ class ChunkRepository:
         계산해 variant 매칭만 있는 후보가 원본 매칭 후보보다 부당하게 높은
         순위를 받지 않게 한다(문서 검색과 동일 규약).
 
+        `phrase_terms` 는 lexeme OR 로 표현할 수 없는 인접 구문 매치를 추가한다
+        (58번 §4 keyword arm 한글 복합어 대칭) — 각 그룹(예: `("결제", "장애")`)은
+        tsquery 구문 연산자 `<->` 로 묶여 `terms` 와 `|` 로 결합된다(질의
+        '결제장애' 가 본문 '결제 장애' 두 lexeme 에 매치되게 한다). `score_phrase_terms`
+        는 `score_terms` 와 대칭인 점수 전용 phrase 집합이며, 생략하면
+        `phrase_terms` 를 그대로 쓴다. **두 phrase 파라미터가 모두 `None` 이면
+        생성되는 tsquery 문자열이 이 파라미터들이 없던 기존과 완전히 동일하다**
+        (엔드포인트 검색 호출부는 인자를 넘기지 않으므로 무변경).
+
         `doc_types` 는 `Document.doc_type` 으로 후보를 좁힌다(45번 리뷰
         §3.2/3.3) — `chunk_type="section"` 은 협업 문서(drive/notion)와
         등록형 문서(markdown/csv 등)가 공유하므로, 문서 검색 경로는 이
@@ -195,18 +231,22 @@ class ChunkRepository:
         인자를 넘기지 않으므로 무변경).
         """
         normalized_terms = [t for t in terms if t]
-        if top_k <= 0 or not normalized_terms:
+        normalized_phrase_groups = _normalize_phrase_groups(phrase_terms)
+        if top_k <= 0 or (not normalized_terms and not normalized_phrase_groups):
             return []
-        tsquery_str = " | ".join(_quote_tsquery_lexeme(t) for t in normalized_terms)
+        tsquery_str = _build_tsquery_str(normalized_terms, normalized_phrase_groups)
         tsq = func.to_tsquery("simple", tsquery_str)
 
-        score_source = terms if score_terms is None else score_terms
-        normalized_score_terms = [t for t in score_source if t]
+        score_term_source = terms if score_terms is None else score_terms
+        normalized_score_terms = [t for t in score_term_source if t]
+        score_phrase_source = phrase_terms if score_phrase_terms is None else score_phrase_terms
+        normalized_score_phrase_groups = _normalize_phrase_groups(score_phrase_source)
         score_tsq = (
             func.to_tsquery(
-                "simple", " | ".join(_quote_tsquery_lexeme(t) for t in normalized_score_terms)
+                "simple",
+                _build_tsquery_str(normalized_score_terms, normalized_score_phrase_groups),
             )
-            if normalized_score_terms
+            if normalized_score_terms or normalized_score_phrase_groups
             else tsq
         )
         rank = func.ts_rank(Chunk.text_tsv, score_tsq)

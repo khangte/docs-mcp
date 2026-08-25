@@ -318,6 +318,132 @@ def test_search_endpoint_by_text_term_with_quote_is_escaped_safely(db_session) -
     assert repo.search_endpoint_by_text(["o'brien"], top_k=10) == []
 
 
+# --- 58번 §4.3: phrase_terms(keyword arm 복합어 대칭) -----------------------
+
+
+def test_search_endpoint_by_text_phrase_terms_omitted_matches_explicit_none(db_session) -> None:
+    """phrase_terms 를 생략한 결과와 명시적으로 None 을 넘긴 결과가 동일하다(회귀).
+
+    두 파라미터가 없던 기존 tsquery 조립과 동일해야 한다는 계약을, 생략과
+    명시적 None 이 같은 결과를 내는지로 확인한다.
+    """
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep1")
+    _seed_chunk(db_session, "c2", "doc1", "find user", ref_id="ep2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    omitted = repo.search_endpoint_by_text(["find", "pet"], top_k=10)
+    explicit_none = repo.search_endpoint_by_text(
+        ["find", "pet"], top_k=10, phrase_terms=None, score_phrase_terms=None
+    )
+
+    assert [(h.chunk_id, h.score) for h in omitted] == [
+        (h.chunk_id, h.score) for h in explicit_none
+    ]
+
+
+def test_search_endpoint_by_text_phrase_terms_matches_adjacent_lexemes(db_session) -> None:
+    """phrase_terms 그룹은 `<->` 로 묶여, 본문에 두 단어가 인접해야만 매치한다."""
+    _seed_chunk(db_session, "c1", "doc1", "결제 장애 대응 절차", chunk_type="section", ref_id="ep1")
+    _seed_chunk(
+        db_session, "c2", "doc1", "결제 이력과 장애 목록", chunk_type="section", ref_id="ep2"
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        [], top_k=10, chunk_type="section", phrase_terms=[["결제", "장애"]]
+    )
+
+    assert [h.chunk_id for h in hits] == ["c1"]
+
+
+def test_search_endpoint_by_text_phrase_terms_or_combined_with_terms(db_session) -> None:
+    """phrase_terms 는 terms 와 `|`(OR) 로 결합되어 둘 중 하나만 맞아도 후보가 된다."""
+    _seed_chunk(db_session, "c1", "doc1", "결제 장애 대응 절차", chunk_type="section", ref_id="ep1")
+    _seed_chunk(db_session, "c2", "doc1", "환불 정책 안내", chunk_type="section", ref_id="ep2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        ["환불"], top_k=10, chunk_type="section", phrase_terms=[["결제", "장애"]]
+    )
+
+    assert {h.chunk_id for h in hits} == {"c1", "c2"}
+
+
+def test_search_endpoint_by_text_phrase_terms_group_with_empty_part_is_dropped(
+    db_session,
+) -> None:
+    """빈 문자열 원소가 든 phrase 그룹은 통째로 버려진다(에러 없이 무시)."""
+    _seed_chunk(db_session, "c1", "doc1", "결제 장애 대응 절차", chunk_type="section", ref_id="ep1")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        [], top_k=10, chunk_type="section", phrase_terms=[["결제", ""]]
+    )
+
+    assert hits == []
+
+
+def test_search_endpoint_by_text_phrase_term_with_quote_is_escaped_safely(db_session) -> None:
+    """phrase 그룹 원소에 작은따옴표가 섞여도 tsquery 파싱 오류 없이 처리된다."""
+    _seed_chunk(db_session, "c1", "doc1", "find pet by id", ref_id="ep1")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        [], top_k=10, phrase_terms=[["o'brien", "pet"]]
+    )
+
+    assert hits == []
+
+
+def test_search_endpoint_by_text_score_phrase_terms_scores_independently(db_session) -> None:
+    """score_phrase_terms 를 주면 필터(phrase_terms)와 별개로 그것만으로 ts_rank 를 계산한다.
+
+    필터는 terms(`'결제장애'`) + phrase_terms(`'결제' <-> '장애'`)로 c1(구문
+    인접)·c2(단일 lexeme) 둘 다 후보에 들이지만, score 는 score_terms만
+    쓰도록 score_phrase_terms 를 빈 리스트로 눌러 phrase 매치인 c1 의
+    점수를 0 으로 만든다.
+    """
+    _seed_chunk(db_session, "c1", "doc1", "결제 장애 대응 절차", chunk_type="section", ref_id="ep1")
+    _seed_chunk(
+        db_session, "c2", "doc1", "결제장애 대응 매뉴얼 개요", chunk_type="section", ref_id="ep2"
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        ["결제장애"],
+        top_k=10,
+        chunk_type="section",
+        score_terms=["결제장애"],
+        phrase_terms=[["결제", "장애"]],
+        score_phrase_terms=[],
+    )
+
+    assert {h.chunk_id for h in hits} == {"c1", "c2"}
+    scores = {h.chunk_id: h.score for h in hits}
+    assert scores["c1"] == 0.0
+    assert scores["c2"] > 0.0
+
+
+def test_search_endpoint_by_text_score_phrase_terms_defaults_to_phrase_terms(db_session) -> None:
+    """score_phrase_terms 를 생략하면 phrase_terms 로 점수를 계산한다(score_terms 와 동일 패턴)."""
+    _seed_chunk(db_session, "c1", "doc1", "결제 장애 대응 절차", chunk_type="section", ref_id="ep1")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        [], top_k=10, chunk_type="section", phrase_terms=[["결제", "장애"]]
+    )
+
+    assert len(hits) == 1
+    assert hits[0].score > 0.0
+
+
 # --- P1: has_endpoint_chunks -----------------------------------------------
 
 

@@ -13,9 +13,14 @@ from __future__ import annotations
 
 from app.models.document_meta import DocumentMeta
 from app.services.documents.search_scorer import (
+    COMPOUND_TERM_LIMIT,
     _match_positions,
     _passes_title_gate,
+    _title_score,
     _token_aligned_concat_match,
+    compound_concat_terms,
+    compound_split_phrases,
+    compound_terms_for_tokens,
     documents_tokenize,
 )
 
@@ -203,3 +208,151 @@ def test_passes_title_gate_false_for_misaligned_boundary_query() -> None:
     row = _row("결제 장애 대응 가이드")
 
     assert _passes_title_gate(row, {"장애대"}, ["장애대"]) is False
+
+
+# --- 58번 설계 T1: _collapse_match_score 토큰 경계 정렬 -----------------------
+
+
+def test_title_score_substring_inside_single_token_scores_zero() -> None:
+    """'api' 는 'Rapid' 안에 부분문자열로만 있고 토큰 경계가 안 맞으므로 0점(기존엔 1.0)."""
+    row = _row("Rapid Onboarding Guide")
+
+    assert _title_score(row, {"api"}, "api") == 0.0
+
+
+def test_title_score_concat_query_matches_split_title() -> None:
+    """질의 '결제장애'(붙여씀)가 제목의 연속 토큰 '결제'+'장애'와 경계 일치로 매치."""
+    row = _row("결제 장애 대응 가이드")
+
+    assert _title_score(row, {"결제장애"}, "결제장애") == 1.0
+
+
+def test_title_score_split_query_matches_concat_title() -> None:
+    """질의 '결제 장애'(띄어씀)가 제목의 붙여쓴 토큰 '결제장애'와 경계 일치로 매치(역방향)."""
+    row = _row("결제장애 안내")
+
+    assert _title_score(row, {"결제", "장애"}, "결제 장애") == 0.5
+
+
+def test_title_score_no_ghost_match_across_title_and_url_boundary() -> None:
+    """title 끝 토큰 + url 첫 토큰을 걸친 매치는 title/url 을 따로 보므로 0점.
+
+    구 구현은 collapse(title)+collapse(url) 을 이어붙여 부분문자열로 봤기
+    때문에 title='문서 결', url='제-안내-page' 에서 질의 '결제'가 경계를
+    걸쳐 유령으로 매치됐다(1.0, collapse 결과 '문서결'+'제-안내-page' 에
+    '결제'가 그대로 붙어버림). 신 구현은 title/url 토큰열을 따로 판정한다.
+    """
+    row = _row("문서 결", url="제-안내-page")
+
+    assert _title_score(row, {"결제"}, "결제") == 0.0
+
+
+# --- 58번 설계 T2: keyword arm 질의 측 복합어 분해 ----------------------------
+
+
+def test_compound_concat_terms_joins_contiguous_runs_shortest_first() -> None:
+    """`[a,b,c]` → 길이 2 run 먼저(ab, bc), 그다음 길이 3 run(abc)."""
+    assert compound_concat_terms(["a", "b", "c"]) == ["ab", "bc", "abc"]
+
+
+def test_compound_concat_terms_excludes_values_equal_to_original_token() -> None:
+    """concat 결과가 원본 토큰과 같은 값이면 제외한다('결'+'제' == 원본 토큰 '결제')."""
+    result = compound_concat_terms(["결", "제", "결제"])
+
+    assert "결제" not in result
+
+
+def test_compound_concat_terms_dedupes_preserving_order() -> None:
+    """중복되는 concat 값은 첫 등장 순서만 유지하고 제거한다."""
+    assert compound_concat_terms(["a", "a", "a"]) == ["aa", "aaa"]
+
+
+def test_compound_concat_terms_single_token_yields_nothing() -> None:
+    """토큰이 1개면 이어붙일 상대가 없어 빈 리스트."""
+    assert compound_concat_terms(["결제"]) == []
+
+
+def test_compound_concat_terms_skips_runs_crossing_script_boundary() -> None:
+    """ASCII↔한글 경계를 넘는 run 은 concat 하지 않는다(TEXT_TSV_EXPRESSION 이
+
+    그 경계에 공백을 넣어 혼합 lexeme 이 본문에 존재할 수 없다 — 59 §F2).
+    """
+    assert compound_concat_terms(["get", "요청"]) == []
+    assert compound_concat_terms(["get", "post"]) == ["getpost"]
+    assert compound_concat_terms(["결제", "장애"]) == ["결제장애"]
+
+
+def test_compound_concat_terms_respects_explicit_limit() -> None:
+    """`limit` 지정 시 그 개수에 도달하는 즉시 생성을 멈춘다(59 §F5)."""
+    assert compound_concat_terms(["a", "b", "c"], limit=1) == ["ab"]
+
+
+def test_compound_split_phrases_respects_explicit_limit() -> None:
+    """`limit` 지정 시 그 개수에 도달하는 즉시 생성을 멈춘다(59 §F5)."""
+    assert compound_split_phrases(["가나다라마바"], limit=1) == [("가나", "다라마바")]
+
+
+def test_compound_split_phrases_all_two_splits_for_pure_hangul_token() -> None:
+    """길이 4 순수 한글 토큰은 가능한 모든 2분할(양쪽 길이 >=2)을 낸다."""
+    assert compound_split_phrases(["가나다라"]) == [("가나", "다라")]
+    assert compound_split_phrases(["가나다라마바"]) == [
+        ("가나", "다라마바"),
+        ("가나다", "라마바"),
+        ("가나다라", "마바"),
+    ]
+
+
+def test_compound_split_phrases_skips_token_shorter_than_two_min_parts() -> None:
+    """길이가 2*_MIN_SPLIT_PART_LEN(4) 미만인 토큰은 분할하지 않는다."""
+    assert compound_split_phrases(["결제"]) == []
+
+
+def test_compound_split_phrases_skips_non_pure_hangul_token() -> None:
+    """ASCII/숫자가 섞이거나 순수 한글이 아닌 토큰은 v1 범위 밖이라 분할하지 않는다."""
+    assert compound_split_phrases(["apikey"]) == []
+    assert compound_split_phrases(["결제key"]) == []
+
+
+def test_compound_terms_for_tokens_returns_uncapped_pair_under_limit() -> None:
+    """합계가 상한 이내면 두 함수의 산출을 그대로 반환한다."""
+    concat_terms, split_phrases = compound_terms_for_tokens(["결제", "장애"])
+
+    assert concat_terms == compound_concat_terms(["결제", "장애"])
+    assert split_phrases == compound_split_phrases(["결제", "장애"])
+
+
+def test_compound_terms_for_tokens_caps_and_fills_concat_first() -> None:
+    """합계가 COMPOUND_TERM_LIMIT 를 넘으면 잘라내되 concat term 을 먼저 채운다.
+
+    서로 다른 길이-4 순수 한글 토큰 8개: concat 조합 28개(<COMPOUND_TERM_LIMIT),
+    split 후보 8개(토큰당 1개) — 합계 36 으로 캡(32)을 넘긴다. concat 을
+    먼저 다 채우고 남는 4자리만 split 이 채워야 한다.
+    """
+    base = 0xAC00
+    tokens = ["".join(chr(base + i * 4 + k) for k in range(4)) for i in range(8)]
+    full_concat_terms = compound_concat_terms(tokens)
+    full_split_phrases = compound_split_phrases(tokens)
+    assert len(full_concat_terms) + len(full_split_phrases) > COMPOUND_TERM_LIMIT
+    assert len(full_concat_terms) < COMPOUND_TERM_LIMIT
+
+    concat_terms, split_phrases = compound_terms_for_tokens(tokens)
+
+    assert concat_terms == full_concat_terms
+    assert split_phrases == full_split_phrases[: COMPOUND_TERM_LIMIT - len(full_concat_terms)]
+    assert len(concat_terms) + len(split_phrases) == COMPOUND_TERM_LIMIT
+
+
+def test_compound_terms_for_tokens_respects_explicit_limit_smaller_than_default() -> None:
+    """`limit` 을 명시하면 모듈 상한 대신 그 값으로 캡한다(59 §F3 — 원본/variant
+
+    간 예산을 누적 배분하려면 호출자가 남은 예산을 직접 넘겨야 한다).
+    """
+    concat_terms, split_phrases = compound_terms_for_tokens(["결제", "장애"], limit=1)
+
+    assert concat_terms == ["결제장애"]
+    assert split_phrases == []
+
+
+def test_compound_terms_for_tokens_zero_limit_yields_nothing() -> None:
+    """예산이 이미 소진(0)이면 아무것도 만들지 않는다."""
+    assert compound_terms_for_tokens(["결제", "장애"], limit=0) == ([], [])

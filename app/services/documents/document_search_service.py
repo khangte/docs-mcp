@@ -44,9 +44,11 @@ from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_body_indexer import deterministic_document_id
 from app.services.documents.project_source_resolver import ProjectSourceResolver
 from app.services.documents.search_scorer import (
+    COMPOUND_TERM_LIMIT,
     _body_score,
     _passes_title_gate,
     _title_score,
+    compound_terms_for_tokens,
     documents_tokenize,
 )
 from app.services.documents.snippet_generator import _build_snippet, _fallback_snippet
@@ -697,7 +699,14 @@ class DocumentSearchService:
             project=project, chunk_type=_SECTION_CHUNK_TYPE
         ):
             keyword_ids, keyword_chunk_by_doc = self._keyword_arm(
-                filter_tokens, query_tokens, project, width, doc_types, meta_filter
+                filter_tokens,
+                query_tokens,
+                query,
+                options.query_variants,
+                project,
+                width,
+                doc_types,
+                meta_filter,
             )
             if self._vector_fallback_enabled:
                 vector_ids, vector_chunk_by_doc = self._vector_arm(
@@ -852,21 +861,60 @@ class DocumentSearchService:
         self,
         filter_tokens: set[str],
         score_tokens: set[str],
+        query: str,
+        query_variants: list[str] | None,
         project: str | None,
         width: int,
         doc_types: Sequence[str],
         meta_filter: DocumentMetaFilter,
     ) -> tuple[list[str], dict[str, str]]:
-        """section 청크를 FTS 로 검색해 문서 ID 순위 + 문서별 승자 청크 ID 를 만든다."""
+        """section 청크를 FTS 로 검색해 문서 ID 순위 + 문서별 승자 청크 ID 를 만든다.
+
+        58번 §4 keyword arm 한글 복합어 대칭: `filter_tokens`/`score_tokens`
+        (집합)와 별개로, 순서가 필요한 concat/split 복합어 term 은 여기서
+        `documents_tokenize(query)` 를 다시 호출해 만든다. 필터 측은 원본
+        질의 토큰 + 각 variant 문자열을 개별 토큰화한 결과에서 파생하고
+        (variant 끼리·원본과 variant 를 가로질러 concat 하지 않는다 — 서로
+        다른 문장이라 이어붙일 근거가 없다), 점수 측은 원본 질의 토큰에서
+        파생한 것만 쓴다 — concat/split term 은 원본 질의와 같은 표층
+        문자열의 띄어쓰기 변형이라, variant 처럼 점수에서 뺄 이유가 없다
+        (빼면 복합어로만 걸린 문서가 keyword arm 최하위로 밀려 RRF 기여가
+        사실상 사라진다).
+        """
         assert self._chunk_repo is not None
+        original_tokens = documents_tokenize(query)
+        concat_terms, phrase_terms = compound_terms_for_tokens(original_tokens)
+
+        filter_terms = filter_tokens | set(concat_terms)
+        filter_phrase_terms = list(phrase_terms)
+        seen_phrase_terms = set(phrase_terms)
+        # 원본 파생이 먼저 COMPOUND_TERM_LIMIT 예산을 가져가고, variant 는
+        # 남는 예산만 나눠 쓴다(59 §F3) — variant 수가 늘어도 전체 상한은
+        # COMPOUND_TERM_LIMIT 로 고정된다.
+        remaining_budget = COMPOUND_TERM_LIMIT - len(concat_terms) - len(phrase_terms)
+        for variant in query_variants or []:
+            if remaining_budget <= 0:
+                break
+            variant_concat, variant_phrase = compound_terms_for_tokens(
+                documents_tokenize(variant), limit=remaining_budget
+            )
+            remaining_budget -= len(variant_concat) + len(variant_phrase)
+            filter_terms |= set(variant_concat)
+            for phrase in variant_phrase:
+                if phrase not in seen_phrase_terms:
+                    seen_phrase_terms.add(phrase)
+                    filter_phrase_terms.append(phrase)
+
         hits = self._chunk_repo.search_endpoint_by_text(
-            list(filter_tokens),
+            list(filter_terms),
             top_k=width,
             project=project,
-            score_terms=list(score_tokens),
+            score_terms=list(score_tokens | set(concat_terms)),
             chunk_type=_SECTION_CHUNK_TYPE,
             doc_types=doc_types,
             meta_filter=meta_filter,
+            phrase_terms=filter_phrase_terms or None,
+            score_phrase_terms=phrase_terms,
         )
         return _dedupe_first_with_chunk(hits)
 

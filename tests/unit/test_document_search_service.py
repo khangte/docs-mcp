@@ -23,6 +23,7 @@ from app.core.errors import IntegrationError, ValidationError
 from app.models import DEFAULT_PROJECT, EMBEDDING_DIM, Chunk, Document
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.document_filters import DocumentMetaFilter
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_search_service import (
     BODY_FETCH_OVERSCAN,
@@ -1738,6 +1739,111 @@ def test_indexed_strategy_title_gate_passes_variant_only_full_token_match(
     )
 
     assert [i.title for i in items] == ["Payment Failure Runbook"]
+
+
+# --- 59번 검토 F1: variant 파생 phrase 가 점수(score_phrase_terms)에 새면 안 됨 ---
+
+
+def test_keyword_arm_score_phrase_terms_stays_empty_when_only_variant_yields_split(
+    db_session, indexed_search_service, monkeypatch
+) -> None:
+    """원본 질의는 split 을 못 만들고 variant 만 만드는 경우, score_phrase_terms 는
+
+    빈 리스트로 전달돼야 한다(`None` 이면 저장소가 filter phrase_terms 를
+    점수에도 재사용해 variant 파생 phrase 가 ts_rank 에 샌다 — 59 §F1).
+    """
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-f1-score-phrase",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="f1-score-phrase",
+        title="무관 제목",
+        url="https://example.test/drive/f1-score-phrase",
+        chunk_texts=["결제 장애 발생 안내."],
+    )
+    captured_kwargs: dict = {}
+    original = ChunkRepository.search_endpoint_by_text
+
+    def _spy(self, *args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ChunkRepository, "search_endpoint_by_text", _spy)
+
+    indexed_search_service.search(
+        "결제 장애", DocumentSearchOptions(query_variants=["결제장애"])
+    )
+
+    assert captured_kwargs["score_phrase_terms"] == []
+
+
+# --- 59번 검토 F3/F4: 복합어 term 예산은 원본→variant 누적, phrase 중복 제거 ---
+
+
+class _RecordingChunkRepo:
+    """`search_endpoint_by_text` 호출 kwargs 만 기록하고 빈 결과를 돌려주는 더미."""
+
+    def __init__(self) -> None:
+        self.captured_kwargs: dict = {}
+
+    def search_endpoint_by_text(self, *args, **kwargs):
+        self.captured_kwargs = kwargs
+        return []
+
+
+def test_keyword_arm_shares_compound_budget_between_original_and_variant(
+    indexed_search_service,
+) -> None:
+    """원본 파생이 예산을 먼저 가져가고, variant 는 남는 예산만 쓴다(59 §F3).
+
+    variant 혼자 호출되면 split phrase 를 4개(캡 없이도 자기 상한만큼) 만들
+    수 있는 8-토큰 문자열이지만, 원본이 이미 1자리(concat "결제장애")를 써
+    남은 예산이 31 이라 concat 28개를 다 채우고 남는 3자리만 split 으로
+    채워야 한다 — 캡을 variant 마다 독립적으로 걸면 4개가 나와 이 테스트가
+    깨진다.
+    """
+    base = 0xAC00
+    variant = " ".join(
+        "".join(chr(base + i * 4 + k) for k in range(4)) for i in range(8)
+    )
+    repo = _RecordingChunkRepo()
+    indexed_search_service._chunk_repo = repo
+
+    indexed_search_service._keyword_arm(
+        filter_tokens=set(),
+        score_tokens=set(),
+        query="결제 장애",
+        query_variants=[variant],
+        project=None,
+        width=50,
+        doc_types=(),
+        meta_filter=DocumentMetaFilter(),
+    )
+
+    assert repo.captured_kwargs["phrase_terms"] is not None
+    assert len(repo.captured_kwargs["phrase_terms"]) == 3
+
+
+def test_keyword_arm_dedupes_duplicate_phrase_terms_across_variants(
+    indexed_search_service,
+) -> None:
+    """두 variant 가 같은 split phrase 그룹을 내면 한 번만 tsquery 절에 남는다(59 §F4)."""
+    repo = _RecordingChunkRepo()
+    indexed_search_service._chunk_repo = repo
+
+    indexed_search_service._keyword_arm(
+        filter_tokens=set(),
+        score_tokens=set(),
+        query="공통",
+        query_variants=["결제장애", "결제장애"],
+        project=None,
+        width=50,
+        doc_types=(),
+        meta_filter=DocumentMetaFilter(),
+    )
+
+    assert repo.captured_kwargs["phrase_terms"] == [("결제", "장애")]
 
 
 def test_indexed_strategy_title_only_document_ranks_below_body_matched_document(

@@ -329,3 +329,88 @@ def test_korean_whitespace_variant_does_not_cross_match_known_limitation(app_sta
     )
 
     assert all(c.match_type != "keyword" for c in candidates)
+
+
+# --- 5. keyword arm 한글 복합어 대칭(58번 §4, 개선 #4) — 문서 검색(section 청크) 전용 -----
+#
+# 위 4번 한계 테스트는 엔드포인트 arm(chunk_type="endpoint")에 대한 것이고
+# 무변경으로 고정된다. 아래는 문서 검색 keyword arm(chunk_type="section")에서
+# 같은 공백 변형이 `compound_concat_terms`/`compound_split_phrases`(질의 측
+# 분해)로 흡수되는지 확인한다 — DocumentSearchService._keyword_arm 이 실제로
+# 하는 파생을 그대로 재현해 repository 레이어에서 recall 이 회복되는지 본다.
+
+
+def test_compound_concat_term_matches_split_query_against_concat_body(db_session) -> None:
+    """질의 '결제 장애'(띄어씀, 2토큰)가 본문의 '결제장애'(붙여쓴 단일 lexeme)와 매치한다.
+
+    concat term 방향(58번 §4.1 표 1행): 인접 토큰 run 을 이어붙인 lexeme 을
+    keyword arm tsquery 에 OR 로 추가해야 잡힌다.
+    """
+    from app.models import Document
+    from app.services.documents.search_scorer import compound_concat_terms, documents_tokenize
+
+    db_session.add(
+        Document(
+            id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            id="c1",
+            document_id="doc1",
+            chunk_type="section",
+            ref_id="ep1",
+            text="결제장애 대응 절차 안내",
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+    query_tokens = documents_tokenize("결제 장애")  # ['결제', '장애']
+    concat_terms = compound_concat_terms(query_tokens)  # ['결제장애']
+
+    hits = repo.search_endpoint_by_text(
+        query_tokens + concat_terms, top_k=10, chunk_type="section"
+    )
+
+    assert [h.chunk_id for h in hits] == ["c1"]
+
+
+def test_compound_split_phrase_matches_concat_query_against_split_body(db_session) -> None:
+    """질의 '결제장애'(붙여씀, 단일 토큰)가 본문의 '결제 장애'(띄어쓴 두 lexeme)와 매치한다.
+
+    split phrase term 방향(58번 §4.1 표 2행): 순수 한글 토큰의 2분할 후보를
+    tsquery `<->` 로 묶어 OR 로 추가해야 잡힌다. 원본 토큰만으로는(단일
+    lexeme '결제장애') 본문에 그 lexeme 이 없어 매치되지 않는다.
+    """
+    from app.models import Document
+    from app.services.documents.search_scorer import compound_split_phrases, documents_tokenize
+
+    db_session.add(
+        Document(
+            id="doc1", project="default", title="t", version="v", content_hash="h", raw_text="{}"
+        )
+    )
+    db_session.flush()
+    db_session.add(
+        Chunk(
+            id="c1",
+            document_id="doc1",
+            chunk_type="section",
+            ref_id="ep1",
+            text="결제 장애 대응 절차 안내",
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+    query_tokens = documents_tokenize("결제장애")  # ['결제장애']
+    phrase_terms = compound_split_phrases(query_tokens)  # [('결제', '장애')]
+
+    no_phrase_hits = repo.search_endpoint_by_text(query_tokens, top_k=10, chunk_type="section")
+    assert no_phrase_hits == []  # 원본 토큰만으로는 못 잡는다는 전제 확인
+
+    hits = repo.search_endpoint_by_text(
+        query_tokens, top_k=10, chunk_type="section", phrase_terms=phrase_terms
+    )
+
+    assert [h.chunk_id for h in hits] == ["c1"]
