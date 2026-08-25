@@ -213,7 +213,7 @@
 | 2   | **메타데이터 hard filter 도입 — 날짜·mimeType 구현 완료 (2026-08-26)** — `document_meta` 에 `mime_type`/`created_at`/`owner` 컬럼 추가(Drive `files.list` fields 확장) + `search_documents(modified_after, modified_before, mime_types)` 파라미터. `owner` 필터·`created_at` 필터는 후속(5.4절) | 권장안 1·3단계의 전제. LLM 이 추출한 날짜/타입 조건을 받을 그릇이 없어 intent parsing 이 통째로 무력화됨                            | Medium (마이그레이션 + 전량 재동기화 필요) | High                          | ~0 (SQL WHERE 추가, 오히려 감소) | **날짜·mime 구현 완료** / owner 후속 |
 | 3   | **arm 가중 RRF + title arm 품질 게이트 — 구현 완료 (2026-08-26)** — `reciprocal_rank_fuse(weights=…)` 로 title 0.5 / keyword 1.0 / vector 1.0, `_title_arm` 에서 `_passes_title_gate` 로 토큰 경계 미준수 행 제외(판정 기준은 원안에서 수정, 5.2절) | 제목에 흔한 토큰 하나 겹친 문서가 본문 정답 문서와 동점이 되는 구조적 오류. 코드 변경량 대비 순위 개선 폭이 가장 크다               | Low                                        | Medium~High                   | ~0                               | **구현 완료**                                    |
 | 4   | **keyword arm 의 한글 복합어 대칭 확보 — 구현 완료 (2026-08-26)** — 질의 측 분해 채택: 인접 토큰 concat term + 순수 한글 토큰의 2분할을 tsquery 구문 연산자 `<->` 로 묶은 phrase term 을 본문 FTS 에 OR 로 추가. 생성 컬럼 `text_collapsed` + trgm 은 미채택(5.6절). 5.3절 파생 항목(`_collapse_match_score` 토큰 경계)도 같이 해소 | recall 구멍 중 가장 자주 발생. 한국어 문서 기반 시스템에서 `"결제장애"` ↔ `"결제 장애"` 미스는 치명적                               | Medium                                     | High                          | ~0 (새 인덱스·마이그레이션 없음, tsquery operand 만 증가·상한 32) | **구현 완료**                                    |
-| 5   | **색인 커버리지 가시화** — `refresh_index` 응답에 `unindexed`(본문 없음)/`unsupported`(MIME 미지원)/`folder_limit_reached` 노출, `search_documents` 결과 항목에 `indexed` 플래그(**이 항목만 개선 #1 로 구현 완료**) | "검색에 안 나오는 이유"가 현재 전부 서버 로그에만 있다. 운영자·LLM 모두 조용한 퇴화를 감지할 수 없다                                | Low                                        | Medium (품질보다 신뢰도·운영) | ~0                               | **포함**                                    |
+| 5   | **색인 커버리지 가시화 — 구현 완료 (2026-08-26)** — `refresh_index` 응답에 `coverage{unindexed, unsupported, listing_truncated}` 노출(원안의 `folder_limit_reached` 는 소스 중립 이름 `listing_truncated` 로 개명, 5.7절), `search_documents` 결과 항목의 `indexed` 플래그는 개선 #1 로 선반영 | "검색에 안 나오는 이유"가 현재 전부 서버 로그에만 있다. 운영자·LLM 모두 조용한 퇴화를 감지할 수 없다                                | Low                                        | Medium (품질보다 신뢰도·운영) | ~0                               | **구현 완료**                                    |
 
 ### 5.1 개선 #1 구현 결과 (2026-08-25)
 
@@ -449,6 +449,76 @@ score 정규화(0~1 매핑).
 
 ---
 
+### 5.7 개선 #5 구현 결과 (2026-08-26)
+
+설계·판정 문서: `docs/architect-review/60_index_coverage_visibility_design.md`,
+`docs/architect-review/61_index_coverage_visibility_code_verdict.md`.
+
+이 항목의 두 갈래 중 `search_documents` 의 `indexed` 플래그는 개선 #1 로 이미 반영돼 있었고
+(5.1절), 이번에 남은 `refresh_index` 축을 채웠다.
+
+**응답 계약.** `RefreshIndexResult` 에 `coverage` 키를 추가했다(항상 존재, 하위호환 분기 없음).
+
+```jsonc
+{
+  "synced": 120, "added": 3, "updated": 5, "removed": 1,
+  "failed_sources": [],
+  "coverage": {
+    "unindexed": 4,        // 본문 색인 없음(document_id NULL) + 지원 MIME = 조치 대상
+    "unsupported": 7,      // 텍스트 추출 불가 MIME 이라 fetch 를 건너뜀 = 정상
+    "listing_truncated": ["payments/drive"]   // 탐색 상한에 걸려 목록이 잘린 "<project>/<source>"
+  }
+}
+```
+
+- **중첩한 이유.** 기존 4개 카운터는 *이번 실행의 변화량*이고 커버리지는 *갱신 대상 범위의 현재
+  상태*다. 평평하게 섞으면 `added` 와 `unindexed` 를 같은 종류의 수로 읽게 된다.
+- `unindexed` 와 `unsupported` 는 **서로소**다. 합이 곧 범위 안 `document_id IS NULL` 문서 수인데,
+  "원래 색인될 수 없는 것"과 "색인돼야 하는데 안 된 것"을 나눠야 운영자가 조치 대상만 볼 수 있다.
+- `index_bodies=False` 로 돌리면 범위 전체가 `unindexed` 로 잡힌다. 이게 의도한 동작이다 —
+  "메타만 돌려서 검색이 title arm 만 남았다"는 사실이 로그가 아니라 응답에 나온다.
+
+**원안에서 이름 변경: `folder_limit_reached` → `listing_truncated`.** 같은 절단을 Notion 도
+`MAX_PAGES` 로 트립하는데 Notion 에는 폴더 개념 자체가 없다. 소스마다 다른 키를 보게 만들 이유가
+없어 소스 중립 이름으로 통일했다. 값은 bool 이 아니라 `failed_sources` 와 같은
+`"<project>/<source>"` 라벨 목록이다 — 여러 프로젝트를 한 번에 갱신하는 호출에서 bool 은
+"어느 트리가 잘렸는지"를 지운다.
+
+**MIME 미지원을 fetch 실패가 아니라 목록 시점에 판정한다.** `DocumentSource` Protocol 에
+`supports_text_extraction(mime_type)` 를 추가하고, Drive 는 `fetch()` 가 실제로 쓰는 상수
+(`NATIVE_EXPORT_MIME_TYPES`/`BINARY_TEXT_EXTRACTORS`/`text/` 접두사)로 판정한다(두 경로가 갈라지지
+않게). Notion 은 항상 True, `mime_type` 이 비면 True(판정 실패로 색인을 누락시키느니 fetch 가
+실패하게 둔다). `fetch()` 안의 기존 `IntegrationError` 는 그대로 뒀다 — `get_document` 는 색인
+범위 밖 임의 file ID 도 fetch 하므로 그 방어선이 여전히 필요하다.
+
+이 선판정은 가시화의 부수 효과로 **비용 버그 하나를 같이 없앴다.** 이전에는 미지원 MIME 문서의
+fetch 실패가 warning 으로 삼켜지고 `document_id` 가 NULL 로 남아,
+`_stage_upsert` 의 `row.document_id is None` 게이트에 매번 걸려 **매 refresh 마다 같은 이미지·
+영상 파일을 다시 fetch** 했다(파일 1건당 metadata GET + 다운로드/export 시도 1회씩). 이제
+목록 단계에서 걸러 fetch 자체를 하지 않는다. `tests/unit/test_document_index_service.py` 의
+"2회 연속 refresh 후에도 fetch 0회" 케이스가 이 회귀를 고정한다.
+
+**목록 절단 전파.** `list_files()` 의 반환 타입을 `FileListing(files, truncated)` 로 바꿨다.
+어댑터에 상태 플래그를 남겨 나중에 읽는 방식은 호출 순서에 의존하고 타입으로 강제되지 않아
+쓰지 않았다. Drive 는 `bool(pending)`(`MAX_FOLDERS` 도달 시 큐 잔여), Notion 은
+`len(pages) >= MAX_PAGES` 로 판정한다 — Notion 은 상한 도달 시 재귀 여러 지점에서 return 하므로
+내부 구조를 고치는 대신 결과 건수로 판정했다(상한에 도달한 목록은 정의상 잘린 것이다).
+기존 경고 로그는 배치 CLI 운영자 신호로 유지하고, CLI(`app/scripts/refresh_documents.py`)의
+완료 로그에도 `unindexed`/`unsupported` 와 절단 warning 을 실었다.
+
+**커밋 경계 규약.** `unindexed`/`unsupported` 는 `_SourceCounts` 의 pending → committed 경로를
+그대로 타므로, 부분 실패 시 `added`/`updated` 와 **같은 기준**(커밋된 배치까지만)으로 집계된다.
+단, 이 둘은 DB 쓰기가 아니라 상태 관찰값이라 `total_changes`(커밋 경계 판정)에는 넣지 않았다 —
+넣으면 변경이 없는 문서만으로 커밋이 유발된다. `listing_truncated` 는 `list_files()` 성공 시점에
+이미 확정되는 값이라 배치 집계와 분리해 소스 라벨로만 보관한다.
+
+**하지 않은 것.** 소스별 커버리지 분해(`coverage.by_source`), 미지원 문서 external_id 목록 노출,
+스키마 변경·마이그레이션. 이미 색인된 문서의 MIME 이 나중에 미지원으로 바뀌는 경우(Drive 에서는
+타입이 바뀌면 file ID 가 새로 생겨 사실상 발생하지 않음)의 기존 본문 정리도 넣지 않았다 —
+그 행은 `document_id` 가 NULL 이 아니므로 두 카운터 어디에도 잡히지 않는다.
+
+---
+
 ## 6. 과도한 설계 검토 (현재 규모 기준)
 
 현재 규모 전제: 프로젝트 단위 Drive 폴더 몇 개, 문서 수백~수천 건, 동시 사용자 소수(팀 내부 MCP).
@@ -489,7 +559,9 @@ MCP Server
  ├─ 6. weighted RRF (title 0.5 / keyword 1.0 / vector 1.0, k=60)      [구현 완료, 개선 3]
  ├─ 7. dedupe-first → 문서 단위 순위, 승자 청크 = 최상위 arm 기준     [병합 규칙 수정]
  └─ 8. 응답 조립 — matched_chunks[], match_reasons(arm 기여+필터 일치),
-        modified_at, indexed 플래그                                   [신규, 개선 1·5]
+        modified_at, indexed 플래그                                   [구현 완료, 개선 1]
+    (색인 축) refresh_index 응답 — coverage{unindexed, unsupported,
+        listing_truncated}                                            [구현 완료, 개선 5]
 LLM
  └─ 근거를 보고 판단 → 부족하면 query_variants 바꿔 재호출,
     확신 서면 get_document(source, external_id)로 원문 확인 → 최종 답변
@@ -551,9 +623,9 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 그 다음 순서: 개선 3(title arm 게이트 + 가중 RRF, 저비용 고효과) → 개선 2(메타데이터 필터,
 마이그레이션 동반) → 개선 4(한글 복합어 대칭) → 개선 5(커버리지 가시화).
 
-**진행 상황(2026-08-26): 개선 1·3·2·4 구현 완료(5.1·5.2·5.4·5.6절). 남은 것은 개선 5**
-(커버리지 가시화 — `indexed` 플래그만 개선 #1 로 반영됐고 `refresh_index` 응답 노출은 미착수)
-**와 후속 항목**(개선 #2 의 `owner`/`created_at` 필터 — 5.5절).
+**진행 상황(2026-08-26): Top 5 전부 구현 완료 — 개선 1·3·2·4·5(5.1·5.2·5.4·5.6·5.7절).**
+남은 것은 후속 항목(개선 #2 의 `owner`/`created_at` 필터 — 5.5절)과, Top 5 밖의 채택분
+항목 1(intent parsing 계열)·12(권한 모델, 별도 트랙)다.
 
 ### (3) 완성도 평가 — **65 / 100**
 
@@ -600,10 +672,10 @@ nDCG/recall@k 를 재는 게 V2 의 실제 선행 작업이다. 이것 없이 re
 | 15  | Search reason / evidence    | 스니펫(300자) + matched_chunks(arm 별 승자 청크) + match_reasons(고정 문구)               | match_reasons 로 근거 명시                                              | **구현 완료 (2026-08-25)** — 항목 14 와 같은 작업으로 반영. title-only 히트는 `indexed=false` 와 `본문 미색인 — 제목 매칭만으로 검색됨` 근거로 구분된다 |
 | 16  | Query rewrite / retry       | 서버에 없음. docstring 이 LLM 의 재호출을 유도                                             | confidence 낮으면 재검색                                                | **기존 유지가 적절** — 서버 내장 재시도는 과도(6절, latency 2배 + 판정 근거 없음). 대신 재시도 판단 재료(신뢰도·arm 기여)를 항목 14 로 제공                       |
 | 17  | Latency                     | 검색 경로 외부 호출 0, SQL 3~4회 + 로컬 임베딩 1회                                         | 명시 없음                                                               | **기존 유지가 적절** — 현행이 권장안보다 유리하다. 이후 개선은 이 특성을 깨지 않는 선에서만(reranker 를 V2 로 미룬 이유)                                          |
-| 18  | 검색 실패 처리              | `{error, code, message}`, 0건은 빈 리스트. 색인 누락·MIME 미지원·폴더 상한은 서버 로그에만 | 명시 없음                                                               | **제안 채택 필요(우선순위 5위)** — 실패/결과없음/미색인이 구별되지 않는다. `refresh_index` 응답과 검색 결과에 커버리지 신호를 노출                                |
+| 18  | 검색 실패 처리              | `{error, code, message}`, 0건은 빈 리스트. **색인 누락·MIME 미지원·탐색 상한은 `refresh_index` 응답의 `coverage` 로 노출** | 명시 없음                                                               | **구현 완료 (2026-08-26)** — 개선 #5 로 반영. 실패(`error`)/결과없음(빈 리스트)/미색인(`indexed=false`, `coverage.unindexed`)/구조적 미지원(`coverage.unsupported`)/목록 절단(`coverage.listing_truncated`)이 응답만으로 구별된다 |
 
 **요약**: 18개 중 기존 유지 6건(2·6·8·9·16·17), 제안 채택 6건(1·3·12·14·15·18),
 절충 6건(4·5·7·10·11·13). 채택분의 착수 순서는 14·15 → 7 → 1·3 → 5 → 18 이고,
-**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3, 3 은 개선 #2, 5 는 개선 #4 로 2026-08-26 구현 완료**
-(5.3절 파생 항목은 개선 #4 의 T1 로 함께 해소) — 남은 채택분은 1(intent parsing 계열)·12·18 이다.
-12(권한 전제 문서화)는 코드와 무관하게 지금 처리 가능하다.
+**14·15 는 개선 #1 로 2026-08-25, 7 은 개선 #3, 3 은 개선 #2, 5 는 개선 #4, 18 은 개선 #5 로
+2026-08-26 구현 완료**(5.3절 파생 항목은 개선 #4 의 T1 로 함께 해소) — 남은 채택분은
+1(intent parsing 계열)·12 이다. 12(권한 전제 문서화)는 코드와 무관하게 지금 처리 가능하다.
