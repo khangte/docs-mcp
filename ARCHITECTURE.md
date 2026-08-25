@@ -172,6 +172,34 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 - 설계·실측 근거: `docs/architect-review/31_refresh_index_batch_automation.md`,
   운영 방법(타이머 유닛·cron·실행 환경 함정·종료코드)은 `docs/operations.md` "자동 동기화" 절.
 
+### 5-5. 비즈니스 메타데이터 write-back
+
+엔드포인트 검색용 비즈니스 메타데이터(설명·키워드·사용자 표현)는 서버가 별도 LLM API 로
+생성하지 않는다. 판단은 이미 붙어 있는 호출 LLM 에 맡기고, 서버는 요청 시점과 저장 규칙만
+쥔다(`docs/architect-review/56_business_metadata_writeback_design.md`).
+
+1. **힌트 발급** — `get_endpoint_details` 응답에 `metadata_request`(reason + 생성 지시문)를
+   조건부로 싣는다. `missing`(행 없음) 또는 `stale`(행의 `source_hash` != 현재 스펙 해시)일
+   때만이고, 최신이면 키 자체가 없어 정상 경로의 토큰 오버헤드가 0 이다. 힌트를
+   `search_endpoints` 가 아니라 상세 조회에 다는 이유는 근거 없는 생성을 서버가 유도하지 않기
+   위해서다 — 상세를 본 뒤라야 파라미터·요청/응답 스펙이라는 근거가 있다.
+2. **생성·제출** — 호출 LLM 이 지시문 규칙대로 만들어 `submit_endpoint_metadata`
+   (`endpoint_id`, `business_description`, `keywords`, `user_phrases`)로 보낸다. `overwrite`
+   류 플래그는 노출하지 않는다 — 덮어쓰기 판단을 호출 LLM 에 맡기면 오염 복구가 아니라 오염
+   증폭이 된다.
+3. **정규화·중복 판정** — 서버가 길이·개수 상한으로 절단(`truncated`)하고, 정규화 후 비면
+   `rejected`. 현재 스펙의 `source_hash` 를 서버가 다시 계산해 기존 행과 같으면
+   `already_current` 로 끝낸다(문구가 세션마다 흔들리며 재임베딩이 반복되는 것을 막는다).
+   잘못 저장된 값의 수정은 운영자 경로(CLI `--force` / 행 삭제)로만 연다.
+4. **즉시 반영** — 저장 커밋을 먼저 확정한 뒤 해당 엔드포인트의 청크 1건만 재조립·재임베딩한다
+   (`app/services/indexer/endpoint_chunk_refresher.py`). 청크 갱신이 실패해도 메타데이터는
+   롤백하지 않고 `reindexed=false` 로 알리며, 다음 전체 재색인에서 반영된다.
+
+쓰기 경로는 `DOCS_MCP_METADATA_WRITEBACK_ENABLED=false` 로 코드 수정 없이 닫을 수 있다
+(도구는 등록되고 `writeback_disabled` 에러를 반환). 유료 API 를 쓰는 배치 생성 CLI
+(`app/scripts/generate_business_metadata.py`)는 콜드스타트 백필·운영자 교정용 보조 수단으로만
+남는다.
+
 ## 6. MCP 도구 계약 (Interface)
 
 **OpenAPI 문서**
@@ -179,26 +207,27 @@ _(단방향 유지, 역참조 및 순환 참조 금지. 배치는 MCP 계층을 
 1. `list_documents`: 등록된 문서 목록 조회 (`project` 필터 가능)
 2. `register_document`: 신규 문서 등록 및 색인 (`project` 필수)
 3. `search_endpoints`: 자연어 질의 기반 API 검색 (Hybrid, `project`/`document_id` 필터 가능)
-4. `get_endpoint_details`: 특정 API의 상세 명세(파라미터, 스키마 등) 및 호출 예시 조회
-5. `resolve_ref`: `$ref` 컴포넌트 스키마 필드 펼치기 (`project`/`document_id` 필터 가능)
-6. `list_tags`: 등록 문서의 태그 목록 조회 (`project`/`document_id` 필터 가능)
+4. `get_endpoint_details`: 특정 API의 상세 명세(파라미터, 스키마 등) 및 호출 예시 조회 (비즈니스 메타데이터가 없거나 낡았을 때만 `metadata_request` 힌트 동봉)
+5. `submit_endpoint_metadata`: 호출 LLM 이 생성한 엔드포인트 비즈니스 메타데이터 저장 (`source_hash` 동일 시 덮어쓰지 않음, 저장 성공 시 해당 청크만 즉시 재색인)
+6. `resolve_ref`: `$ref` 컴포넌트 스키마 필드 펼치기 (`project`/`document_id` 필터 가능)
+7. `list_tags`: 등록 문서의 태그 목록 조회 (`project`/`document_id` 필터 가능)
 
 **협업 문서 (Google Drive / Notion)**
 
-7. `search_documents`: Drive/Notion 문서 검색 (제목+본문 청크 3-arm RRF, `project` 필터, 결과 부족 시 `query_variants` 로 후보 필터 확장 가능)
-8. `get_document`: 협업 문서 원문 실시간 조회
-9. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터, `include_registered`+`force` 로 URL 기반 `Document` 재동기화 가능)
+8. `search_documents`: Drive/Notion 문서 검색 (제목+본문 청크 3-arm RRF, `project` 필터, 결과 부족 시 `query_variants` 로 후보 필터 확장 가능)
+9. `get_document`: 협업 문서 원문 실시간 조회
+10. `refresh_index`: 협업 문서 메타 캐시 동기화 (`project`/`source` 필터, `include_registered`+`force` 로 URL 기반 `Document` 재동기화 가능)
 
 **프로젝트→소스 매핑 (Drive 3종, Notion 4종)**
 
-10. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록
-11. `register_notion_page`: 프로젝트에 Notion 허브 페이지 매핑 등록(지정 페이지 하위 페이지·데이터베이스를 재귀 탐색(최대 4단계)해 검색 대상으로 삼음, Drive 에는 대응 도구 없음)
-12. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회
-13. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
+11. `register_drive_source` / `register_notion_source`: 프로젝트에 Drive 폴더/Notion DB 매핑 등록
+12. `register_notion_page`: 프로젝트에 Notion 허브 페이지 매핑 등록(지정 페이지 하위 페이지·데이터베이스를 재귀 탐색(최대 4단계)해 검색 대상으로 삼음, Drive 에는 대응 도구 없음)
+13. `list_drive_sources` / `list_notion_sources`: 매핑 목록 조회
+14. `remove_drive_source` / `remove_notion_source`: 매핑 삭제(멱등)
 
 **리소스**
 
-14. `document://{document_id}/raw`: 등록된 OpenAPI 문서의 원문(JSON/YAML) 조회
+15. `document://{document_id}/raw`: 등록된 OpenAPI 문서의 원문(JSON/YAML) 조회
 
 전체 17개 도구의 인자·반환 필드는 `docs/operations.md` "제공되는 도구 전체 목록" 을 참고한다.
 

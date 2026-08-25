@@ -171,10 +171,28 @@ MCP 도구 17개를 제공합니다. 대표 도구는 다음과 같습니다.
 | `register_document`    | 신규 문서를 등록한다(URL 또는 원문, `doc_type` 생략 시 자동 판별)                          |
 | `search_documents`     | 팀 협업 문서(Google Drive / Notion)를 검색한다(제목·색인 본문 청크 3-arm 순위 융합)         |
 | `search_endpoints`     | 자연어/키워드로 OpenAPI 엔드포인트 후보를 검색한다                                         |
-| `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다(`curl` 예시 생성 포함)                              |
+| `get_endpoint_details` | 특정 엔드포인트의 상세 정보를 조회한다(`curl` 예시 생성 포함, 비즈니스 메타데이터가 없거나 낡으면 `metadata_request` 힌트 동봉) |
+| `submit_endpoint_metadata` | 호출 LLM 이 만든 엔드포인트 비즈니스 메타데이터를 저장한다(검색 청크 즉시 재색인)            |
 | `refresh_index`        | 협업 문서 메타 캐시를 원본과 동기화한다                                                    |
 
 - [`docs/operations.md`](docs/operations.md#제공되는-도구-전체-목록) — 전체 17개 도구의 인자·반환 필드 표, 에러 페이로드 규약
+
+### 검색용 비즈니스 메타데이터 write-back
+
+엔드포인트 검색 품질을 올리는 비즈니스 메타데이터(설명 문장·키워드·사용자 표현)는
+서버가 별도 LLM API 를 호출해 만들지 않고, **이미 붙어 있는 호출 LLM 이 되돌려주는**
+방식으로 채웁니다.
+
+1. `get_endpoint_details` 응답에 메타데이터가 없거나(`missing`) 스펙이 바뀌어
+   낡았으면(`stale`) `metadata_request`(사유 + 생성 지시문)가 실립니다. 최신이면
+   키 자체가 없어 토큰 오버헤드가 0 입니다.
+2. 호출 LLM 이 그 상세 정보를 근거로 문장을 만들어 `submit_endpoint_metadata` 로 보냅니다.
+3. 서버가 정규화·길이 제한을 적용하고 현재 스펙의 `source_hash` 와 비교합니다. 해시가
+   같으면 덮어쓰지 않고 `already_current` 로 끝냅니다.
+4. 저장되면 해당 엔드포인트의 검색 청크만 즉시 재조립·재임베딩돼, 다음 검색부터 반영됩니다.
+
+`DOCS_MCP_METADATA_WRITEBACK_ENABLED=false` 로 쓰기 경로만 끌 수 있습니다
+(도구는 등록되지만 `writeback_disabled` 에러를 반환).
 
 ## 문서별 등록 방법
 

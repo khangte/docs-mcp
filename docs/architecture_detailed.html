@@ -348,7 +348,7 @@
           <g class="node compute">
             <rect x="60" y="150" width="320" height="56" rx="9" />
             <text x="220" y="174" text-anchor="middle">MCP Server</text>
-            <text class="sub" x="220" y="192" text-anchor="middle">16 tools + 1 resource · stdio transport</text>
+            <text class="sub" x="220" y="192" text-anchor="middle">17 tools + 1 resource · stdio transport</text>
           </g>
           <g class="node compute">
             <rect x="540" y="150" width="320" height="56" rx="9" />
@@ -613,8 +613,8 @@
 
   <section>
     <div class="s-head">
-      <h2>3. MCP 표면 — 16 tools + 1 resource</h2>
-      <p class="s-sub">도구 함수는 얇다. 인자 검증 → 서비스 호출 → 페이로드 변환이 전부이고, 예외를 MCP 오류 응답 <code>{error, code, message}</code>로 바꾸는 일은 <code>run_bundle_tool</code> 하나가 전담해 16개 도구가 같은 실패 규약을 공유한다.</p>
+      <h2>3. MCP 표면 — 17 tools + 1 resource</h2>
+      <p class="s-sub">도구 함수는 얇다. 인자 검증 → 서비스 호출 → 페이로드 변환이 전부이고, 예외를 MCP 오류 응답 <code>{error, code, message}</code>로 바꾸는 일은 <code>run_bundle_tool</code> 하나가 전담해 17개 도구가 같은 실패 규약을 공유한다.</p>
     </div>
     <div class="tbl-wrap">
       <table>
@@ -628,9 +628,10 @@
           <tr><td class="mod">list_documents</td><td>등록된 문서(Markdown/CSV/PDF/DOCX/OpenAPI) 요약 목록</td><td class="dim">DocumentRepository</td></tr>
           <tr><td class="mod">register_document</td><td>신규 문서 등록 — URL 또는 원문 중 하나</td><td class="dim">SyncService</td></tr>
 
-          <tr class="grp"><td colspan="3">endpoints — API 명세 (4 tools + 1 resource)</td></tr>
+          <tr class="grp"><td colspan="3">endpoints — API 명세 (5 tools + 1 resource)</td></tr>
           <tr><td class="mod">search_endpoints</td><td>자연어·키워드로 엔드포인트 후보 검색 (2-arm RRF)</td><td class="dim">EndpointCandidateSearch</td></tr>
-          <tr><td class="mod">get_endpoint_details</td><td>파라미터 · 요청/응답 스펙 상세</td><td class="dim">EndpointDetailsService</td></tr>
+          <tr><td class="mod">get_endpoint_details</td><td>파라미터 · 요청/응답 스펙 상세 — 비즈니스 메타데이터가 없거나 낡았을 때만 <code>metadata_request</code> 힌트 동봉</td><td class="dim">EndpointDetailsService · MetadataWritebackService</td></tr>
+          <tr><td class="mod">submit_endpoint_metadata</td><td><b>유일한 쓰기 도구</b> — 호출 LLM 이 만든 비즈니스 메타데이터 저장 후 해당 청크만 즉시 재임베딩</td><td class="dim">MetadataWritebackService</td></tr>
           <tr><td class="mod">resolve_ref</td><td><code>$ref</code> 컴포넌트 스키마를 실제 필드 목록으로 전개</td><td class="dim">SchemaRefResolver</td></tr>
           <tr><td class="mod">list_tags</td><td>태그 목록과 태그별 엔드포인트 수</td><td class="dim">TagCatalogService</td></tr>
           <tr><td class="mod">document://&#123;id&#125;/raw</td><td><b>resource</b> — OpenAPI 문서 원문(JSON/YAML) 반환</td><td class="dim">DocumentRepository</td></tr>
@@ -646,6 +647,23 @@
           <tr><td class="mod">remove_notion_source</td><td>Notion 매핑 제거</td><td class="dim">ProjectSourceService</td></tr>
         </tbody>
       </table>
+    </div>
+    <div class="cards">
+      <div class="card">
+        <span class="mark">MECHANISM</span>
+        <h3>메타데이터는 서버가 만들지 않는다</h3>
+        <p>검색용 비즈니스 메타데이터(설명 문장 · 키워드 · 사용자 표현)를 채우려고 서버가 별도 LLM API를 호출하지 않는다. 판단은 <b>이미 붙어 있는 호출 LLM</b>이 하고, 서버는 요청 시점과 저장 규칙만 쥔다. 흐름은 <code>get_endpoint_details</code> 응답의 조건부 <code>metadata_request</code> 힌트 → 호출 LLM 생성 → <code>submit_endpoint_metadata</code> 제출이다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">MECHANISM</span>
+        <h3>최신이면 키가 없다</h3>
+        <p>힌트는 메타데이터가 없거나(<code>missing</code>) 스펙이 바뀌어 <code>source_hash</code>가 어긋날 때만(<code>stale</code>) 붙는다. 최신 상태에서는 키 자체가 없어 <b>정상 경로의 토큰 오버헤드가 0</b>이다. 힌트를 <code>search_endpoints</code>가 아니라 상세 조회에 다는 이유도 같은 성격이다 — 근거 없는 생성을 서버가 유도하지 않는다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">MECHANISM</span>
+        <h3>쓰기 경로에 플래그를 열지 않는다</h3>
+        <p><code>overwrite</code>/<code>force</code> 같은 인자를 노출하지 않는다. 덮어쓰기 판단을 호출 LLM에 맡기면 오염 복구가 아니라 오염 증폭이 된다. 해시가 같으면 <code>already_current</code>로 끝내고, 교정은 운영자 경로(CLI <code>--force</code> · 행 삭제)로만 연다. 쓰기 전체는 <code>DOCS_MCP_METADATA_WRITEBACK_ENABLED</code>로 코드 수정 없이 닫힌다.</p>
+      </div>
     </div>
   </section>
 
@@ -716,15 +734,15 @@
           <tr>
             <td class="mod">실 코퍼스 <span class="dim">(현행)</span></td>
             <td class="dim">Stripe 589 + GitHub 1,220</td>
-            <td>15%</td>
-            <td>25%</td>
-            <td>50%</td>
-            <td>0.248</td>
+            <td>25~30%</td>
+            <td>35~40%</td>
+            <td>45~60%</td>
+            <td>0.30~0.37</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <p class="s-sub">현행 값은 질의 변형 라우팅을 포함한 <code>rrf</code> 전략 기준이고, 질의 수는 <b>n = 20</b>이라 표준오차가 ±11%p대다 — 소수점을 다툴 수치가 아니라 <b>어느 축이 무너지는지</b>를 읽는 용도다. 코퍼스는 핀 SHA로 고정해 저장소에 프리즈했고, 재현 커맨드 한 줄로 다시 돌릴 수 있다.</p>
+    <p class="s-sub">현행 값은 질의 변형 라우팅을 포함한 <code>rrf</code> 전략 기준이고, 질의 수는 <b>n = 20</b>이라 표준오차가 ±11%p대다 — 벡터 arm <code>ORDER BY</code>의 tie-break 누락 결함을 수정한 뒤에도 Recall@10은 이 구간 안에서 흔들리고, MRR·nDCG@10은 소수점대로 흔들린다. 읽는 용도는 <b>어느 축이 무너지는지</b>뿐이다. 코퍼스는 핀 SHA로 고정해 저장소에 프리즈했고, 재현 커맨드 한 줄로 다시 돌릴 수 있다.</p>
     <div class="cards">
       <div class="card">
         <span class="mark">FINDING</span>
@@ -791,6 +809,11 @@
         <span class="mark">03</span>
         <h3>SQL은 리포지토리 밖으로 안 나간다</h3>
         <p><code>&lt;=&gt;</code> 연산자, <code>to_tsquery</code> 같은 Postgres 고유 문법이 전부 리포지토리 안에 갇혀 있어, 검색 로직을 읽을 때 DB 방언을 몰라도 된다.</p>
+      </div>
+      <div class="card">
+        <span class="mark">04</span>
+        <h3>write-back은 청크 1건만 다시 굽는다</h3>
+        <p>메타데이터가 들어오면 문서 전체를 재색인하지 않고 <b>해당 엔드포인트 청크 하나만</b> 재조립·재임베딩한다. 저장 커밋을 먼저 확정한 뒤 굽기 때문에, 굽기가 실패해도 값은 남고 <code>reindexed=false</code>로 알린 뒤 다음 전체 재색인에서 반영된다.</p>
       </div>
     </div>
   </section>

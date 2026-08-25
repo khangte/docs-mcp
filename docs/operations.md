@@ -7,6 +7,7 @@
 - [레거시 환경변수](#레거시-환경변수)
 - [프로젝트 격리 상세](#프로젝트-격리-상세)
 - [제공되는 도구 전체 목록](#제공되는-도구-전체-목록)
+- [비즈니스 메타데이터 write-back](#비즈니스-메타데이터-write-back)
 - [자동 동기화 (배치)](#자동-동기화-배치)
 
 진입점은 `app/mcp/server.py` 이며, 등록해두면 클라이언트가 `command`+`args`로 프로세스를
@@ -102,7 +103,8 @@ Claude Desktop 의 설정 파일(`claude_desktop_config.json`)에 서버를 추�
 | `list_documents`         | 등록된 문서(Markdown/CSV/PDF/DOCX/OpenAPI)의 요약 목록을 반환한다. `project` 로 범위를 제한할 수 있다(생략 시 전체)                                                                       | document_id, title, version, doc_type, project, source_url, endpoints_count, indexed_at                                 |
 | `register_document`      | 신규 문서를 등록한다. `project`(필수)와 URL 또는 원문 중 하나를 제공해야 한다 (`doc_type`으로 openapi/markdown/csv 강제 지정 가능, 생략 시 자동 판별)                            | document_id, title, version, doc_type, project, endpoints_count, sections_count, chunks_count, status                   |
 | `search_endpoints`       | 자연어/키워드로 엔드포인트 **후보만** 가볍게 검색한다 (키워드+벡터 RRF 융합, 기본 전략 `rrf`). `project`/`document_id` 로 범위를 제한할 수 있다                                      | items[{endpoint_id, method, path, summary, match_type}]                                                                 |
-| `get_endpoint_details`   | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함)                                                                                            | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, (example_code) |
+| `get_endpoint_details`   | 특정 엔드포인트의 상세 정보를 조회한다 (`include_example=true`일 때만 curl 예시 포함). 비즈니스 메타데이터가 없거나(`missing`) 스펙 변경으로 낡았으면(`stale`) 기여 요청 힌트 `metadata_request` 가 함께 실린다(최신이면 키 없음) | endpoint_id, document_id, method, path, summary, description, tags, parameters, request_body, responses, referenced_schema_refs, related_endpoints, (example_code), (metadata_request{reason, instruction}) |
+| `submit_endpoint_metadata` | 호출 LLM 이 만든 엔드포인트 비즈니스 메타데이터(설명·키워드·사용자 표현)를 저장한다. 서버가 길이 상한으로 절단하고, 현재 스펙의 `source_hash` 가 기존 행과 같으면 덮어쓰지 않는다. 저장되면 해당 엔드포인트 청크만 즉시 재조립·재임베딩한다 | status(`stored`/`already_current`/`rejected`), endpoint_id, reindexed, truncated, (reason) |
 | `resolve_ref`            | `$ref` 컴포넌트 스키마를 필드 목록으로 펼친다 (중첩 `$ref`는 이름만 표기). `project`/`document_id` 로 여러 프로젝트의 동명 스키마 중 하나를 특정할 수 있다                       | name, document_id, fields[{name, type, required, description}]                                                          |
 | `list_tags`              | 등록 문서의 태그 목록과 태그별 엔드포인트 수를 반환한다. `project`/`document_id` 로 범위를 제한할 수 있다                                                                        | tags[{name, endpoint_count}]                                                                                            |
 | `search_documents`       | 팀 협업 문서(Google Drive / Notion)를 검색한다 (제목·본문 청크 **3-arm RRF**: `document_meta` 제목 + 색인된 section 청크의 키워드(FTS)·벡터 순위를 융합, 기본 전략 `indexed`). `project`/`source` 로 범위를 제한할 수 있다. 결과 0건/부족 시 `query_variants`(동의어·유사 표현 목록)로 후보 필터만 넓혀 재질의할 수 있다(점수·순위엔 영향 없음) | items[{title, source, project, url, snippet, score, version}] — `score` 는 RRF 점수라 **절대값 비교 불가·순서만 유의미** |
@@ -159,6 +161,23 @@ search_documents(query="주문조회 API", query_variants=["결제 내역 조회
 ### 제공되는 리소스 (Resources)
 
 - `document://{document_id}/raw`: 문서 원문 보기
+
+## 비즈니스 메타데이터 write-back
+
+엔드포인트 검색용 비즈니스 메타데이터는 서버가 유료 LLM API 를 호출해 만들지 않고,
+이미 붙어 있는 호출 LLM 이 되돌려주는 경로로 채워집니다. 별도 배치를 돌릴 필요 없이
+`get_endpoint_details` → `submit_endpoint_metadata` 흐름 안에서 실제로 조회된
+엔드포인트부터 채워집니다.
+
+| 항목 | 내용 |
+| ---- | ---- |
+| 켜고 끄기 | `DOCS_MCP_METADATA_WRITEBACK_ENABLED` (기본 `true`). `0`/`false`/`no` 면 도구는 등록되지만 `code="writeback_disabled"` 에러를 반환 |
+| 덮어쓰기 | 하지 않음. 저장된 행의 `source_hash` 가 현재 스펙과 같으면 `already_current` 로 종료 — 스펙이 바뀌어야 다시 채워집니다 |
+| 잘못 저장된 값 교정 | 운영자 경로만: `uv run python -m app.scripts.generate_business_metadata --document-id <ID> --force` 또는 `endpoint_business_metadata` 행 삭제 후 재수집 |
+| `reindexed=false` | 메타데이터 저장은 성공했지만 즉시 청크 갱신이 실패한 경우입니다. 값은 남아 있고 다음 전체 재색인에서 반영됩니다 |
+| 콜드스타트 백필 | 유료 API 키가 있으면 `app/scripts/generate_business_metadata.py` 로 일괄 생성할 수 있습니다(보조 수단, 재색인은 하지 않으므로 이어서 `refresh_documents.py --include-registered` 를 돌립니다). 없으면 조회되는 순서대로 채워지도록 두면 됩니다 |
+
+설계 근거는 `docs/architect-review/56_business_metadata_writeback_design.md` 를 참고하세요.
 
 ## 자동 동기화 (배치)
 
