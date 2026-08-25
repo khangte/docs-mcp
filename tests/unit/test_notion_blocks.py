@@ -6,6 +6,8 @@ HTTP 를 타지 않는 순수 함수만 다룬다(어댑터 순회 테스트는
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.services.documents.sources.notion_blocks import (
     UNTITLED,
     block_plain_text,
@@ -58,6 +60,22 @@ def test_to_file_meta_uses_page_url_when_present() -> None:
     assert meta.url == "https://www.notion.so/team/page-1"
 
 
+def test_to_file_meta_populates_created_at_from_created_time() -> None:
+    """created_time 을 created_at 으로 채운다(mime_type/owner 는 항상 None, 개선 #2 T2)."""
+    page = {
+        "id": "page-1",
+        "url": "https://www.notion.so/team/page-1",
+        "properties": {"이름": {"type": "title", "title": [{"plain_text": "장애 기록"}]}},
+        "created_time": "2026-06-01T00:00:00.000Z",
+    }
+
+    meta = to_file_meta(page)
+
+    assert meta.created_at == datetime(2026, 6, 1, 0, 0, 0)
+    assert meta.mime_type is None
+    assert meta.owner is None
+
+
 def test_child_page_to_file_meta_uses_block_id_as_page_id() -> None:
     """child_page 블록의 id 가 곧 하위 페이지의 page id 다."""
     block = {
@@ -72,6 +90,20 @@ def test_child_page_to_file_meta_uses_block_id_as_page_id() -> None:
     assert meta.external_id == "abc-def"
     assert meta.title == "하위 문서"
     assert meta.url == "https://www.notion.so/abcdef"
+
+
+def test_child_page_to_file_meta_populates_created_at_from_created_time() -> None:
+    """created_time 을 created_at 으로 채운다(개선 #2 T2)."""
+    block = {
+        "id": "abc-def",
+        "type": "child_page",
+        "child_page": {"title": "하위 문서"},
+        "created_time": "2026-06-02T00:00:00.000Z",
+    }
+
+    meta = child_page_to_file_meta(block)
+
+    assert meta.created_at == datetime(2026, 6, 2, 0, 0, 0)
 
 
 def test_heading_blocks_get_markdown_prefix() -> None:

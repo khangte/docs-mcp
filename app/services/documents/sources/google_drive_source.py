@@ -64,7 +64,10 @@ BINARY_TEXT_EXTRACTORS = {
 PAGE_SIZE = 200
 #: 무한 루프 방지를 위한 폴더 탐색 상한.
 MAX_FOLDERS = 500
-_LIST_FIELDS = "nextPageToken, files(id, name, mimeType, webViewLink, modifiedTime)"
+_LIST_FIELDS = (
+    "nextPageToken, files(id, name, mimeType, webViewLink, modifiedTime, createdTime, "
+    "owners(displayName, emailAddress))"
+)
 
 
 class ServiceAccountTokenProvider:
@@ -390,6 +393,17 @@ def _drive_error_message(path: str, response: httpx.Response) -> str:
     return f"google drive request failed for {path} (status {status})"
 
 
+def _owner_from_raw(raw: dict[str, Any]) -> str | None:
+    """`owners[0]` 에서 이메일 우선, 없으면 표시 이름, 둘 다 없으면 None."""
+    owners = raw.get("owners")
+    if not isinstance(owners, list) or not owners:
+        return None
+    first = owners[0]
+    if not isinstance(first, dict):
+        return None
+    return first.get("emailAddress") or first.get("displayName") or None
+
+
 def _to_file_meta(raw: dict[str, Any]) -> FileMeta:
     """Drive files.list 응답 항목 하나를 FileMeta 로 변환한다."""
     file_id = str(raw.get("id") or "")
@@ -398,4 +412,7 @@ def _to_file_meta(raw: dict[str, Any]) -> FileMeta:
         title=str(raw.get("name") or "").strip(),
         url=str(raw.get("webViewLink") or f"https://drive.google.com/file/d/{file_id}/view"),
         modified_at=parse_rfc3339(raw.get("modifiedTime")),
+        mime_type=raw.get("mimeType"),
+        created_at=parse_rfc3339(raw.get("createdTime")),
+        owner=_owner_from_raw(raw),
     )

@@ -28,12 +28,18 @@ class FileMeta:
         title: 문서 제목.
         url: 사람이 열어볼 수 있는 원본 문서 URL.
         modified_at: 원본 시스템 기준 최종 수정 시각. 알 수 없으면 None.
+        mime_type: 출처 시스템의 MIME 타입. Drive 전용, Notion 은 항상 None.
+        created_at: 원본 시스템 기준 생성 시각. 알 수 없으면 None.
+        owner: 문서 소유자 이메일 또는 표시 이름. Drive 전용, Notion 은 항상 None.
     """
 
     external_id: str
     title: str
     url: str
     modified_at: datetime | None = None
+    mime_type: str | None = None
+    created_at: datetime | None = None
+    owner: str | None = None
 
 
 @dataclass(frozen=True)

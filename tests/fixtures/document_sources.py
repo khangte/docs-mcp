@@ -121,6 +121,9 @@ class FakeDocumentSource:
         body: str,
         url: str | None = None,
         modified_at: datetime | None = None,
+        mime_type: str | None = None,
+        created_at: datetime | None = None,
+        owner: str | None = None,
     ) -> None:
         """문서 한 건(메타 + 본문)을 등록하거나 덮어쓴다."""
         self.files = [f for f in self.files if f.external_id != external_id]
@@ -130,6 +133,9 @@ class FakeDocumentSource:
                 title=title,
                 url=url or f"https://example.test/{self._source_name}/{external_id}",
                 modified_at=modified_at,
+                mime_type=mime_type,
+                created_at=created_at,
+                owner=owner,
             )
         )
         self.bodies[external_id] = body

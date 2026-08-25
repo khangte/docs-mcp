@@ -118,6 +118,9 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         source: str | None = None,
         project: str | None = None,
         query_variants: list[str] | None = None,
+        modified_after: str | None = None,
+        modified_before: str | None = None,
+        mime_types: list[str] | None = None,
     ) -> DocumentSearchResponse | ErrorPayload:
         """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
 
@@ -143,11 +146,23 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
                 목록. 후보 필터만 넓히고 점수·순위 계산에는 영향을
                 주지 않는다 — 여전히 query 원본 토큰과 가장 잘 맞는 문서가
                 상위에 온다. 결과 0건 또는 부족 시 재질의할 때 사용.
+            modified_after: 이 시각 이후(포함, >=)에 수정된 문서만. ISO8601
+                (예: "2026-08-01" 또는 "2026-08-01T09:00:00Z"). 수정 시각이
+                없는 문서는 이 필터가 있으면 제외된다.
+            modified_before: 이 시각 이전(포함, <=)에 수정된 문서만. 형식은
+                modified_after 와 같다.
+            mime_types: Drive mimeType 정확 일치 목록(예:
+                "application/vnd.google-apps.document", "application/pdf").
+                Notion 문서는 mimeType 이 없으므로 이 필터를 주면 항상
+                제외된다.
 
         Returns:
             items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
             project, url, snippet, score, version, snippet_as_of, external_id,
-            matched_chunks, match_reasons, modified_at, indexed 필드를 갖는다.
+            matched_chunks, match_reasons, modified_at, indexed, mime_type
+            필드를 갖는다. mime_type 은 출처 시스템의 MIME 타입(Drive 전용,
+            Notion·백필 전 Drive 문서는 null) — 다음 질의를 mime_types 로
+            좁힐 때 참고한다.
             snippet_as_of 는 스니펫이 만들어진 본문 색인 시점(ISO8601)이며,
             본문 청크 없이 제목 매치만으로 걸린 항목은 null 이다. external_id
             는 get_document(source, external_id) 에 그대로 넘기는 값이다 —
@@ -165,7 +180,13 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         """
         def _inner(bundle: ServiceBundle) -> DocumentSearchResponse:
             options = DocumentSearchOptions(
-                top_k=top_k, source=source, project=project, query_variants=query_variants
+                top_k=top_k,
+                source=source,
+                project=project,
+                query_variants=query_variants,
+                modified_after=modified_after,
+                modified_before=modified_before,
+                mime_types=mime_types,
             )
             items = bundle.document_search_service.search(query, options)
             return _to_document_search_payload(items)

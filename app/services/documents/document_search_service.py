@@ -39,6 +39,7 @@ from app.core.logging import get_logger
 from app.models import DEFAULT_PROJECT
 from app.models.document_meta import ALLOWED_SOURCES, DocumentMeta
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.document_filters import DocumentMetaFilter
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.services.documents.document_body_indexer import deterministic_document_id
 from app.services.documents.project_source_resolver import ProjectSourceResolver
@@ -53,6 +54,7 @@ from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
 )
+from app.services.documents.sources.time_parsing import parse_rfc3339
 from app.services.documents.version_parser import parse_version
 from app.services.indexer.embedding_provider import EmbeddingProvider
 from app.services.search.rrf import (
@@ -79,6 +81,10 @@ DOCUMENT_SEARCH_STRATEGY_INDEXED = "indexed"
 #: 동급이 되는 것을 막는다(57번 리뷰 §5 개선3). 평가셋이 없어 튜닝 근거가 없으므로
 #: env 로 노출하지 않고 상수로 고정한다(RRF_K 와 같은 방침).
 TITLE_ARM_WEIGHT = 0.5
+
+#: `mime_types` 필터 원소 개수/길이 상한(개선 #2 — T8 검증).
+_MAX_MIME_TYPES = 20
+_MAX_MIME_TYPE_LENGTH = 128
 
 #: keyword/vector arm 이 SQL 에서 이미 `chunk_type='section'` 으로 좁혀 조회하므로,
 #: 승자 청크의 chunk_type 은 DB 를 다시 읽지 않고 이 상수로 취급한다(57번 리뷰 §5 개선1).
@@ -239,6 +245,14 @@ class DocumentSearchOptions:
     #: 1단계 SQL 후보 필터(search_by_tokens)만 넓히는 데 쓰고, 점수 계산에는
     #: 절대 섞이지 않는다 — 순위는 항상 원본 질의 토큰만으로 결정된다.
     query_variants: list[str] | None = None
+    #: 원본 시각 문자열(ISO8601, 예: "2026-08-01" 또는 "2026-08-01T09:00:00Z").
+    #: 양끝 포함(>=/<=). `document_meta.modified_at` 이 NULL 인 문서는
+    #: 하나라도 지정되면 제외된다(SQL 3값 논리).
+    modified_after: str | None = None
+    modified_before: str | None = None
+    #: Drive `mimeType` 정확 일치 목록(OR). Notion 문서는 mime_type 이 항상
+    #: NULL 이라 이 필터를 지정하면 always 제외된다.
+    mime_types: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -279,6 +293,9 @@ class DocumentSearchItem:
     #: `document_meta.document_id` 유무로만 판단하며, 청크 존재 여부와 100%
     #: 동치는 아니다 — False 면 제목 매칭만으로 검색된 결과라는 뜻이다.
     indexed: bool = False
+    #: 출처 시스템의 MIME 타입(`document_meta.mime_type`). Drive 전용,
+    #: Notion·백필 전 Drive 문서는 None.
+    mime_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -347,15 +364,18 @@ class DocumentSearchService:
 
         Args:
             query: 검색할 자연어/키워드 질의.
-            options: top_k·source·project 필터 및 query_variants(1단계 SQL
-                후보 필터만 넓히는 호출자 제공 동의어).
+            options: top_k·source·project 필터, query_variants(1단계 SQL
+                후보 필터만 넓히는 호출자 제공 동의어), modified_after/
+                modified_before/mime_types(날짜·mimeType hard filter, 3 arm
+                전부에 SQL 로 적용된다).
 
         Returns:
             점수 내림차순 결과 리스트(최대 top_k 건). 1단계 후보가 없으면
             본문 fetch 없이 빈 리스트.
 
         Raises:
-            ValidationError: 질의가 비었거나 top_k/source 값이 잘못된 경우.
+            ValidationError: 질의가 비었거나 top_k/source/날짜/mime_types 값이
+                잘못된 경우.
             IntegrationError: 검색 대상 소스가 하나도 구성돼 있지 않은 경우.
                 "결과 없음"(빈 리스트)과 "서버 미설정"을 구별하기 위해
                 조용히 빈 리스트를 돌려주지 않는다.
@@ -368,6 +388,7 @@ class DocumentSearchService:
             raise ValidationError("query must contain at least one searchable token")
 
         filter_tokens = query_tokens | self._variant_tokens(options.query_variants)
+        meta_filter = self._build_meta_filter(options)
 
         if (
             self._document_search_strategy == DOCUMENT_SEARCH_STRATEGY_INDEXED
@@ -375,7 +396,12 @@ class DocumentSearchService:
             and self._embedding_provider is not None
         ):
             return self._search_indexed(
-                normalized_query, query_tokens, filter_tokens, normalized_source, options
+                normalized_query,
+                query_tokens,
+                filter_tokens,
+                normalized_source,
+                options,
+                meta_filter,
             )
 
         candidates = self._select_candidates(
@@ -383,6 +409,7 @@ class DocumentSearchService:
             query_tokens,
             normalized_query,
             replace(options, source=normalized_source),
+            meta_filter,
         )
         if not candidates:
             # 2단계를 건너뛴다: 후보가 없으면 외부 API 를 한 번도 호출하지 않는다.
@@ -472,6 +499,7 @@ class DocumentSearchService:
         score_tokens: set[str],
         query: str,
         options: DocumentSearchOptions,
+        meta_filter: DocumentMetaFilter,
     ) -> list[tuple[DocumentMeta, float]]:
         """제목/URL 토큰 매칭으로 상위 fetch 예산 건까지만 후보를 추린다.
 
@@ -504,6 +532,7 @@ class DocumentSearchService:
             source=options.source,
             project=options.project,
             queries=[query, *(options.query_variants or [])],
+            meta_filter=meta_filter,
         )
         scored = [(row, _title_score(row, score_tokens, query)) for row in rows]
         scored.sort(key=lambda pair: (pair[1] <= 0.0, -pair[1], pair[0].external_id))
@@ -615,6 +644,7 @@ class DocumentSearchService:
             match_reasons=(REASON_LIVE_FETCH_MATCH, *_filter_match_reasons(project, source)),
             modified_at=row.modified_at,
             indexed=row.document_id is not None,
+            mime_type=row.mime_type,
         )
 
     # --- indexed 전략: title+keyword+vector 3-arm RRF ---------------------
@@ -627,6 +657,7 @@ class DocumentSearchService:
         filter_tokens: set[str],
         source: str | None,
         options: DocumentSearchOptions,
+        meta_filter: DocumentMetaFilter,
     ) -> list[DocumentSearchItem]:
         """title(document_meta) + keyword/vector(section 청크) 3-arm RRF 로 검색한다.
 
@@ -643,7 +674,14 @@ class DocumentSearchService:
         assert self._embedding_provider is not None
 
         title_ids, title_meta = self._title_arm(
-            filter_tokens, query_tokens, query, source, project, options.query_variants, width
+            filter_tokens,
+            query_tokens,
+            query,
+            source,
+            project,
+            options.query_variants,
+            width,
+            meta_filter,
         )
 
         #: keyword/vector arm 이 도는 section 청크는 협업 문서와 등록형 문서가
@@ -659,10 +697,12 @@ class DocumentSearchService:
             project=project, chunk_type=_SECTION_CHUNK_TYPE
         ):
             keyword_ids, keyword_chunk_by_doc = self._keyword_arm(
-                filter_tokens, query_tokens, project, width, doc_types
+                filter_tokens, query_tokens, project, width, doc_types, meta_filter
             )
             if self._vector_fallback_enabled:
-                vector_ids, vector_chunk_by_doc = self._vector_arm(query, project, width, doc_types)
+                vector_ids, vector_chunk_by_doc = self._vector_arm(
+                    query, project, width, doc_types, meta_filter
+                )
 
         fused = reciprocal_rank_fuse(
             keyword_ids,
@@ -754,6 +794,7 @@ class DocumentSearchService:
             ),
             modified_at=row.modified_at,
             indexed=indexed,
+            mime_type=row.mime_type,
         )
 
     def _title_arm(
@@ -765,6 +806,7 @@ class DocumentSearchService:
         project: str | None,
         query_variants: list[str] | None,
         width: int,
+        meta_filter: DocumentMetaFilter,
     ) -> tuple[list[str], dict[str, DocumentMeta]]:
         """title/url 토큰 매칭 순위를 문서 ID 리스트 + 메타 dict 로 만든다.
 
@@ -789,6 +831,7 @@ class DocumentSearchService:
             source=source,
             project=project,
             queries=[query, *(query_variants or [])],
+            meta_filter=meta_filter,
         )
         scored = [(row, _title_score(row, score_tokens, query)) for row in rows]
         queries = [query, *(query_variants or [])]
@@ -812,6 +855,7 @@ class DocumentSearchService:
         project: str | None,
         width: int,
         doc_types: Sequence[str],
+        meta_filter: DocumentMetaFilter,
     ) -> tuple[list[str], dict[str, str]]:
         """section 청크를 FTS 로 검색해 문서 ID 순위 + 문서별 승자 청크 ID 를 만든다."""
         assert self._chunk_repo is not None
@@ -822,11 +866,17 @@ class DocumentSearchService:
             score_terms=list(score_tokens),
             chunk_type=_SECTION_CHUNK_TYPE,
             doc_types=doc_types,
+            meta_filter=meta_filter,
         )
         return _dedupe_first_with_chunk(hits)
 
     def _vector_arm(
-        self, query: str, project: str | None, width: int, doc_types: Sequence[str]
+        self,
+        query: str,
+        project: str | None,
+        width: int,
+        doc_types: Sequence[str],
+        meta_filter: DocumentMetaFilter,
     ) -> tuple[list[str], dict[str, str]]:
         """section 청크를 벡터 검색해 문서 ID 순위 + 문서별 승자 청크 ID 를 만든다.
 
@@ -842,6 +892,7 @@ class DocumentSearchService:
             project=project,
             chunk_type=_SECTION_CHUNK_TYPE,
             doc_types=doc_types,
+            meta_filter=meta_filter,
         )
         positive_hits = [h for h in hits if h.score > 0.0]
         return _dedupe_first_with_chunk(positive_hits)
@@ -849,7 +900,7 @@ class DocumentSearchService:
     # --- 검증 헬퍼 --------------------------------------------------------
 
     def _validate(self, query: str, options: DocumentSearchOptions) -> str:
-        """질의·top_k·source 를 검증하고 공백을 제거한 질의를 반환한다."""
+        """질의·top_k·source·메타 필터 옵션을 검증하고 공백을 제거한 질의를 반환한다."""
         normalized_query = (query or "").strip()
         if not normalized_query:
             raise ValidationError("query must not be empty")
@@ -858,7 +909,50 @@ class DocumentSearchService:
                 f"top_k must be between {MIN_TOP_K} and {MAX_TOP_K}: {options.top_k}"
             )
         self._validate_source(options.source, allow_none=True)
+        self._validate_meta_filter_options(options)
         return normalized_query
+
+    def _validate_meta_filter_options(self, options: DocumentSearchOptions) -> None:
+        """modified_after/modified_before/mime_types 입력값을 검증한다.
+
+        구성(DocumentMetaFilter 조립)은 검증 통과 후 `_build_meta_filter` 가 한다.
+        """
+        after = self._parse_filter_datetime(options.modified_after, "modified_after")
+        before = self._parse_filter_datetime(options.modified_before, "modified_before")
+        if after is not None and before is not None and after > before:
+            raise ValidationError("modified_after must not be after modified_before")
+        if options.mime_types is None:
+            return
+        if not options.mime_types:
+            raise ValidationError("mime_types must not be empty when provided")
+        if len(options.mime_types) > _MAX_MIME_TYPES:
+            raise ValidationError(f"mime_types must have at most {_MAX_MIME_TYPES} entries")
+        for mime in options.mime_types:
+            stripped = mime.strip()
+            if not stripped or len(stripped) > _MAX_MIME_TYPE_LENGTH:
+                raise ValidationError(f"invalid mime_type entry: {mime!r}")
+
+    def _parse_filter_datetime(self, value: str | None, field_name: str) -> datetime | None:
+        """ISO8601 문자열을 tz-naive UTC datetime 으로 파싱한다.
+
+        날짜만(예: "2026-08-01") 도 허용된다 - `fromisoformat` 이 자정으로
+        해석한다(`parse_rfc3339` 참조).
+        """
+        if value is None:
+            return None
+        parsed = parse_rfc3339(value)
+        if parsed is None:
+            raise ValidationError(f"{field_name} must be an ISO8601 datetime")
+        return parsed
+
+    def _build_meta_filter(self, options: DocumentSearchOptions) -> DocumentMetaFilter:
+        """검증을 통과한 옵션으로 `DocumentMetaFilter` 를 만든다(호출 전 `_validate` 필수)."""
+        mime_types = tuple(m.strip() for m in options.mime_types) if options.mime_types else ()
+        return DocumentMetaFilter(
+            modified_after=parse_rfc3339(options.modified_after),
+            modified_before=parse_rfc3339(options.modified_before),
+            mime_types=mime_types,
+        )
 
     def _validate_source(self, source: str | None, allow_none: bool) -> str | None:
         """source 값이 허용 범위인지 확인하고 정규화한 값을 반환한다."""

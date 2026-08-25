@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from sqlalchemy import text
 from sqlalchemy.orm import attributes
 
 from app.models import EMBEDDING_DIM, Chunk, Document
+from app.models.document_meta import SOURCE_DRIVE, DocumentMeta
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.document_filters import DocumentMetaFilter
 
 
 def _seed_document(
@@ -779,3 +783,144 @@ def test_update_endpoint_chunk_updates_text_and_embedding(db_session) -> None:
         embedding=[0.0] * EMBEDDING_DIM,
     )
     assert missing is False
+
+
+# --- 개선 #2: meta_filter (EXISTS 서브쿼리, keyword/vector arm 공유) ------------
+
+
+def _seed_document_meta(
+    session, document_id: str, mime_type: str | None = None, modified_at: datetime | None = None
+) -> None:
+    """`document_meta` 한 건을 `document_id` 로 연결해 저장한다."""
+    session.add(
+        DocumentMeta(
+            project="default",
+            source=SOURCE_DRIVE,
+            external_id=f"ext-{document_id}",
+            title="문서",
+            url=f"https://example.test/{document_id}",
+            modified_at=modified_at,
+            last_synced_at=modified_at or datetime(2026, 7, 1, 9, 0, 0),
+            document_id=document_id,
+            mime_type=mime_type,
+        )
+    )
+
+
+def test_search_endpoint_by_text_meta_filter_none_is_noop(db_session) -> None:
+    """meta_filter 생략 시 기존 동작과 동일하다(회귀 안전)."""
+    _seed_chunk(db_session, "chunk-1", "doc-1", "find pet by id")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(["pet"], top_k=10)
+
+    assert [h.chunk_id for h in hits] == ["chunk-1"]
+
+
+def test_search_endpoint_by_text_meta_filter_excludes_mismatched_mime_type(db_session) -> None:
+    """meta_filter.mime_types 에 안 걸리는 document_id 의 청크는 후보에서 빠진다."""
+    _seed_chunk(db_session, "chunk-1", "doc-1", "find pet by id")
+    _seed_document_meta(db_session, "doc-1", mime_type="text/plain")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        ["pet"], top_k=10, meta_filter=DocumentMetaFilter(mime_types=("application/pdf",))
+    )
+
+    assert hits == []
+
+
+def test_search_endpoint_by_text_meta_filter_matches_mime_type(db_session) -> None:
+    """meta_filter.mime_types 가 일치하면 후보에 포함된다."""
+    _seed_chunk(db_session, "chunk-1", "doc-1", "find pet by id")
+    _seed_document_meta(db_session, "doc-1", mime_type="application/pdf")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        ["pet"], top_k=10, meta_filter=DocumentMetaFilter(mime_types=("application/pdf",))
+    )
+
+    assert [h.chunk_id for h in hits] == ["chunk-1"]
+
+
+def test_search_endpoint_by_text_meta_filter_excludes_missing_document_meta(db_session) -> None:
+    """대응하는 document_meta 행이 아예 없으면(NULL) 필터 활성 시 제외된다."""
+    _seed_chunk(db_session, "chunk-1", "doc-1", "find pet by id")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        ["pet"], top_k=10, meta_filter=DocumentMetaFilter(mime_types=("application/pdf",))
+    )
+
+    assert hits == []
+
+
+def test_search_by_vector_meta_filter_none_is_noop(db_session) -> None:
+    """meta_filter 생략 시 기존 동작과 동일하다(회귀 안전)."""
+    document = Document(
+        id="doc-1", project="default", source_url=None, title="t", content_hash="h", raw_text="{}"
+    )
+    db_session.add(document)
+    db_session.add(
+        Chunk(
+            id="chunk-1",
+            document_id="doc-1",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector([0.1] * EMBEDDING_DIM, top_k=5)
+
+    assert [h.chunk_id for h in hits] == ["chunk-1"]
+
+
+def test_search_by_vector_meta_filter_excludes_mismatched_mime_type(db_session) -> None:
+    """meta_filter.mime_types 에 안 걸리는 document_id 의 청크는 후보에서 빠진다."""
+    document = Document(
+        id="doc-1", project="default", source_url=None, title="t", content_hash="h", raw_text="{}"
+    )
+    db_session.add(document)
+    db_session.add(
+        Chunk(
+            id="chunk-1",
+            document_id="doc-1",
+            chunk_type="endpoint",
+            ref_id="ep-1",
+            text="hello world",
+            embedding=[0.1] * EMBEDDING_DIM,
+        )
+    )
+    _seed_document_meta(db_session, "doc-1", mime_type="text/plain")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector(
+        [0.1] * EMBEDDING_DIM,
+        top_k=5,
+        meta_filter=DocumentMetaFilter(mime_types=("application/pdf",)),
+    )
+
+    assert hits == []
+
+
+def test_search_by_vector_meta_filter_raises_ef_search_floor(db_session) -> None:
+    """meta_filter 활성 시 hnsw.ef_search 하한이 200 으로 올라간다(P7)."""
+    repo = ChunkRepository(db_session)
+
+    repo.search_by_vector(
+        [0.1] * EMBEDDING_DIM,
+        top_k=5,
+        meta_filter=DocumentMetaFilter(mime_types=("application/pdf",)),
+    )
+
+    value = db_session.execute(text("SHOW hnsw.ef_search")).scalar()
+    assert int(value) == 200

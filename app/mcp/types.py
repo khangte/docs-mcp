@@ -233,6 +233,8 @@ class DocumentSearchItemPayload(TypedDict):
     match_reasons: list[str]
     modified_at: str | None
     indexed: bool
+    #: 출처 시스템의 MIME 타입(Drive 전용). Notion·백필 전 Drive 문서는 None.
+    mime_type: str | None
 
 
 class DocumentSearchResponse(TypedDict):

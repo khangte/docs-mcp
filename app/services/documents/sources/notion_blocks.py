@@ -119,6 +119,7 @@ def child_page_to_file_meta(block: dict[str, Any]) -> FileMeta:
         title=title,
         url=f"https://www.notion.so/{block_id.replace('-', '')}",
         modified_at=parse_rfc3339(block.get("last_edited_time")),
+        created_at=parse_rfc3339(block.get("created_time")),
     )
 
 
@@ -130,6 +131,7 @@ def to_file_meta(page: dict[str, Any]) -> FileMeta:
         title=page_title(page),
         url=str(page.get("url") or f"https://www.notion.so/{page_id.replace('-', '')}"),
         modified_at=parse_rfc3339(page.get("last_edited_time")),
+        created_at=parse_rfc3339(page.get("created_time")),
     )
 
 

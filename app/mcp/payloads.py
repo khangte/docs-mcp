@@ -145,6 +145,7 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
             "match_reasons": list(item.match_reasons),
             "modified_at": item.modified_at.isoformat() if item.modified_at else None,
             "indexed": item.indexed,
+            "mime_type": item.mime_type,
         }
         for item in items
     ]

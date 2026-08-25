@@ -94,6 +94,8 @@ def _seed_meta(
     title: str,
     url: str | None = None,
     project: str = DEFAULT_PROJECT,
+    modified_at: datetime | None = datetime(2026, 7, 1, 12, 0, 0),
+    mime_type: str | None = None,
 ) -> DocumentMeta:
     """`document_meta` 행 하나를 저장하고 반환한다."""
     row = DocumentMeta(
@@ -102,8 +104,9 @@ def _seed_meta(
         external_id=external_id,
         title=title,
         url=url or f"https://example.test/{source}/{external_id}",
-        modified_at=datetime(2026, 7, 1, 12, 0, 0),
+        modified_at=modified_at,
         last_synced_at=datetime(2026, 7, 1, 12, 0, 0),
+        mime_type=mime_type,
     )
     session.add(row)
     session.commit()
@@ -684,6 +687,96 @@ def test_unknown_source_raises_validation_error(search_service) -> None:
         search_service.search("로그인", DocumentSearchOptions(source="dropbox"))
 
 
+# --- 개선 #2: meta_filter 입력 검증 ---------------------------------------------
+
+
+def test_invalid_modified_after_raises_validation_error(search_service) -> None:
+    """modified_after 가 ISO8601 이 아니면 ValidationError 다."""
+    with pytest.raises(ValidationError):
+        search_service.search(
+            "로그인", DocumentSearchOptions(modified_after="not-a-date")
+        )
+
+
+def test_invalid_modified_before_raises_validation_error(search_service) -> None:
+    """modified_before 가 ISO8601 이 아니면 ValidationError 다."""
+    with pytest.raises(ValidationError):
+        search_service.search(
+            "로그인", DocumentSearchOptions(modified_before="not-a-date")
+        )
+
+
+def test_inverted_date_range_raises_validation_error(search_service) -> None:
+    """modified_after 가 modified_before 보다 늦으면 ValidationError 다."""
+    with pytest.raises(ValidationError):
+        search_service.search(
+            "로그인",
+            DocumentSearchOptions(
+                modified_after="2026-07-10", modified_before="2026-07-01"
+            ),
+        )
+
+
+def test_empty_mime_types_raises_validation_error(search_service) -> None:
+    """mime_types 를 빈 리스트로 주면 ValidationError 다(생략과 구분)."""
+    with pytest.raises(ValidationError):
+        search_service.search("로그인", DocumentSearchOptions(mime_types=[]))
+
+
+def test_oversized_mime_types_raises_validation_error(search_service) -> None:
+    """mime_types 원소 수가 상한을 넘으면 ValidationError 다."""
+    with pytest.raises(ValidationError):
+        search_service.search(
+            "로그인", DocumentSearchOptions(mime_types=[f"type/{i}" for i in range(21)])
+        )
+
+
+def test_blank_mime_type_entry_raises_validation_error(search_service) -> None:
+    """mime_types 원소가 빈 문자열이면 ValidationError 다."""
+    with pytest.raises(ValidationError):
+        search_service.search("로그인", DocumentSearchOptions(mime_types=["  "]))
+
+
+# --- 개선 #2: meta_filter 종단 동작 ---------------------------------------------
+
+
+def test_modified_after_excludes_older_document(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """modified_after 이전에 수정된 문서는 결과에서 빠진다."""
+    _seed_meta(
+        db_session, SOURCE_DRIVE, "old", "로그인 문서", modified_at=datetime(2026, 6, 1, 0, 0, 0)
+    )
+    _seed_meta(
+        db_session, SOURCE_DRIVE, "new", "로그인 문서", modified_at=datetime(2026, 7, 15, 0, 0, 0)
+    )
+    fake_drive_source.bodies["old"] = "본문"
+    fake_drive_source.bodies["new"] = "본문"
+
+    items = search_service.search(
+        "로그인", DocumentSearchOptions(modified_after="2026-07-01T00:00:00Z")
+    )
+
+    assert [i.external_id for i in items] == ["new"]
+
+
+def test_mime_types_filters_out_non_matching_document(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """mime_types 에 없는 문서는 결과에서 빠지고, 남는 항목은 mime_type 을 담아 돌려준다."""
+    _seed_meta(db_session, SOURCE_DRIVE, "pdf", "로그인 문서", mime_type="application/pdf")
+    _seed_meta(db_session, SOURCE_DRIVE, "txt", "로그인 문서", mime_type="text/plain")
+    fake_drive_source.bodies["pdf"] = "본문"
+    fake_drive_source.bodies["txt"] = "본문"
+
+    items = search_service.search(
+        "로그인", DocumentSearchOptions(mime_types=["application/pdf"])
+    )
+
+    assert [i.external_id for i in items] == ["pdf"]
+    assert items[0].mime_type == "application/pdf"
+
+
 # --- 미구성 vs 결과 없음 구별 ---------------------------------------------------
 
 
@@ -1080,6 +1173,7 @@ def _seed_indexed_document(
     title: str,
     url: str,
     chunk_texts: list[str],
+    mime_type: str | None = None,
 ) -> None:
     """색인된 문서 한 건(Document + section 청크 N개 + document_meta.document_id 연결)을 저장한다."""
     session.add(
@@ -1113,6 +1207,7 @@ def _seed_indexed_document(
             url=url,
             last_synced_at=datetime(2026, 7, 1, 12, 0, 0),
             document_id=document_id,
+            mime_type=mime_type,
         )
     )
     session.commit()
@@ -1157,6 +1252,51 @@ def test_indexed_strategy_finds_body_only_match_absent_from_title(
     assert "리프레시토큰회전" in items[0].snippet
     assert items[0].snippet_as_of is not None
     assert items[0].external_id == "body-only"
+
+
+def test_indexed_strategy_meta_filter_excludes_non_matching_mime_type(
+    db_session, indexed_search_service
+) -> None:
+    """indexed 전략(keyword arm)도 meta_filter.mime_types 를 지켜 후보에서 제외한다."""
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-mime-mismatch",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="mime-mismatch",
+        title="완전히 무관한 제목",
+        url="https://example.test/drive/mime-mismatch",
+        chunk_texts=["여기에만 마임타입필터검증 이라는 특수 표현이 등장한다."],
+        mime_type="text/plain",
+    )
+
+    items = indexed_search_service.search(
+        "마임타입필터검증",
+        DocumentSearchOptions(mime_types=["application/pdf"]),
+    )
+
+    assert items == []
+
+
+def test_indexed_strategy_response_carries_mime_type(
+    db_session, indexed_search_service
+) -> None:
+    """indexed 전략 결과 항목도 mime_type 을 응답 필드로 담는다."""
+    _seed_indexed_document(
+        db_session,
+        document_id="drive:doc-mime-echo",
+        project=DEFAULT_PROJECT,
+        source=SOURCE_DRIVE,
+        external_id="mime-echo",
+        title="완전히 무관한 제목",
+        url="https://example.test/drive/mime-echo",
+        chunk_texts=["여기에만 마임타입에코검증 이라는 특수 표현이 등장한다."],
+        mime_type="application/pdf",
+    )
+
+    items = indexed_search_service.search("마임타입에코검증", DocumentSearchOptions())
+
+    assert [i.mime_type for i in items] == ["application/pdf"]
 
 
 def test_indexed_strategy_collapses_multiple_section_hits_into_one_result(

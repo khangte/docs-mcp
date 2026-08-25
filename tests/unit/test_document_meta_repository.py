@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models import DEFAULT_PROJECT, Document
 from app.models.document_meta import SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
+from app.repositories.document_filters import DocumentMetaFilter
 from app.repositories.document_meta_repository import DocumentMetaRepository
 
 _NOW = datetime(2026, 7, 1, 9, 0, 0)
@@ -21,7 +22,12 @@ _PROJECT_B = "B"
 
 
 def _row(
-    source: str, external_id: str, title: str = "문서", project: str = DEFAULT_PROJECT
+    source: str,
+    external_id: str,
+    title: str = "문서",
+    project: str = DEFAULT_PROJECT,
+    modified_at: datetime | None = _NOW,
+    mime_type: str | None = None,
 ) -> DocumentMeta:
     """테스트용 메타 행을 만든다."""
     return DocumentMeta(
@@ -30,8 +36,9 @@ def _row(
         external_id=external_id,
         title=title,
         url=f"https://example.test/{source}/{external_id}",
-        modified_at=_NOW,
+        modified_at=modified_at,
         last_synced_at=_NOW,
+        mime_type=mime_type,
     )
 
 
@@ -408,3 +415,104 @@ def test_search_by_tokens_is_deterministically_ordered(
     db_session.commit()
 
     assert [m.external_id for m in repo.search_by_tokens(["로그인"])] == ["d1", "d2", "d3"]
+
+
+# --- search_by_tokens meta_filter (개선 #2: hard filter) --------------------------
+
+
+def test_search_by_tokens_meta_filter_none_is_noop(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """meta_filter 생략 시 기존 동작과 동일하다(회귀 안전)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서"))
+    db_session.commit()
+
+    assert [m.external_id for m in repo.search_by_tokens(["로그인"])] == ["d1"]
+
+
+def test_search_by_tokens_modified_after_is_inclusive(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """modified_after 는 경계값을 포함한다(>=)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", modified_at=_NOW))
+    repo.add(
+        _row(SOURCE_DRIVE, "d2", "로그인 문서", modified_at=datetime(2026, 6, 30, 9, 0, 0))
+    )
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(modified_after=_NOW)
+    )
+
+    assert [m.external_id for m in found] == ["d1"]
+
+
+def test_search_by_tokens_modified_before_is_inclusive(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """modified_before 는 경계값을 포함한다(<=)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", modified_at=_NOW))
+    repo.add(
+        _row(SOURCE_DRIVE, "d2", "로그인 문서", modified_at=datetime(2026, 7, 2, 9, 0, 0))
+    )
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(modified_before=_NOW)
+    )
+
+    assert [m.external_id for m in found] == ["d1"]
+
+
+def test_search_by_tokens_date_filter_excludes_null_modified_at(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """modified_at 이 NULL 인 행은 날짜 필터가 있으면 제외된다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", modified_at=None))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(modified_after=_NOW)
+    )
+
+    assert list(found) == []
+
+
+def test_search_by_tokens_mime_types_matches_any(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """mime_types 는 목록 중 하나라도 일치하면 통과시킨다(OR)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", mime_type="application/pdf"))
+    repo.add(
+        _row(
+            SOURCE_DRIVE,
+            "d2",
+            "로그인 문서",
+            mime_type="application/vnd.google-apps.document",
+        )
+    )
+    repo.add(_row(SOURCE_DRIVE, "d3", "로그인 문서", mime_type="text/plain"))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"],
+        meta_filter=DocumentMetaFilter(
+            mime_types=("application/pdf", "application/vnd.google-apps.document")
+        ),
+    )
+
+    assert {m.external_id for m in found} == {"d1", "d2"}
+
+
+def test_search_by_tokens_mime_types_excludes_null_mime_type(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """mime_type 이 NULL(예: Notion 문서)이면 mime_types 필터에 걸리지 않는다."""
+    repo.add(_row(SOURCE_NOTION, "n1", "로그인 문서", mime_type=None))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(mime_types=("application/pdf",))
+    )
+
+    assert list(found) == []

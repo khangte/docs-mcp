@@ -107,10 +107,19 @@ async def test_openapi_tools_are_not_broken(mcp_server: FastMCP) -> None:
 
 @pytest.mark.asyncio()
 async def test_search_documents_signature(mcp_server: FastMCP) -> None:
-    """search_documents 는 query/top_k/source/project/query_variants 다섯 파라미터를 노출한다."""
+    """search_documents 는 8개 파라미터를 노출한다(개선 #2: modified_after/before/mime_types)."""
     properties = await _tool_parameters(mcp_server, "search_documents")
 
-    assert set(properties) == {"query", "top_k", "source", "project", "query_variants"}
+    assert set(properties) == {
+        "query",
+        "top_k",
+        "source",
+        "project",
+        "query_variants",
+        "modified_after",
+        "modified_before",
+        "mime_types",
+    }
     assert properties["top_k"]["default"] == 5
 
 
@@ -438,6 +447,7 @@ _DOCUMENT_SEARCH_ITEM_FIELDS = {
     "match_reasons",
     "modified_at",
     "indexed",
+    "mime_type",
 }
 
 
@@ -553,6 +563,68 @@ async def test_search_documents_source_filter(
 
     assert {i["source"] for i in items} == {SOURCE_NOTION}
     assert fake_drive_source.fetch_call_count == 0
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_mime_types_filter_and_response_field(
+    seeded_mcp: FastMCP, fake_drive_source
+) -> None:
+    """mime_types 로 필터링되고, 남는 결과는 mime_type 응답 필드를 담는다(개선 #2 T9/T10)."""
+    fake_drive_source.put(
+        "d1",
+        "로그인 인증 설계서",
+        "OAuth 로그인 흐름 상세",
+        modified_at=_T1,
+        mime_type="application/pdf",
+    )
+    await seeded_mcp.call_tool("refresh_index", arguments={"index_bodies": False})
+
+    matched = _result(
+        await seeded_mcp.call_tool(
+            "search_documents",
+            {"query": "로그인", "mime_types": ["application/pdf"]},
+        )
+    )["items"]
+    excluded = _result(
+        await seeded_mcp.call_tool(
+            "search_documents",
+            {"query": "로그인", "mime_types": ["text/plain"]},
+        )
+    )["items"]
+
+    assert [i["title"] for i in matched] == ["로그인 인증 설계서"]
+    assert matched[0]["mime_type"] == "application/pdf"
+    assert excluded == []
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_modified_after_filter(
+    seeded_mcp: FastMCP, fake_drive_source
+) -> None:
+    """modified_after 이전에 수정된 문서는 결과에서 제외된다(개선 #2 T8)."""
+    items = _result(
+        await seeded_mcp.call_tool(
+            "search_documents",
+            {"query": "로그인", "modified_after": "2026-07-02T00:00:00Z"},
+        )
+    )["items"]
+
+    assert items == []
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_invalid_modified_after_returns_error_payload(
+    seeded_mcp: FastMCP,
+) -> None:
+    """modified_after 가 ISO8601 이 아니면 표준 에러 포맷을 반환한다."""
+    payload = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "modified_after": "이상한값"}
+        )
+    )
+
+    assert payload["error"] is True
+    assert payload["code"] == "validation_error"
 
 
 @pytest.mark.asyncio()

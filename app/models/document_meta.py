@@ -42,6 +42,9 @@ class DocumentMeta(Base):
             `deterministic_document_id` 가 만드는 `f"{source}:{sha256(...)[:16]}"`
             해시, `document_body_indexer.py` 참조). 본문 색인 전이거나
             원본 `Document` 가 삭제되면 NULL.
+        mime_type: 출처 시스템의 MIME 타입(Drive 전용, Notion 은 항상 NULL).
+        created_at: 원본 시스템 기준 생성 시각. Drive/Notion 모두 채워진다.
+        owner: 문서 소유자 이메일 또는 표시 이름(Drive 전용, Notion 은 항상 NULL).
     """
 
     __tablename__ = "document_meta"
@@ -68,6 +71,10 @@ class DocumentMeta(Base):
             postgresql_using="gin",
             postgresql_ops={"url": "gin_trgm_ops"},
         ),
+        #: FK 는 PostgreSQL 이 인덱스를 자동 생성하지 않는다. keyword/vector arm 의
+        #: EXISTS 서브쿼리(document_meta.document_id = <chunk 의 document_id>)와
+        #: 기존 list_by_document_ids 의 IN 조회가 이 인덱스를 쓴다.
+        Index("ix_document_meta_document_id", "document_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -83,3 +90,6 @@ class DocumentMeta(Base):
     document_id: Mapped[str | None] = mapped_column(
         ForeignKey("document.id", ondelete="SET NULL"), nullable=True
     )
+    mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    owner: Mapped[str | None] = mapped_column(String(320), nullable=True)

@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.document_meta import DocumentMeta
+from app.repositories.document_filters import DocumentMetaFilter, document_meta_conditions
 
 _WHITESPACE_RE = re.compile(r"\s+")
 
@@ -66,6 +67,7 @@ class DocumentMetaRepository:
         source: str | None = None,
         project: str | None = None,
         queries: Sequence[str] = (),
+        meta_filter: DocumentMetaFilter | None = None,
     ) -> Sequence[DocumentMeta]:
         """제목 또는 URL 에 토큰 중 하나라도 포함된 행만 SQL 로 걸러 반환한다.
 
@@ -89,6 +91,8 @@ class DocumentMetaRepository:
                 제거한(`collapse`) 패턴으로 만들어 추가 매칭 조건으로 쓴다.
                 비어 있거나 collapse 결과가 중복/빈 문자열이면 해당 조건은
                 생략된다.
+            meta_filter: 날짜/mimeType hard filter. None 이거나 비어 있으면
+                조건 없이 기존과 동일하게 동작한다.
 
         Returns:
             (source, external_id) 순으로 결정적으로 정렬된 후보 행.
@@ -122,6 +126,8 @@ class DocumentMetaRepository:
             conditions.append(collapsed_title.ilike(collapsed_pattern, escape="\\"))
             conditions.append(collapsed_url.ilike(collapsed_pattern, escape="\\"))
         stmt = stmt.where(or_(*conditions))
+        if meta_filter is not None and not meta_filter.is_empty():
+            stmt = stmt.where(*document_meta_conditions(meta_filter))
         stmt = stmt.order_by(DocumentMeta.source, DocumentMeta.external_id)
         return self._session.execute(stmt).scalars().all()
 

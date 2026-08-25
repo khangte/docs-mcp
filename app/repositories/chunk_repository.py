@@ -9,10 +9,15 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from app.models import Chunk, Document
+from app.repositories.document_filters import DocumentMetaFilter, document_meta_exists
 
 #: 벡터 검색 시 강제할 hnsw.ef_search 하한. 기본값(40)은 RRF 융합용 넓은 후보폭
 #: (top_k 최대 200)보다 작아 recall 을 깎을 수 있어 세션 GUC 로 올려 잡는다.
 _HNSW_EF_SEARCH = 100
+#: 메타 필터가 걸렸을 때의 ef_search 하한. HNSW ANN 은 먼저 top-N 을 뽑은 뒤
+#: 필터가 걸리는 post-filtering 구조라 유효 후보가 줄어든다 - 평가셋 없는
+#: 휴리스틱이라 env 로 노출하지 않는다.
+_HNSW_EF_SEARCH_FILTERED = 200
 
 
 @dataclass
@@ -157,6 +162,7 @@ class ChunkRepository:
         score_terms: Sequence[str] | None = None,
         chunk_type: str = "endpoint",
         doc_types: Sequence[str] | None = None,
+        meta_filter: DocumentMetaFilter | None = None,
     ) -> list[ChunkTextHit]:
         """`chunk_type` 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
 
@@ -183,6 +189,10 @@ class ChunkRepository:
 
         정렬은 `ts_rank` 내림차순, 동점이면 `id` 오름차순이라 결과가 결정적이다.
         `text_tsv` 컬럼 자체는 필터 전용이라 select 하지 않는다.
+
+        `meta_filter` 는 `document_meta` EXISTS 서브쿼리로 건다(None 또는 빈
+        필터면 조건 없이 기존과 동일하게 동작 - 엔드포인트 검색 호출부는
+        인자를 넘기지 않으므로 무변경).
         """
         normalized_terms = [t for t in terms if t]
         if top_k <= 0 or not normalized_terms:
@@ -213,6 +223,8 @@ class ChunkRepository:
                 stmt = stmt.where(Document.project == project)
             if doc_types is not None:
                 stmt = stmt.where(Document.doc_type.in_(doc_types))
+        if meta_filter is not None and not meta_filter.is_empty():
+            stmt = stmt.where(document_meta_exists(meta_filter, Chunk.document_id))
         stmt = stmt.order_by(rank.desc(), Chunk.id.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [
@@ -229,6 +241,7 @@ class ChunkRepository:
         document_id: str | None = None,
         project: str | None = None,
         doc_types: Sequence[str] | None = None,
+        meta_filter: DocumentMetaFilter | None = None,
     ) -> list[ChunkVectorHit]:
         """pgvector 코사인 거리(`<=>`)로 top_k 를 유사도 내림차순으로 반환한다.
 
@@ -250,10 +263,15 @@ class ChunkRepository:
         `ref_id`/`document_id` 를 함께 SQL 로 프로젝션해(조인 불필요),
         호출측이 chunk_id → ref_id/document_id 를 역매핑하려고 전체 청크를
         메모리에 적재할 필요가 없게 한다.
+
+        `meta_filter` 는 `document_meta` EXISTS 서브쿼리로 건다(None 또는 빈
+        필터면 조건 없이 기존과 동일). 필터가 걸리면 ANN 이 post-filtering
+        구조가 되어 유효 후보가 줄어들므로 `ef_search` 하한을 올린다.
         """
         if top_k <= 0:
             return []
-        ef = max(_HNSW_EF_SEARCH, top_k)
+        has_filter = meta_filter is not None and not meta_filter.is_empty()
+        ef = max(_HNSW_EF_SEARCH_FILTERED if has_filter else _HNSW_EF_SEARCH, top_k)
         # SET 은 유틸리티 구문이라 바인드 파라미터를 받지 않는다(PG 파서가 거부).
         # ef 는 두 int 의 max() 결과라 사용자 입력이 섞일 수 없어 f-string 삽입이 안전하다.
         # SET LOCAL 이라 현재 트랜잭션 스코프에 한정되고 세션 전역을 오염시키지 않는다.
@@ -276,6 +294,8 @@ class ChunkRepository:
                 stmt = stmt.where(Document.project == project)
             if doc_types is not None:
                 stmt = stmt.where(Document.doc_type.in_(doc_types))
+        if has_filter:
+            stmt = stmt.where(document_meta_exists(meta_filter, Chunk.document_id))
         stmt = stmt.order_by(distance.asc(), Chunk.id.asc()).limit(top_k)
         rows = self._session.execute(stmt).all()
         return [

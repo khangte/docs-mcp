@@ -101,6 +101,39 @@ def test_renamed_title_is_counted_as_updated(
     assert meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1").title == "새 제목"
 
 
+def test_mime_created_owner_backfill_does_not_count_as_updated_or_fetch_body(
+    body_index_service, meta_repo, fake_drive_source
+) -> None:
+    """mime_type/created_at/owner 만 새로 채워지는 백필은 updated·본문 fetch 를 유발하지 않는다.
+
+    새 nullable 컬럼을 `is_changed` 판정에 넣으면 첫 백필에서 전 문서가
+    NULL→값으로 바뀌며 updated 로 잡혀 본문을 전량 재fetch 한다(rate limit
+    폭발). 이 회귀를 막는 것이 T3 의 핵심 제약이다.
+    """
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=True)
+    fake_drive_source.reset_counts()
+
+    fake_drive_source.put(
+        "d1",
+        "설계서",
+        "본문",
+        modified_at=_T1,
+        mime_type="application/pdf",
+        created_at=_T1,
+        owner="owner@example.test",
+    )
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.updated == 0
+    assert result.added == 0
+    assert fake_drive_source.fetch_call_count == 0
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row.mime_type == "application/pdf"
+    assert row.created_at == _T1
+    assert row.owner == "owner@example.test"
+
+
 def test_deleted_file_is_removed_from_cache(
     index_service, meta_repo, fake_drive_source
 ) -> None:

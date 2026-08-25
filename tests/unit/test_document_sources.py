@@ -180,6 +180,66 @@ def test_drive_list_files_recurses_into_subfolders(monkeypatch: pytest.MonkeyPat
     assert files[1].modified_at == datetime(2026, 7, 2, 0, 0, 0)
 
 
+def test_drive_list_files_populates_mime_type_created_at_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mimeType/createdTime/owners 를 FileMeta.mime_type/created_at/owner 로 채운다(개선 #2 T2)."""
+    files = {
+        "files": [
+            {
+                "id": "f1",
+                "name": "문서",
+                "mimeType": GOOGLE_DOC_MIME_TYPE,
+                "createdTime": "2026-06-01T00:00:00Z",
+                "owners": [{"displayName": "홍길동", "emailAddress": "owner@example.test"}],
+            }
+        ]
+    }
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, lambda request: _json(files))
+
+    (meta,) = source.list_files()
+
+    assert meta.mime_type == GOOGLE_DOC_MIME_TYPE
+    assert meta.created_at == datetime(2026, 6, 1, 0, 0, 0)
+    assert meta.owner == "owner@example.test"
+
+
+def test_drive_list_files_owner_falls_back_to_display_name_without_email(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """owners[0] 에 이메일이 없으면 표시 이름을 owner 로 쓴다."""
+    files = {
+        "files": [
+            {
+                "id": "f1",
+                "name": "문서",
+                "mimeType": GOOGLE_DOC_MIME_TYPE,
+                "owners": [{"displayName": "홍길동"}],
+            }
+        ]
+    }
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, lambda request: _json(files))
+
+    (meta,) = source.list_files()
+
+    assert meta.owner == "홍길동"
+
+
+def test_drive_list_files_owner_none_without_owners_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """owners 필드가 아예 없으면 owner 는 None 이다."""
+    files = {"files": [{"id": "f1", "name": "문서", "mimeType": GOOGLE_DOC_MIME_TYPE}]}
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, lambda request: _json(files))
+
+    (meta,) = source.list_files()
+
+    assert meta.owner is None
+
+
 def test_drive_list_files_follows_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
     """nextPageToken 이 있으면 다음 페이지까지 이어서 조회한다."""
     responses = [

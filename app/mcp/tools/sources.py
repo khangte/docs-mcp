@@ -43,6 +43,23 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
         문서 목록·메타데이터를 갱신하고, 기본적으로 본문까지 색인한다. 새로
         만든 문서가 search_documents 에 잡히지 않을 때 실행한다.
 
+        mime_type/created_at/owner 백필 런북(개선 #2, document_meta 에 이
+        컬럼들을 nullable 로 추가한 마이그레이션 배포 후 1회):
+            1. `uv run alembic upgrade head` — 전부 nullable 컬럼 추가라
+               기존 코드와 동시 배포 가능.
+            2. 코드 배포.
+            3. 프로젝트·소스별로 `refresh_index(project=..., index_bodies=False)`
+               1회 실행. 새 컬럼은 `_apply_changes` 에서 `is_changed` 판정에
+               들어가지 않으므로 본문 재fetch 는 일어나지 않고, listing
+               응답의 새 필드로 메타 행만 갱신된다(UPDATE 한 번).
+            4. 백필 확인: `SELECT source, count(*) FILTER (WHERE mime_type
+               IS NULL) AS null_mime, count(*) FROM document_meta GROUP BY
+               source;` — drive 행의 null_mime 이 0 이어야 한다(Notion 은
+               mime_type 이 항상 NULL 이라 이 값이 count(*) 와 같은 게 정상).
+            5. 백필 전에는 `mime_types` 필터가 Drive 문서까지 전부
+               걸러낸다(값이 NULL 이므로) — 운영 순서를 지키지 않으면
+               "검색이 갑자기 0건"으로 보인다.
+
         Args:
             source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
                 모든 소스를 갱신한다. document 재동기화에는 관여하지
