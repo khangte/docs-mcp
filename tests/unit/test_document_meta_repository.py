@@ -28,6 +28,8 @@ def _row(
     project: str = DEFAULT_PROJECT,
     modified_at: datetime | None = _NOW,
     mime_type: str | None = None,
+    created_at: datetime | None = None,
+    owner: str | None = None,
 ) -> DocumentMeta:
     """테스트용 메타 행을 만든다."""
     return DocumentMeta(
@@ -38,6 +40,8 @@ def _row(
         url=f"https://example.test/{source}/{external_id}",
         modified_at=modified_at,
         last_synced_at=_NOW,
+        created_at=created_at,
+        owner=owner,
         mime_type=mime_type,
     )
 
@@ -516,3 +520,119 @@ def test_search_by_tokens_mime_types_excludes_null_mime_type(
     )
 
     assert list(found) == []
+
+
+def test_search_by_tokens_created_after_is_inclusive(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """created_after 는 경계 시각을 포함한다(>=)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", created_at=_NOW))
+    repo.add(
+        _row(SOURCE_DRIVE, "d2", "로그인 문서", created_at=datetime(2026, 6, 30, 9, 0, 0))
+    )
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(created_after=_NOW)
+    )
+
+    assert {m.external_id for m in found} == {"d1"}
+
+
+def test_search_by_tokens_created_before_is_inclusive(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """created_before 는 경계 시각을 포함한다(<=)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", created_at=_NOW))
+    repo.add(
+        _row(SOURCE_DRIVE, "d2", "로그인 문서", created_at=datetime(2026, 7, 2, 9, 0, 0))
+    )
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(created_before=_NOW)
+    )
+
+    assert {m.external_id for m in found} == {"d1"}
+
+
+def test_search_by_tokens_created_filter_excludes_null_created_at(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """created_at 이 NULL 이면 생성 시각 필터가 있을 때 제외된다(R5)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", created_at=None))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"],
+        meta_filter=DocumentMetaFilter(created_after=datetime(2020, 1, 1, 0, 0, 0)),
+    )
+
+    assert list(found) == []
+
+
+def test_search_by_tokens_owners_matches_any(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """owners 는 목록 중 하나라도 일치하면 통과시킨다(OR)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", owner="a@example.test"))
+    repo.add(_row(SOURCE_DRIVE, "d2", "로그인 문서", owner="b@example.test"))
+    repo.add(_row(SOURCE_DRIVE, "d3", "로그인 문서", owner="c@example.test"))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"],
+        meta_filter=DocumentMetaFilter(owners=("a@example.test", "b@example.test")),
+    )
+
+    assert {m.external_id for m in found} == {"d1", "d2"}
+
+
+def test_search_by_tokens_owners_is_case_insensitive(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """owners 매칭은 대소문자를 무시한다(외부 시스템 표기를 신뢰할 수 없다)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", owner="Owner@Example.Test"))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(owners=("owner@example.test",))
+    )
+
+    assert {m.external_id for m in found} == {"d1"}
+
+
+def test_search_by_tokens_owners_is_not_substring_match(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """owners 는 정확 일치다 — 부분 문자열로 걸리면 안 된다(설계 62번 3.2절)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", owner="kimberly@example.test"))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(owners=("kim",))
+    )
+
+    assert list(found) == []
+
+
+def test_search_by_tokens_owners_excludes_null_owner(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """owner 가 NULL(Notion·백필 전 Drive)이면 owners 필터에 걸리지 않는다(R5)."""
+    repo.add(_row(SOURCE_NOTION, "n1", "로그인 문서", owner=None))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(owners=("a@example.test",))
+    )
+
+    assert list(found) == []
+
+
+def test_document_meta_filter_is_empty_tracks_every_field() -> None:
+    """새 필드를 추가해도 is_empty() 가 조건 생성과 어긋나지 않는다."""
+    assert DocumentMetaFilter().is_empty() is True
+    assert DocumentMetaFilter(created_after=_NOW).is_empty() is False
+    assert DocumentMetaFilter(created_before=_NOW).is_empty() is False
+    assert DocumentMetaFilter(owners=("a@example.test",)).is_empty() is False

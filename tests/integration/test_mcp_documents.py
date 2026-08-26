@@ -107,7 +107,7 @@ async def test_openapi_tools_are_not_broken(mcp_server: FastMCP) -> None:
 
 @pytest.mark.asyncio()
 async def test_search_documents_signature(mcp_server: FastMCP) -> None:
-    """search_documents 는 8개 파라미터를 노출한다(개선 #2: modified_after/before/mime_types)."""
+    """search_documents 는 11개 파라미터를 노출한다(62번: created_after/before/owners 추가)."""
     properties = await _tool_parameters(mcp_server, "search_documents")
 
     assert set(properties) == {
@@ -119,6 +119,9 @@ async def test_search_documents_signature(mcp_server: FastMCP) -> None:
         "modified_after",
         "modified_before",
         "mime_types",
+        "created_after",
+        "created_before",
+        "owners",
     }
     assert properties["top_k"]["default"] == 5
 
@@ -465,13 +468,14 @@ _DOCUMENT_SEARCH_ITEM_FIELDS = {
     "modified_at",
     "indexed",
     "mime_type",
+    "owner",
 }
 
 
 @pytest.mark.asyncio()
 async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> None:
     """결과 항목은 근거·메타 필드 4개(matched_chunks/match_reasons/modified_at/indexed)를
-    포함해 13개 필드를 갖는다(57번 리뷰 §5 개선1)."""
+    포함해 15개 필드를 갖는다(57번 리뷰 §5 개선1)."""
     items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
 
     assert items
@@ -611,6 +615,81 @@ async def test_search_documents_mime_types_filter_and_response_field(
 
     assert [i["title"] for i in matched] == ["로그인 인증 설계서"]
     assert matched[0]["mime_type"] == "application/pdf"
+    assert excluded == []
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_exposes_owner(seeded_mcp: FastMCP, fake_drive_source) -> None:
+    """응답 항목에 owner 가 실린다(다음 질의의 owners 값으로 그대로 쓸 수 있다)."""
+    fake_drive_source.put(
+        "d1",
+        "로그인 인증 설계서",
+        "OAuth 로그인 흐름 상세",
+        modified_at=_T1,
+        owner="owner@example.test",
+    )
+    await seeded_mcp.call_tool("refresh_index", arguments={"index_bodies": False})
+
+    items = _result(
+        await seeded_mcp.call_tool("search_documents", {"query": "로그인"})
+    )["items"]
+
+    assert [i["owner"] for i in items if i["title"] == "로그인 인증 설계서"] == [
+        "owner@example.test"
+    ]
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_owners_filter(seeded_mcp: FastMCP, fake_drive_source) -> None:
+    """owners 를 주면 그 소유자 문서만 남는다."""
+    fake_drive_source.put(
+        "d1",
+        "로그인 인증 설계서",
+        "OAuth 로그인 흐름 상세",
+        modified_at=_T1,
+        owner="owner@example.test",
+    )
+    await seeded_mcp.call_tool("refresh_index", arguments={"index_bodies": False})
+
+    matched = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "owners": ["owner@example.test"]}
+        )
+    )["items"]
+    excluded = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "owners": ["other@example.test"]}
+        )
+    )["items"]
+
+    assert [i["title"] for i in matched] == ["로그인 인증 설계서"]
+    assert excluded == []
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_created_filters(seeded_mcp: FastMCP, fake_drive_source) -> None:
+    """created_after/created_before 가 생성 시각 축으로 걸린다."""
+    fake_drive_source.put(
+        "d1",
+        "로그인 인증 설계서",
+        "OAuth 로그인 흐름 상세",
+        modified_at=_T1,
+        created_at=_T1,
+    )
+    await seeded_mcp.call_tool("refresh_index", arguments={"index_bodies": False})
+
+    matched = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "created_after": _T1.isoformat()}
+        )
+    )["items"]
+    excluded = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "created_before": "2020-01-01"}
+        )
+    )["items"]
+
+    assert [i["title"] for i in matched] == ["로그인 인증 설계서"]
     assert excluded == []
 
 

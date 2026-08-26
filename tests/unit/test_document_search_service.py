@@ -102,6 +102,8 @@ def _seed_meta(
     project: str = DEFAULT_PROJECT,
     modified_at: datetime | None = datetime(2026, 7, 1, 12, 0, 0),
     mime_type: str | None = None,
+    created_at: datetime | None = None,
+    owner: str | None = None,
 ) -> DocumentMeta:
     """`document_meta` 행 하나를 저장하고 반환한다."""
     row = DocumentMeta(
@@ -113,6 +115,8 @@ def _seed_meta(
         modified_at=modified_at,
         last_synced_at=datetime(2026, 7, 1, 12, 0, 0),
         mime_type=mime_type,
+        created_at=created_at,
+        owner=owner,
     )
     session.add(row)
     session.commit()
@@ -781,6 +785,28 @@ def test_mime_types_filters_out_non_matching_document(
 
     assert [i.external_id for i in items] == ["pdf"]
     assert items[0].mime_type == "application/pdf"
+
+
+def test_search_item_exposes_owner(db_session, search_service, fake_drive_source) -> None:
+    """결과 항목에 document_meta.owner 를 그대로 실어 보낸다(다음 질의의 owners 값)."""
+    _seed_meta(db_session, SOURCE_DRIVE, "d1", "로그인 문서", owner="owner@example.test")
+    fake_drive_source.bodies["d1"] = "본문"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert items[0].owner == "owner@example.test"
+
+
+def test_search_item_owner_is_none_without_owner(
+    db_session, search_service, fake_notion_source
+) -> None:
+    """owner 가 NULL 인 문서(Notion)는 응답에서도 None 이다."""
+    _seed_meta(db_session, SOURCE_NOTION, "n1", "로그인 문서")
+    fake_notion_source.bodies["n1"] = "본문"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert items[0].owner is None
 
 
 # --- 미구성 vs 결과 없음 구별 ---------------------------------------------------
@@ -1870,3 +1896,70 @@ def test_indexed_strategy_title_only_document_ranks_below_body_matched_document(
     items = indexed_search_service.search("공통검색어테스트", DocumentSearchOptions())
 
     assert [i.external_id for i in items] == ["body-hit", "title-only"]
+
+
+def test_created_after_invalid_iso8601_raises(search_service) -> None:
+    """created_after 가 ISO8601 이 아니면 ValidationError 다."""
+    with pytest.raises(ValidationError, match="created_after"):
+        search_service.search("로그인", DocumentSearchOptions(created_after="어제"))
+
+
+def test_created_after_later_than_created_before_raises(search_service) -> None:
+    """created_after 가 created_before 보다 뒤면 ValidationError 다."""
+    with pytest.raises(ValidationError, match="created_after must not be after"):
+        search_service.search(
+            "로그인",
+            DocumentSearchOptions(created_after="2026-08-02", created_before="2026-08-01"),
+        )
+
+
+def test_owners_empty_list_raises(search_service) -> None:
+    """owners 를 빈 목록으로 주면 ValidationError 다(생략과 구별한다)."""
+    with pytest.raises(ValidationError, match="owners must not be empty"):
+        search_service.search("로그인", DocumentSearchOptions(owners=[]))
+
+
+def test_owners_too_many_entries_raises(search_service) -> None:
+    """owners 원소 개수 상한을 넘기면 ValidationError 다."""
+    with pytest.raises(ValidationError, match="at most"):
+        search_service.search(
+            "로그인", DocumentSearchOptions(owners=[f"o{i}@example.test" for i in range(21)])
+        )
+
+
+def test_owners_blank_entry_raises(search_service) -> None:
+    """공백뿐인 owners 원소는 ValidationError 다."""
+    with pytest.raises(ValidationError, match="invalid owner entry"):
+        search_service.search("로그인", DocumentSearchOptions(owners=["   "]))
+
+
+def test_owners_too_long_entry_raises(search_service) -> None:
+    """owner 원소가 컬럼 폭(320자)을 넘으면 ValidationError 다."""
+    with pytest.raises(ValidationError, match="invalid owner entry"):
+        search_service.search("로그인", DocumentSearchOptions(owners=["a" * 321]))
+
+
+def test_build_meta_filter_maps_created_and_owners(search_service) -> None:
+    """검증을 통과한 옵션이 DocumentMetaFilter 로 그대로 옮겨진다(공백 제거 포함)."""
+    options = DocumentSearchOptions(
+        created_after="2026-08-01",
+        created_before="2026-08-31T23:59:59Z",
+        owners=[" a@example.test ", "B@example.test"],
+    )
+
+    meta_filter = search_service._build_meta_filter(options)
+
+    assert meta_filter.created_after == datetime(2026, 8, 1, 0, 0, 0)
+    assert meta_filter.created_before == datetime(2026, 8, 31, 23, 59, 59)
+    # 입력 표기를 그대로 보관한다 - 소문자화는 SQL 조건 생성 시점의 일이다.
+    assert meta_filter.owners == ("a@example.test", "B@example.test")
+
+
+def test_created_and_modified_filters_do_not_cross_validate(search_service) -> None:
+    """created_after 와 modified_before 조합은 정상 질의이므로 막지 않는다."""
+    options = DocumentSearchOptions(created_after="2026-08-01", modified_before="2026-07-01")
+
+    meta_filter = search_service._build_meta_filter(options)
+
+    assert meta_filter.created_after == datetime(2026, 8, 1, 0, 0, 0)
+    assert meta_filter.modified_before == datetime(2026, 7, 1, 0, 0, 0)

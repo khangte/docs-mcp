@@ -235,6 +235,8 @@ class DocumentSearchItemPayload(TypedDict):
     indexed: bool
     #: 출처 시스템의 MIME 타입(Drive 전용). Notion·백필 전 Drive 문서는 None.
     mime_type: str | None
+    #: 문서 소유자 이메일 또는 표시 이름(Drive 전용). Notion·백필 전 Drive 문서는 None.
+    owner: str | None
 
 
 class DocumentSearchResponse(TypedDict):

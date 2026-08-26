@@ -87,6 +87,9 @@ TITLE_ARM_WEIGHT = 0.5
 #: `mime_types` 필터 원소 개수/길이 상한(개선 #2 — T8 검증).
 _MAX_MIME_TYPES = 20
 _MAX_MIME_TYPE_LENGTH = 128
+#: `owners` 필터 원소 개수/길이 상한. 길이는 `document_meta.owner` 컬럼 폭과 같다.
+_MAX_OWNERS = 20
+_MAX_OWNER_LENGTH = 320
 
 #: keyword/vector arm 이 SQL 에서 이미 `chunk_type='section'` 으로 좁혀 조회하므로,
 #: 승자 청크의 chunk_type 은 DB 를 다시 읽지 않고 이 상수로 취급한다(57번 리뷰 §5 개선1).
@@ -255,6 +258,14 @@ class DocumentSearchOptions:
     #: Drive `mimeType` 정확 일치 목록(OR). Notion 문서는 mime_type 이 항상
     #: NULL 이라 이 필터를 지정하면 always 제외된다.
     mime_types: list[str] | None = None
+    #: 원본 시각 문자열(ISO8601). 양끝 포함(>=/<=).
+    #: `document_meta.created_at` 이 NULL 인 문서는 하나라도 지정되면 제외된다.
+    created_after: str | None = None
+    created_before: str | None = None
+    #: 문서 소유자 정확 일치 목록(OR, 대소문자 무시). Drive 는 소유자 이메일이
+    #: 우선 저장되고 없을 때만 표시 이름이 들어간다. Notion 문서는 owner 가
+    #: 항상 NULL 이라 이 필터를 지정하면 always 제외된다.
+    owners: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -298,6 +309,10 @@ class DocumentSearchItem:
     #: 출처 시스템의 MIME 타입(`document_meta.mime_type`). Drive 전용,
     #: Notion·백필 전 Drive 문서는 None.
     mime_type: str | None = None
+    #: 문서 소유자 이메일 또는 표시 이름(`document_meta.owner`). Drive 전용,
+    #: Notion·백필 전 Drive 문서는 None. 호출자가 이 값을 그대로 `owners`
+    #: 필터에 복사해 넣을 수 있도록 노출한다.
+    owner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -368,7 +383,8 @@ class DocumentSearchService:
             query: 검색할 자연어/키워드 질의.
             options: top_k·source·project 필터, query_variants(1단계 SQL
                 후보 필터만 넓히는 호출자 제공 동의어), modified_after/
-                modified_before/mime_types(날짜·mimeType hard filter, 3 arm
+                modified_before/mime_types/created_after/created_before/
+                owners(날짜·mimeType·생성시각·소유자 hard filter, 3 arm
                 전부에 SQL 로 적용된다).
 
         Returns:
@@ -376,8 +392,8 @@ class DocumentSearchService:
             본문 fetch 없이 빈 리스트.
 
         Raises:
-            ValidationError: 질의가 비었거나 top_k/source/날짜/mime_types 값이
-                잘못된 경우.
+            ValidationError: 질의가 비었거나 top_k/source/날짜/mime_types/
+                owners 값이 잘못된 경우.
             IntegrationError: 검색 대상 소스가 하나도 구성돼 있지 않은 경우.
                 "결과 없음"(빈 리스트)과 "서버 미설정"을 구별하기 위해
                 조용히 빈 리스트를 돌려주지 않는다.
@@ -647,6 +663,7 @@ class DocumentSearchService:
             modified_at=row.modified_at,
             indexed=row.document_id is not None,
             mime_type=row.mime_type,
+            owner=row.owner,
         )
 
     # --- indexed 전략: title+keyword+vector 3-arm RRF ---------------------
@@ -804,6 +821,7 @@ class DocumentSearchService:
             modified_at=row.modified_at,
             indexed=indexed,
             mime_type=row.mime_type,
+            owner=row.owner,
         )
 
     def _title_arm(
@@ -961,24 +979,44 @@ class DocumentSearchService:
         return normalized_query
 
     def _validate_meta_filter_options(self, options: DocumentSearchOptions) -> None:
-        """modified_after/modified_before/mime_types 입력값을 검증한다.
+        """modified_*/created_*/mime_types/owners 입력값을 검증한다.
 
         구성(DocumentMetaFilter 조립)은 검증 통과 후 `_build_meta_filter` 가 한다.
+        수정 시각 축과 생성 시각 축은 서로 교차 검증하지 않는다 - "8월에
+        만들어졌고 7월 이전에 수정된" 같은 조합은 의미상 정상 질의다.
         """
         after = self._parse_filter_datetime(options.modified_after, "modified_after")
         before = self._parse_filter_datetime(options.modified_before, "modified_before")
         if after is not None and before is not None and after > before:
             raise ValidationError("modified_after must not be after modified_before")
-        if options.mime_types is None:
-            return
-        if not options.mime_types:
-            raise ValidationError("mime_types must not be empty when provided")
-        if len(options.mime_types) > _MAX_MIME_TYPES:
-            raise ValidationError(f"mime_types must have at most {_MAX_MIME_TYPES} entries")
-        for mime in options.mime_types:
-            stripped = mime.strip()
-            if not stripped or len(stripped) > _MAX_MIME_TYPE_LENGTH:
-                raise ValidationError(f"invalid mime_type entry: {mime!r}")
+        created_after = self._parse_filter_datetime(options.created_after, "created_after")
+        created_before = self._parse_filter_datetime(options.created_before, "created_before")
+        if (
+            created_after is not None
+            and created_before is not None
+            and created_after > created_before
+        ):
+            raise ValidationError("created_after must not be after created_before")
+        if options.mime_types is not None:
+            if not options.mime_types:
+                raise ValidationError("mime_types must not be empty when provided")
+            if len(options.mime_types) > _MAX_MIME_TYPES:
+                raise ValidationError(
+                    f"mime_types must have at most {_MAX_MIME_TYPES} entries"
+                )
+            for mime in options.mime_types:
+                stripped = mime.strip()
+                if not stripped or len(stripped) > _MAX_MIME_TYPE_LENGTH:
+                    raise ValidationError(f"invalid mime_type entry: {mime!r}")
+        if options.owners is not None:
+            if not options.owners:
+                raise ValidationError("owners must not be empty when provided")
+            if len(options.owners) > _MAX_OWNERS:
+                raise ValidationError(f"owners must have at most {_MAX_OWNERS} entries")
+            for owner in options.owners:
+                stripped_owner = owner.strip()
+                if not stripped_owner or len(stripped_owner) > _MAX_OWNER_LENGTH:
+                    raise ValidationError(f"invalid owner entry: {owner!r}")
 
     def _parse_filter_datetime(self, value: str | None, field_name: str) -> datetime | None:
         """ISO8601 문자열을 tz-naive UTC datetime 으로 파싱한다.
@@ -996,10 +1034,14 @@ class DocumentSearchService:
     def _build_meta_filter(self, options: DocumentSearchOptions) -> DocumentMetaFilter:
         """검증을 통과한 옵션으로 `DocumentMetaFilter` 를 만든다(호출 전 `_validate` 필수)."""
         mime_types = tuple(m.strip() for m in options.mime_types) if options.mime_types else ()
+        owners = tuple(o.strip() for o in options.owners) if options.owners else ()
         return DocumentMetaFilter(
             modified_after=parse_rfc3339(options.modified_after),
             modified_before=parse_rfc3339(options.modified_before),
             mime_types=mime_types,
+            created_after=parse_rfc3339(options.created_after),
+            created_before=parse_rfc3339(options.created_before),
+            owners=owners,
         )
 
     def _validate_source(self, source: str | None, allow_none: bool) -> str | None:

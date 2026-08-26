@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from sqlalchemy import ColumnElement, exists, select
+from sqlalchemy import ColumnElement, exists, func, select
 
 from app.models.document_meta import DocumentMeta
 
@@ -21,25 +21,33 @@ class DocumentMetaFilter:
     """`document_meta` 에 거는 hard filter 조건(전부 선택).
 
     Attributes:
-        modified_after: 포함(>=), tz-naive UTC.
-        modified_before: 포함(<=), tz-naive UTC.
+        modified_after: 수정 시각 포함(>=), tz-naive UTC.
+        modified_before: 수정 시각 포함(<=), tz-naive UTC.
         mime_types: 정확 일치 OR. 빈 튜플이면 조건 없음.
+        created_after: 생성 시각 포함(>=), tz-naive UTC.
+        created_before: 생성 시각 포함(<=), tz-naive UTC.
+        owners: 소유자 정확 일치 OR(대소문자 무시). 빈 튜플이면 조건 없음.
 
-    `modified_at` 이 NULL 인 행은 날짜 필터가 하나라도 있으면 제외된다
-    (SQL 3값 논리 그대로 - 의도된 동작).
+    필터가 보는 컬럼이 NULL 인 행은 그 필터가 지정되면 제외된다(SQL 3값
+    논리 그대로 - 의도된 동작). Notion 문서는 `mime_type`/`owner` 가 항상
+    NULL 이므로 두 필터를 주면 언제나 빠진다.
     """
 
     modified_after: datetime | None = None
     modified_before: datetime | None = None
     mime_types: tuple[str, ...] = field(default_factory=tuple)
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    owners: tuple[str, ...] = field(default_factory=tuple)
 
     def is_empty(self) -> bool:
-        """조건이 하나도 없으면 True."""
-        return (
-            self.modified_after is None
-            and self.modified_before is None
-            and not self.mime_types
-        )
+        """조건이 하나도 없으면 True.
+
+        필드를 나열해 검사하면 필드를 추가할 때 한 줄만 빠뜨려도 필터가
+        조용히 무시된다(호출부가 이 값으로 WHERE 부착 여부를 정한다).
+        조건 생성 함수에서 파생시켜 그 어긋남을 구조적으로 막는다.
+        """
+        return not document_meta_conditions(self)
 
 
 def document_meta_conditions(f: DocumentMetaFilter) -> list[ColumnElement[bool]]:
@@ -51,6 +59,17 @@ def document_meta_conditions(f: DocumentMetaFilter) -> list[ColumnElement[bool]]
         conditions.append(DocumentMeta.modified_at <= f.modified_before)
     if f.mime_types:
         conditions.append(DocumentMeta.mime_type.in_(f.mime_types))
+    if f.created_after is not None:
+        conditions.append(DocumentMeta.created_at >= f.created_after)
+    if f.created_before is not None:
+        conditions.append(DocumentMeta.created_at <= f.created_before)
+    if f.owners:
+        # 이메일 대소문자 표기는 외부 시스템에서 오므로 신뢰할 수 없다.
+        # 이 필터에 쓸 인덱스가 없어(후보가 이미 좁혀진 뒤 걸린다)
+        # lower() 로 인한 인덱스 손실도 없다.
+        conditions.append(
+            func.lower(DocumentMeta.owner).in_([o.lower() for o in f.owners])
+        )
     return conditions
 
 

@@ -121,6 +121,9 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         modified_after: str | None = None,
         modified_before: str | None = None,
         mime_types: list[str] | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
+        owners: list[str] | None = None,
     ) -> DocumentSearchResponse | ErrorPayload:
         """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
 
@@ -155,14 +158,26 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
                 "application/vnd.google-apps.document", "application/pdf").
                 Notion 문서는 mimeType 이 없으므로 이 필터를 주면 항상
                 제외된다.
+            created_after: 이 시각 이후(포함, >=)에 생성된 문서만. ISO8601
+                (예: "2026-08-01" 또는 "2026-08-01T09:00:00Z"). 생성 시각이
+                없는 문서는 이 필터가 있으면 제외된다.
+            created_before: 이 시각 이전(포함, <=)에 생성된 문서만. 형식은
+                created_after 와 같다.
+            owners: 문서 소유자 정확 일치 목록(OR, 대소문자 무시). 값은
+                결과 항목의 owner 필드를 **그대로 복사해서** 넣는다 — 소유자는
+                이메일로 저장되는 경우와 표시 이름으로 저장되는 경우가 있어
+                추측한 값은 매치되지 않는다. Notion 문서는 소유자 정보가
+                없으므로 이 필터를 주면 항상 제외된다.
 
         Returns:
             items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
             project, url, snippet, score, version, snippet_as_of, external_id,
-            matched_chunks, match_reasons, modified_at, indexed, mime_type
-            필드를 갖는다. mime_type 은 출처 시스템의 MIME 타입(Drive 전용,
-            Notion·백필 전 Drive 문서는 null) — 다음 질의를 mime_types 로
-            좁힐 때 참고한다.
+            matched_chunks, match_reasons, modified_at, indexed, mime_type,
+            owner 필드를 갖는다. mime_type 은 출처 시스템의 MIME 타입(Drive
+            전용, Notion·백필 전 Drive 문서는 null) — 다음 질의를 mime_types 로
+            좁힐 때 참고한다. owner 는 문서 소유자(Drive 전용, Notion·백필 전
+            Drive 문서는 null)다 — 같은 사람이 쓴 다른 문서를 찾으려면 이 값을
+            그대로 owners 에 넣어 재질의한다.
             snippet_as_of 는 스니펫이 만들어진 본문 색인 시점(ISO8601)이며,
             본문 청크 없이 제목 매치만으로 걸린 항목은 null 이다. external_id
             는 get_document(source, external_id) 에 그대로 넘기는 값이다 —
@@ -187,6 +202,9 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
                 modified_after=modified_after,
                 modified_before=modified_before,
                 mime_types=mime_types,
+                created_after=created_after,
+                created_before=created_before,
+                owners=owners,
             )
             items = bundle.document_search_service.search(query, options)
             return _to_document_search_payload(items)

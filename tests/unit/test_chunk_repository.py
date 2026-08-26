@@ -915,7 +915,12 @@ def test_update_endpoint_chunk_updates_text_and_embedding(db_session) -> None:
 
 
 def _seed_document_meta(
-    session, document_id: str, mime_type: str | None = None, modified_at: datetime | None = None
+    session,
+    document_id: str,
+    mime_type: str | None = None,
+    modified_at: datetime | None = None,
+    created_at: datetime | None = None,
+    owner: str | None = None,
 ) -> None:
     """`document_meta` 한 건을 `document_id` 로 연결해 저장한다."""
     session.add(
@@ -929,6 +934,8 @@ def _seed_document_meta(
             last_synced_at=modified_at or datetime(2026, 7, 1, 9, 0, 0),
             document_id=document_id,
             mime_type=mime_type,
+            created_at=created_at,
+            owner=owner,
         )
     )
 
@@ -1033,6 +1040,38 @@ def test_search_by_vector_meta_filter_excludes_mismatched_mime_type(db_session) 
         [0.1] * EMBEDDING_DIM,
         top_k=5,
         meta_filter=DocumentMetaFilter(mime_types=("application/pdf",)),
+    )
+
+    assert hits == []
+
+
+def test_search_endpoint_by_text_meta_filter_excludes_other_owner(db_session) -> None:
+    """keyword arm 의 EXISTS 서브쿼리에도 owners 필터가 걸린다."""
+    _seed_chunk(db_session, "chunk-a", "doc-a", "find pet by id")
+    _seed_chunk(db_session, "chunk-b", "doc-b", "find pet by id")
+    _seed_document_meta(db_session, "doc-a", owner="a@example.test")
+    _seed_document_meta(db_session, "doc-b", owner="b@example.test")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_endpoint_by_text(
+        ["pet"], top_k=10, meta_filter=DocumentMetaFilter(owners=("a@example.test",))
+    )
+
+    assert [h.chunk_id for h in hits] == ["chunk-a"]
+
+
+def test_search_by_vector_meta_filter_excludes_older_created_at(db_session) -> None:
+    """vector arm 의 EXISTS 서브쿼리에도 created_after 필터가 걸린다."""
+    _seed_chunk_with_embedding(db_session, "chunk-1", "doc-1", ref_id="ep-1")
+    _seed_document_meta(db_session, "doc-1", created_at=datetime(2026, 6, 1, 0, 0, 0))
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = repo.search_by_vector(
+        [0.1] * EMBEDDING_DIM,
+        top_k=5,
+        meta_filter=DocumentMetaFilter(created_after=datetime(2026, 7, 1, 0, 0, 0)),
     )
 
     assert hits == []
