@@ -15,7 +15,7 @@ from app.services.search.endpoint_candidate_search import (
     CandidateSearchOptions,
     EndpointCandidateSearch,
 )
-from app.services.search.keyword_search import KeywordSearch
+from app.services.search.keyword_search import KeywordHit, KeywordSearch
 from app.services.search.vector_search import VectorSearch, VectorSearchHit
 from tests.fixtures.fakes import ExplodingEmbeddingProvider, StubVectorSearch
 
@@ -675,3 +675,200 @@ def test_exact_match_respects_document_scope(app_state, sample_openapi_3: str) -
     matched_endpoint = bundle.endpoint_repo.get(exact_candidates[0].endpoint_id)
     assert matched_endpoint is not None
     assert matched_endpoint.document_id == document_id
+
+
+# --- B: endpoint keyword arm variants 대칭화 (docs/architect-review/68 §3) ----
+
+
+class _ScriptedKeywordSearch:
+    """질의 문자열 → ref_id 순위 리스트로 고정 응답하는 KeywordSearch 대역.
+
+    각 호출의 (query, query_variants) 를 기록해, RRF 경로가 variant 를 독립
+    검색으로 분해하는지(공용 계약에 variant term 을 섞지 않는지) 검증한다.
+    """
+
+    def __init__(self, script: dict[str, list[str]]) -> None:
+        self._script = script
+        self.calls: list[tuple[str, list[str] | None]] = []
+
+    def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        document_id: str | None = None,
+        project: str | None = None,
+        query_variants: list[str] | None = None,
+    ) -> list[KeywordHit]:
+        self.calls.append((query, query_variants))
+        ref_ids = self._script.get(query, [])
+        return [
+            KeywordHit(chunk_id=f"chunk-{ref_id}", ref_id=ref_id, score=1.0)
+            for ref_id in ref_ids[:top_k]
+        ]
+
+
+def _rrf_only_search(bundle, keyword_search) -> EndpointCandidateSearch:
+    """벡터 arm 을 끄고 키워드 arm 만 RRF 로 태우는 검색기를 만든다."""
+    return EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=keyword_search,
+        vector_search=SimpleNamespace(search=lambda *a, **k: []),
+        vector_fallback_enabled=False,
+        document_repo=bundle.document_repo,
+    )
+
+
+def _endpoint_ref_ids(bundle) -> list[str]:
+    """등록된 문서의 endpoint 청크 ref_id 목록(= 엔드포인트 id)."""
+    return [c.ref_id for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
+
+
+def _endpoint_ids_by_path(bundle) -> dict[tuple[str, str], str]:
+    """(method, path) → 엔드포인트 id. route-family rerank 시나리오 조립용."""
+    return {(e.method, e.path): e.id for e in bundle.endpoint_repo.list_all()}
+
+
+def test_keyword_variant_independent_rank_feeds_rrf(app_state, sample_openapi_3: str) -> None:
+    """variant 를 독립 키워드 검색해 얻은 상위 등수가 실제 RRF 순위에 기여한다.
+
+    원문에서 꼴찌였던 후보가 variant 검색에서 1위면, 병합 후 원문 중위권
+    후보보다 앞서야 한다(벡터 arm 대칭).
+    """
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    refs = _endpoint_ref_ids(bundle)
+    assert len(refs) >= 3
+    first, middle, last = refs[0], refs[1], refs[2]
+
+    keyword_search = _ScriptedKeywordSearch(
+        {
+            "원문 질의": [first, middle, last],
+            "english variant": [last],
+        }
+    )
+    search = _rrf_only_search(bundle, keyword_search)
+
+    out = search.search(
+        "원문 질의",
+        CandidateSearchOptions(top_k=3, query_variants=["english variant"]),
+    )
+    ids = [c.endpoint_id for c in out]
+
+    assert ids.index(last) < ids.index(middle)
+    assert keyword_search.calls == [("원문 질의", None), ("english variant", None)]
+
+
+def test_keyword_no_variants_single_call_same_order(app_state, sample_openapi_3: str) -> None:
+    """variant 가 없으면 키워드 SQL 은 한 번만 돌고 순위는 기존과 같다."""
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    refs = _endpoint_ref_ids(bundle)
+    assert len(refs) >= 3
+    scripted_order = [refs[1], refs[0], refs[2]]
+
+    keyword_search = _ScriptedKeywordSearch({"주문 목록 조회": scripted_order})
+    search = _rrf_only_search(bundle, keyword_search)
+
+    out = search.search("주문 목록 조회", CandidateSearchOptions(top_k=3))
+
+    assert [c.endpoint_id for c in out] == scripted_order
+    assert keyword_search.calls == [("주문 목록 조회", None)]
+
+
+def test_keyword_blank_and_duplicate_variants_are_dropped(app_state, sample_openapi_3: str) -> None:
+    """공백·원문 중복·상호 중복 variant 는 키워드 검색 호출 전에 제거된다."""
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    refs = _endpoint_ref_ids(bundle)
+    assert len(refs) >= 2
+
+    keyword_search = _ScriptedKeywordSearch({"주문 목록 조회": [refs[0]], "list orders": [refs[1]]})
+    search = _rrf_only_search(bundle, keyword_search)
+
+    search.search(
+        "주문 목록 조회",
+        CandidateSearchOptions(
+            top_k=5,
+            query_variants=["", "   ", "주문 목록 조회", "list orders", "list orders"],
+        ),
+    )
+
+    assert keyword_search.calls == [
+        ("주문 목록 조회", None),
+        ("list orders", None),
+    ]
+
+
+def test_wide_family_member_promoted_into_top_k(app_state, sample_openapi_3: str) -> None:
+    """wide RRF 후보에만 있던 family member 가 route-family 순열로 top_k 안에 진입한다.
+
+    `/pet` family 상위를 collection/GET 이 채우고 item-delete 후보가 3위(top_k=2
+    밖)여도, DELETE 의도 + item shape 정합이면 family 슬롯 재배열로 1위가 된다.
+    """
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    ids = _endpoint_ids_by_path(bundle)
+    pet_root = ids[("POST", "/pet")]
+    pet_get = ids[("GET", "/pet/{petId}")]
+    pet_delete = ids[("DELETE", "/pet/{petId}")]
+
+    keyword_search = _ScriptedKeywordSearch({"delete a pet": [pet_root, pet_get, pet_delete]})
+    search = _rrf_only_search(bundle, keyword_search)
+
+    out = search.search("delete a pet", CandidateSearchOptions(top_k=2))
+    result_ids = [c.endpoint_id for c in out]
+
+    assert result_ids[0] == pet_delete
+    assert pet_delete in result_ids
+
+
+def test_exact_result_is_unchanged_by_route_family_rerank(
+    app_state, sample_openapi_3: str
+) -> None:
+    """정확 일치 후보는 rank 1·match_type "exact" 로 고정 — A 가 밀어내지 못한다."""
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    ids = _endpoint_ids_by_path(bundle)
+    pet_root = ids[("POST", "/pet")]
+    pet_get = ids[("GET", "/pet/{petId}")]
+    pet_delete = ids[("DELETE", "/pet/{petId}")]
+
+    keyword_search = _ScriptedKeywordSearch(
+        {"DELETE /pet/{petId}": [pet_root, pet_get, pet_delete]}
+    )
+    search = _rrf_only_search(bundle, keyword_search)
+
+    out = search.search("DELETE /pet/{petId}", CandidateSearchOptions(top_k=3))
+
+    assert (out[0].endpoint_id, out[0].match_type) == (pet_delete, "exact")
+
+
+def test_fallback_strategy_skips_route_family_rerank(
+    app_state, sample_openapi_3: str
+) -> None:
+    """`fallback` 전략은 route-family rerank 를 전혀 거치지 않는다(키워드 순서 그대로)."""
+    _register(app_state, sample_openapi_3)
+    bundle = _bundle(app_state)
+    ids = _endpoint_ids_by_path(bundle)
+    scripted = [
+        ids[("POST", "/pet")],
+        ids[("GET", "/pet/{petId}")],
+        ids[("DELETE", "/pet/{petId}")],
+    ]
+
+    keyword_search = _ScriptedKeywordSearch({"delete a pet": scripted})
+    search = EndpointCandidateSearch(
+        chunk_repo=bundle.chunk_repo,
+        endpoint_repo=bundle.endpoint_repo,
+        keyword_search=keyword_search,
+        vector_search=SimpleNamespace(search=lambda *a, **k: []),
+        vector_fallback_enabled=False,
+        document_repo=bundle.document_repo,
+        search_strategy="fallback",
+    )
+
+    out = search.search("delete a pet", CandidateSearchOptions(top_k=3))
+
+    assert [c.endpoint_id for c in out] == scripted

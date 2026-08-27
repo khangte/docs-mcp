@@ -21,10 +21,15 @@ from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
+from app.models.openapi import ApiEndpoint
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope
+from app.services.search.endpoint_route_reranker import (
+    RouteCandidate,
+    rerank_endpoints_by_route_family,
+)
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
 from app.services.search.vector_search import VectorSearch
@@ -213,14 +218,9 @@ class EndpointCandidateSearch:
         """키워드·벡터 두 ranker를 항상 병렬 실행해 RRF로 융합한다."""
         width = max(top_k * _CANDIDATE_WIDTH_MULTIPLIER, _MIN_CANDIDATE_WIDTH)
 
-        keyword_hits = self._keyword_search.search(
-            query,
-            top_k=width,
-            document_id=document_id,
-            project=project,
-            query_variants=query_variants,
+        keyword_ref_ids = self._search_keyword_with_variants(
+            query, query_variants, width, document_id, project
         )
-        keyword_ref_ids = [h.ref_id for h in keyword_hits]
 
         vector_ref_ids: list[str] = []
         if self._vector_fallback_enabled:
@@ -235,8 +235,82 @@ class EndpointCandidateSearch:
         else:
             _LOG.debug("벡터 arm 생략(rrf 전략, 키워드 단독 degrade): 임베딩 백엔드 비의미론적")
 
-        fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=top_k)
-        return self._to_candidates_from_fused(fused)
+        # 제한 rerank 를 위해 넓게(top_k=width) 융합·hydrate 한 뒤, route-family
+        # 안에서만 순열하고 마지막에 top_k 로 자른다(설계 68 §4.1).
+        fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
+        endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
+        reranked = self._rerank_by_route_family(fused, endpoints, query, query_variants)
+        return self._to_candidates_from_fused(reranked[:top_k], endpoints)
+
+    def _rerank_by_route_family(
+        self,
+        fused: list[FusedResult],
+        endpoints: dict[str, ApiEndpoint],
+        query: str,
+        query_variants: list[str] | None,
+    ) -> list[FusedResult]:
+        """RRF 순서를 route-family 안에서만 재배열한다(설계 68 §4).
+
+        `endpoint_route_reranker` 는 순수 함수다 — 여기서는 hydrate 한 endpoint 로
+        `RouteCandidate` 를 만들어 넘기고, 돌려받은 순서대로 `FusedResult` 를 다시
+        정렬한다. RRF 점수·`match_type` 은 건드리지 않는다.
+        """
+        route_candidates = [
+            RouteCandidate(ref_id=item.ref_id, method=ep.method, path=ep.path)
+            for item in fused
+            if (ep := endpoints.get(item.ref_id)) is not None
+        ]
+        nonblank_variants = [v for v in (query_variants or []) if v and v.strip()]
+        reranked = rerank_endpoints_by_route_family(route_candidates, query, nonblank_variants)
+        new_rank = {rc.ref_id: position for position, rc in enumerate(reranked)}
+        return sorted(
+            (item for item in fused if item.ref_id in new_rank),
+            key=lambda item: new_rank[item.ref_id],
+        )
+
+    def _search_keyword_with_variants(
+        self,
+        query: str,
+        query_variants: list[str] | None,
+        width: int,
+        document_id: str | None,
+        project: str | None,
+    ) -> list[str]:
+        """원본 질의 + `query_variants` 를 각각 독립 키워드 검색해 등수 최솟값으로 병합한다.
+
+        공용 `KeywordSearch` 계약(variant 는 후보 필터만 넓히고 점수는 원문
+        term 으로만 계산)은 문서 검색에서도 쓰이므로 바꾸지 않는다. RRF 경로
+        에서만 벡터 arm(`_search_vector_with_variants`)과 같은 규칙 — 여러 표현
+        중 하나에서 강하게 맞은 후보를 살린다 — 을 쓴다
+        (`docs/architect-review/68_endpoint_route_family_rerank_and_variants_design.md` §3).
+
+        빈 문자열·원문과 동일·상호 중복 variant 는 검색 호출 전에 제거한다.
+        정제 후 남는 variant 가 없으면 키워드 SQL 은 정확히 한 번 실행되고
+        결과 순서는 기존과 동일하다.
+        """
+        seen_queries = {query}
+        distinct_queries = [query]
+        for variant in query_variants or []:
+            stripped = variant.strip()
+            if stripped and stripped not in seen_queries:
+                seen_queries.add(stripped)
+                distinct_queries.append(stripped)
+
+        best_rank: dict[str, int] = {}
+        for candidate_query in distinct_queries:
+            hits = self._keyword_search.search(
+                candidate_query,
+                top_k=width,
+                document_id=document_id,
+                project=project,
+                query_variants=None,
+            )
+            for rank, hit in enumerate(hits, start=1):
+                if hit.ref_id not in best_rank or rank < best_rank[hit.ref_id]:
+                    best_rank[hit.ref_id] = rank
+        return [
+            ref_id for ref_id, _ in sorted(best_rank.items(), key=lambda item: (item[1], item[0]))
+        ]
 
     def _search_vector_with_variants(
         self,
@@ -355,14 +429,18 @@ class EndpointCandidateSearch:
         return candidates
 
     def _to_candidates_from_fused(
-        self, fused: list[FusedResult]
+        self,
+        fused: list[FusedResult],
+        endpoints: dict[str, ApiEndpoint] | None = None,
     ) -> list[EndpointCandidate]:
         """RRF 융합 결과(ref_id + match_type)를 후보 DTO 로 변환한다.
 
         결과당 `get()` 을 반복하던 N+1 을 `get_many()` 배치 조회 한 번으로
-        대체한다(Q3).
+        대체한다(Q3). 이미 hydrate 한 `endpoints` 를 넘기면 재조회하지 않는다
+        (설계 68 §4.1 — wide 융합 경로에서 `get_many` 1회).
         """
-        endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
+        if endpoints is None:
+            endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
         candidates: list[EndpointCandidate] = []
         for item in fused:
             endpoint = endpoints.get(item.ref_id)
