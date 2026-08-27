@@ -570,6 +570,7 @@ test = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "jsonschema" },
     { name = "mypy" },
     { name = "ruff" },
 ]
@@ -600,6 +601,7 @@ provides-extras = ["test"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "jsonschema", specifier = ">=4.26" },
     { name = "mypy", specifier = ">=2.3.0" },
     { name = "ruff", specifier = ">=0.16.3" },
 ]

@@ -30,7 +30,7 @@ Calls per Query도 같은 이유로 제외한다 — 어느 툴을 어떤 인자
 
 기준선: `docs/architect-review/29_search_quality_eval_real_corpus_results.md`.
 
-### MCP 계층 (서버 로그 산출)
+### MCP 계층 (MCP 평가 하네스 산출)
 
 | 지표 | 정의 | 목표치 |
 |---|---|---|
@@ -39,6 +39,19 @@ Calls per Query도 같은 이유로 제외한다 — 어느 툴을 어떤 인자
 
 End-to-end Success Rate는 "툴 호출 → 유효 응답" 비율로 정의하면 Tool
 Success Rate와 동일하므로 별도 지표로 두지 않는다.
+
+하네스는 인프로세스 `FastMCP.call_tool()` 로 read-only tool 9개 × 고정
+시나리오 21개를 기본 5회 반복(총 105회) 채점한다. 설계는
+`docs/architect-review/64_mcp_layer_eval_harness_design.md`.
+
+- 한 파일 = 한 번의 측정 실행. 파일명 `YYYY-MM-DD_mcp_eval.md`.
+- 러너 stdout 을 그대로 새 파일로 저장한다. 러너는 이 폴더를 자동 수정하지 않는다.
+- 명령:
+
+  ```bash
+  docker compose up -d postgres
+  uv run python tests/fixtures/mcp_eval/run_mcp_eval.py > docs/eval-results/$(date +%F)_mcp_eval.md
+  ```
 
 ### 성능 (`scripts/bench_search_perf.py` 산출)
 

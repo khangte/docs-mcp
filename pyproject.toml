@@ -57,6 +57,11 @@ build-backend = "setuptools.build_meta"
 dev = [
     "mypy>=2.3.0",
     "ruff>=0.16.3",
+    # MCP 계층 평가 하네스(tests/fixtures/mcp_eval/run_mcp_eval.py)가 tool
+    # output_schema 검증에 직접 사용한다. 지금까지는 jsonschema-path 를 통해
+    # 전이 의존으로만 들어와 있었다. 하네스는 `uv run python ...` 로 --extra
+    # test 없이 실행하므로 기본 활성 그룹인 dev 에 둔다.
+    "jsonschema>=4.26",
 ]
 
 [tool.setuptools.packages.find]
