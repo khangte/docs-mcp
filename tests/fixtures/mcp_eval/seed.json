@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "openapi_project": "eval-openapi",
+  "collab_project": "eval-collab",
+  "drive": {
+    "folder_id": "eval-drive-folder-001",
+    "documents": [
+      {
+        "external_id": "drv-login-001",
+        "title": "로그인 연동 설계서",
+        "body": "Google OAuth 2.0 로그인 흐름과 토큰 재발급 절차를 정리한다. authorization code 를 access token 으로 교환하는 단계와 refresh token 회전 규칙을 포함한다.",
+        "url": "https://drive.example.test/drv-login-001"
+      }
+    ]
+  },
+  "notion": {
+    "database_id": "eval-notion-db-001",
+    "documents": [
+      {
+        "external_id": "ntn-deploy-001",
+        "title": "배포 롤백 런북",
+        "body": "무중단 배포가 실패했을 때 직전 안정 버전으로 되돌리는 절차. 헬스체크 확인, 트래픽 전환, 캐시 무효화 순서로 진행한다.",
+        "url": "https://notion.example.test/ntn-deploy-001"
+      }
+    ]
+  }
+}

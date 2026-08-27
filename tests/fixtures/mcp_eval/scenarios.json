@@ -1,0 +1,356 @@
+{
+  "schema_version": 1,
+  "default_repeat": 5,
+  "scenarios": [
+    {
+      "id": "document.list.seeded",
+      "tool": "list_documents",
+      "arguments": {},
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "contains",
+            "path": "",
+            "value": {
+              "doc_type": "openapi",
+              "project": "eval-openapi"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "document.list.project_miss",
+      "tool": "list_documents",
+      "arguments": {
+        "project": "no-such-project-xyz"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "",
+            "value": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "collab.search.hit",
+      "tool": "search_documents",
+      "arguments": {
+        "query": "로그인",
+        "project": "eval-collab"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "contains",
+            "path": "items",
+            "value": {
+              "external_id": "drv-login-001"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "collab.search.no_match",
+      "tool": "search_documents",
+      "arguments": {
+        "query": "qwzxkjv plmqxzt vbnmqwp",
+        "project": "eval-collab"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "items",
+            "value": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "collab.search.blank",
+      "tool": "search_documents",
+      "arguments": {
+        "query": "   "
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "validation_error"
+      }
+    },
+    {
+      "id": "collab.get.drive_hit",
+      "tool": "get_document",
+      "arguments": {
+        "source": "drive",
+        "external_id": "drv-login-001"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "source",
+            "value": "drive"
+          },
+          {
+            "op": "contains",
+            "path": "content",
+            "value": "authorization code"
+          }
+        ]
+      }
+    },
+    {
+      "id": "collab.get.missing",
+      "tool": "get_document",
+      "arguments": {
+        "source": "drive",
+        "external_id": "drv-missing-zzz"
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "integration_error"
+      }
+    },
+    {
+      "id": "endpoint.search.hit",
+      "tool": "search_endpoints",
+      "arguments": {
+        "query": "find pet by id",
+        "project": "eval-openapi"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "contains",
+            "path": "items",
+            "value": {
+              "path": "/pet/{petId}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "endpoint.search.no_match",
+      "tool": "search_endpoints",
+      "arguments": {
+        "query": "qwzxkjv plmqxzt vbnmqwp",
+        "project": "eval-openapi"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "items",
+            "value": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "endpoint.search.blank",
+      "tool": "search_endpoints",
+      "arguments": {
+        "query": "   "
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "validation_error"
+      }
+    },
+    {
+      "id": "endpoint.details.hit",
+      "tool": "get_endpoint_details",
+      "arguments": {
+        "endpoint_id": "${pet_endpoint_id}"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "method",
+            "value": "GET"
+          },
+          {
+            "op": "equals",
+            "path": "path",
+            "value": "/pet/{petId}"
+          }
+        ]
+      }
+    },
+    {
+      "id": "endpoint.details.missing",
+      "tool": "get_endpoint_details",
+      "arguments": {
+        "endpoint_id": "nonexistent-endpoint-id-000"
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "endpoint_not_found"
+      }
+    },
+    {
+      "id": "schema.resolve.hit",
+      "tool": "resolve_ref",
+      "arguments": {
+        "ref": "#/components/schemas/Pet",
+        "document_id": "${openapi_document_id}"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "name",
+            "value": "Pet"
+          }
+        ]
+      }
+    },
+    {
+      "id": "schema.resolve.missing",
+      "tool": "resolve_ref",
+      "arguments": {
+        "ref": "#/components/schemas/NoSuchSchema",
+        "document_id": "${openapi_document_id}"
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "schema_ref_not_found"
+      }
+    },
+    {
+      "id": "schema.resolve.bad_format",
+      "tool": "resolve_ref",
+      "arguments": {
+        "ref": "Pet"
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "validation_error"
+      }
+    },
+    {
+      "id": "tag.list.seeded",
+      "tool": "list_tags",
+      "arguments": {
+        "document_id": "${openapi_document_id}"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "contains",
+            "path": "tags",
+            "value": {
+              "name": "pet"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "tag.list.missing_doc",
+      "tool": "list_tags",
+      "arguments": {
+        "document_id": "nonexistent-doc-id-000"
+      },
+      "expected": {
+        "outcome": "error",
+        "code": "document_not_found"
+      }
+    },
+    {
+      "id": "source.drive.seeded",
+      "tool": "list_drive_sources",
+      "arguments": {
+        "project": "eval-collab"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "length_gte",
+            "path": "items",
+            "value": 1
+          },
+          {
+            "op": "equals",
+            "path": "items.0.folder_id",
+            "value": "eval-drive-folder-001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "source.drive.project_miss",
+      "tool": "list_drive_sources",
+      "arguments": {
+        "project": "no-such-project-xyz"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "items",
+            "value": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "source.notion.seeded",
+      "tool": "list_notion_sources",
+      "arguments": {
+        "project": "eval-collab"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "length_gte",
+            "path": "items",
+            "value": 1
+          },
+          {
+            "op": "equals",
+            "path": "items.0.database_id",
+            "value": "eval-notion-db-001"
+          }
+        ]
+      }
+    },
+    {
+      "id": "source.notion.project_miss",
+      "tool": "list_notion_sources",
+      "arguments": {
+        "project": "no-such-project-xyz"
+      },
+      "expected": {
+        "outcome": "success",
+        "assertions": [
+          {
+            "op": "equals",
+            "path": "items",
+            "value": []
+          }
+        ]
+      }
+    }
+  ]
+}
