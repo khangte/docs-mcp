@@ -242,7 +242,10 @@ def main() -> None:
         print("\n### 지표 요약")
         print(f"(n={len(queries)}, top_k={args.top_k})")
         for s in strategies:
-            print(_format_summary_line(s, _summarize(ranks_by_strategy[s].ranks)))
+            ranks = ranks_by_strategy[s].ranks
+            print(_format_summary_line(s, _summarize(ranks)))
+            no_result = sum(1 for r in ranks if r is None)
+            print(f"  - {s} No-result Rate: {no_result}/{len(ranks)} ({no_result / len(ranks):.1%})")
 
         print(f"\n### Latency (질의당 {args.latency_reps}회 반복, 콜드 1회차 포함)")
         for s in strategies:
