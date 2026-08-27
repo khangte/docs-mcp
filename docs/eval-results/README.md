@@ -19,23 +19,47 @@ MCP 계층의 Tool Selection Accuracy / Parameter Accuracy / 평균 Tool
 Calls per Query도 같은 이유로 제외한다 — 어느 툴을 어떤 인자로 부를지는
 클라이언트 LLM 판단이다.
 
-### 검색 품질 (27번 하네스 산출)
+### 게이트 vs 목표
 
-| 지표 | 정의 | 목표치 | 비고 |
+지표는 두 종류다.
+
+- **게이트**: PASS/FAIL을 낸다. 회귀 방지선. 현재 값이 이미 통과 상태라
+  "떨어지면 막는다"는 의미다. — Latency, MCP 계층.
+- **목표(aspirational)**: 도달하고 싶은 값. **PASS/FAIL을 내지 않는다.**
+  현재 측정이 목표에 한참 못 미치며(2026-08-27 기준 Recall@1 25% vs 목표
+  70%), 이는 코드 튜닝이 아니라 **정답 라벨 검증 + 질의셋 확장**
+  (`docs/exec_plans/eval_set_expansion_plan.md`)이 선행돼야 좁혀진다.
+  그 작업 전까지 검색 품질 수치는 정보용 회귀 관찰값으로만 쓴다. —
+  검색 품질(Recall/MRR/nDCG/No-result Rate).
+
+### 검색 품질 (27번 하네스 산출) — 목표(aspirational), PASS/FAIL 아님
+
+n=20 질의 평균. 표본이 작아(1건 = 5%p) 강제 게이트로 못 쓴다.
+질의셋 확장·라벨 검증 후 게이트 승격을 재검토한다.
+
+| 지표 | 정의 | 목표 | 2026-08-27 (rrf) |
 |---|---|---|---|
-| Recall@1 / @3 / @5 / @10 | 정답 `(method, path)`가 top-k에 하나라도 들면 hit. 20질의 평균 | 회귀 판단용(절대 임계값 미고정) | k=1/3/5/10 모두 기록 |
-| MRR | 최상위 정답의 1-based 순위 역수, 20질의 평균 | 회귀 판단용 | |
-| nDCG@10 | binary relevance 근사(graded 라벨 없음) | 회귀 판단용 | 27번 §2 비목표: graded 미도입 |
-| No-result Rate | 20질의 중 top-k가 공집합인 비율 | 낮을수록 좋음. 상승 시 필터·색인 회귀 의심 | 27번 하네스에 추가 필요 |
+| Recall@1 | 정답 `(method, path)`가 top-1에 들면 hit | ≥ 0.70 | 0.25 |
+| Recall@3 | top-3 | ≥ 0.85 | 0.35 |
+| Recall@5 | top-5 | ≥ 0.90 | 0.40 |
+| Recall@10 | top-10 | ≥ 0.95 | 0.45 |
+| MRR | 최상위 정답의 1-based 순위 역수 | ≥ 0.75 | 0.318 |
+| nDCG@10 | binary relevance 근사(graded 라벨 없음, 27번 §2) | ≥ 0.80 | 0.350 |
+| No-result Rate | 20질의 중 top-k가 공집합인 비율 | ≤ 2% | 55% |
+
+현재 갭의 원인: C2(한글 패러프레이즈)·C3(영문 의역)·C4(bare word)
+카테고리가 rrf/fallback 양쪽 0%. multilingual-e5 임베딩인데도 한글→영문
+recall이 0인 것은 모델보다 **질의셋/정답 라벨** 문제일 가능성이 크다
+(27번 §3.3 게이트는 `(method,path)` 실재만 검증, 의미 타당성 미검증).
 
 기준선: `docs/architect-review/29_search_quality_eval_real_corpus_results.md`.
 
-### MCP 계층 (MCP 평가 하네스 산출)
+### MCP 계층 (MCP 평가 하네스 산출) — 게이트, PASS/FAIL
 
-| 지표 | 정의 | 목표치 |
-|---|---|---|
-| Tool Success Rate | 툴 호출이 예외·타임아웃 없이 유효 응답을 반환한 비율 | ≥ 99% |
-| MCP Error / Timeout Rate | 위의 뒷면(1 − Tool Success Rate). 에러/타임아웃 분해 | < 1% |
+| 지표 | 정의 | 게이트 | 2026-08-27 |
+|---|---|---|---|
+| Tool Success Rate | 툴 호출이 예외·타임아웃 없이 유효 응답을 반환한 비율 | ≥ 99% | 100% |
+| MCP Error / Timeout Rate | 위의 뒷면(1 − Tool Success Rate). 에러/타임아웃 분해 | < 1% | 0% |
 
 End-to-end Success Rate는 "툴 호출 → 유효 응답" 비율로 정의하면 Tool
 Success Rate와 동일하므로 별도 지표로 두지 않는다.
@@ -53,12 +77,18 @@ Success Rate와 동일하므로 별도 지표로 두지 않는다.
   uv run python tests/fixtures/mcp_eval/run_mcp_eval.py > docs/eval-results/$(date +%F)_mcp_eval.md
   ```
 
-### 성능 (`scripts/bench_search_perf.py` 산출)
+### 성능 — 게이트, PASS/FAIL
 
-| 지표 | 정의 | 목표치 |
-|---|---|---|
-| P50 / P95 Latency (검색) | 검색 경로 단독 지연 | 기준선 대비 회귀 없을 것 |
-| P50 / P95 Latency (end-to-end) | 툴 진입 → 응답 반환 전체 | 기준선 대비 회귀 없을 것 |
+측정 조건: 로컬 CPU, 실 e5 임베딩, 27번 프리즈 코퍼스(2문서, ~1800
+엔드포인트) 색인. 운영 코퍼스 규모가 커지면 이 게이트를 재산정한다.
+
+| 지표 | 정의 | 게이트 | 2026-08-27 (rrf) |
+|---|---|---|---|
+| P50 Latency | 검색 경로 단독 지연(질의당 5회 반복 표본) | ≤ 200ms | 16.4ms |
+| P95 Latency | 〃 | ≤ 500ms | 32.6ms |
+
+`scripts/bench_search_perf.py`는 별도 벤치(부하 프로파일)로 유지. 위
+게이트 값은 `run_corpus_eval.py`의 Latency 섹션에서 읽는다.
 
 제외:
 - LLM latency — 서버에 LLM 없음
