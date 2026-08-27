@@ -26,11 +26,15 @@ Calls per Query도 같은 이유로 제외한다 — 어느 툴을 어떤 인자
 - **게이트**: PASS/FAIL을 낸다. 회귀 방지선. 현재 값이 이미 통과 상태라
   "떨어지면 막는다"는 의미다. — Latency, MCP 계층.
 - **목표(aspirational)**: 도달하고 싶은 값. **PASS/FAIL을 내지 않는다.**
-  현재 측정이 목표에 한참 못 미치며(2026-08-27 기준 Recall@1 25% vs 목표
-  70%), 이는 코드 튜닝이 아니라 **정답 라벨 검증 + 질의셋 확장**
-  (`docs/exec_plans/eval_set_expansion_plan.md`)이 선행돼야 좁혀진다.
-  그 작업 전까지 검색 품질 수치는 정보용 회귀 관찰값으로만 쓴다. —
-  검색 품질(Recall/MRR/nDCG/No-result Rate).
+  현재 측정이 목표에 한참 못 미친다(2026-08-27 기준 Recall@1 25% vs 목표
+  70%). 진행 상태(67번 판정 순서):
+  1. 라벨 재검증 — 완료(66번). 오류 없음.
+  2. variants off/on 진단 — 완료(`2026-08-27_variants_diagnosis.md`).
+     주범 = route-family 내부 랭킹 편향.
+  3. 20건에서 수정 후보(제한적 rerank + variants 경로) 구현·검증 — 다음.
+  4. 100~150건 확장셋 프리즈 후 현행 vs 수정안 비교 — 그 뒤.
+  게이트 승급은 4단계 통과 시. 그때까지 검색 품질 수치는 정보용 회귀
+  관찰값으로만 쓴다. — 검색 품질(Recall/MRR/nDCG/No-result Rate).
 
 ### 검색 품질 (27번 하네스 산출) — 목표(aspirational), PASS/FAIL 아님
 
@@ -47,12 +51,19 @@ n=20 질의 평균. 표본이 작아(1건 = 5%p) 강제 게이트로 못 쓴다.
 | nDCG@10 | binary relevance 근사(graded 라벨 없음, 27번 §2) | ≥ 0.80 | 0.350 |
 | No-result Rate | 20질의 중 top-k가 공집합인 비율 | ≤ 2% | 55% |
 
-현재 갭의 원인: C2(한글 패러프레이즈)·C3(영문 의역)·C4(bare word)
-카테고리가 rrf/fallback 양쪽 0%. multilingual-e5 임베딩인데도 한글→영문
-recall이 0인 것은 모델보다 **질의셋/정답 라벨** 문제일 가능성이 크다
-(27번 §3.3 게이트는 `(method,path)` 실재만 검증, 의미 타당성 미검증).
+현재 갭의 원인 (2026-08-27 variants off/on 진단, `2026-08-27_variants_diagnosis.md`):
+라벨 오류 아님(66번 재검증 완료). C2·C3·C4 실패 9건을 유형 분류한 결과 —
+
+| 유형 | 건수 | 성격 | 다음 레버 |
+|---|---|---|---|
+| route-family 편향 | 7 | 짧은 정확 경로가 토큰 많은 child 경로에 밀림. 넓은 후보군엔 있으나 top-10에서만 탈락 | 67번 §1 → 66번 A: 질의 의도 × path specificity 제한적 rerank |
+| 한글↔영문 어휘 갭 | (위 7건 중 2건이 variants로 해결) | q04 미검출→1위, q06 미검출→3위 | variants 경로 우선 개선 |
+| 순수 어휘 갭 | 2 | q10(billing history↔invoices), q11(bare word `customer`). top50에도 없음 | rerank 대상 아님. 색인 표현 / 66번 B·C diagnostic |
+
+즉 주범은 **모델도 라벨도 아닌 route-family 내부 랭킹 편향**이다.
 
 기준선: `docs/architect-review/29_search_quality_eval_real_corpus_results.md`.
+진단: `docs/eval-results/2026-08-27_variants_diagnosis.md`.
 
 ### MCP 계층 (MCP 평가 하네스 산출) — 게이트, PASS/FAIL
 
