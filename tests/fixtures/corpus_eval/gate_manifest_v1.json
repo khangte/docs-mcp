@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "frozen",
+  "query_file": "queries_gate_v1.json",
+  "query_sha256": "6eb897d24d681d1389963007a184ded043d3ae914cf862f6ffd8aba7f75838d8",
+  "query_sha256_method": "raw file bytes (sha256sum tests/fixtures/corpus_eval/queries_gate_v1.json)",
+  "counts": {
+    "total": 124,
+    "scored": 120,
+    "diagnostic": 4,
+    "gate": 96,
+    "holdout": 24
+  },
+  "corpus_sha256": {
+    "stripe": "3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5",
+    "github": "80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d"
+  },
+  "baseline_search_sha": "ecc3e7923e216bf8e6b72ed609d5990749b2f700",
+  "candidate_search_sha": "8b4e36a02418f34becea0b74388ece8d30b6af68",
+  "rules": "docs/architect-review/69_search_quality_expanded_gate_set_design.md"
+}

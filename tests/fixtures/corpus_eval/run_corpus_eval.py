@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import resource
 import statistics
 import sys
@@ -56,6 +57,14 @@ class EvalQuery:
     accepted: list[tuple[str, str]]  # (method, path) — doc은 §3.3 검증에만 쓰고 채점에는 무관
     #: 클라 LLM이 함께 제공했을 영문 변형(query_variants). --with-variants 일 때만 사용.
     variants: list[str]
+    #: 아래는 queries_gate_v1.json(§2.2 확장 스키마)에만 존재. 레거시 queries.json은 기본값.
+    domain: str = ""
+    language: str = ""
+    evaluation_role: str = "scored"
+    split: str = ""
+    answer_mode: str = "any"
+    pair_id: str | None = None
+    pair_role: str | None = None
 
 
 def _load_manifest() -> list[dict]:
@@ -85,21 +94,236 @@ def _valid_endpoints_by_doc(texts: dict[str, str]) -> dict[str, set[tuple[str, s
     return result
 
 
-def _load_and_validate_queries(valid_by_doc: dict[str, set[tuple[str, str]]]) -> list[EvalQuery]:
-    """queries.json을 읽고, 다-문서 버전 라벨 검증 게이트를 통과시킨다(§3.3).
+_KNOWN_CATEGORIES = {
+    "C1-직접키워드", "C2-한글패러프레이즈", "C3-영문의역", "C4-흔한토큰범람",
+    "C5-decoy구분", "C6-다개념", "C7-대형엔드포인트세부",
+}
+_KNOWN_TAGS = {
+    "route_family_pair", "root_target", "child_target", "lexical_control",
+    "common_token", "cross_language", "multi_intent", "detail_field",
+}
+_C6 = "C6-다개념"
+
+
+def _norm_query(q: str) -> str:
+    return re.sub(r"\s+", " ", q.strip().casefold())
+
+
+def _validate_gate_schema(
+    raw_items: list[dict],
+    valid_by_doc: dict[str, set[tuple[str, str]]],
+    corpus_sha: dict[str, str],
+) -> None:
+    """§4.1 정적 검증. 검색 실행 전에 전부 통과해야 한다(하나라도 실패하면 죽는다).
+
+    확장 스키마(queries_gate_v1.json)에만 적용된다. 레거시 queries.json은 대상 아님.
+    """
+    errs: list[str] = []
+
+    def bad(msg: str) -> None:
+        errs.append(msg)
+
+    scored = [r for r in raw_items if r.get("evaluation_role") == "scored"]
+    diag = [r for r in raw_items if r.get("evaluation_role") == "diagnostic"]
+
+    # 1) schema: 필수 필드/enum/타입
+    required = {"id", "query", "category", "domain", "language", "evaluation_role",
+                "split", "answer_mode", "accepted"}
+    for r in raw_items:
+        miss = required - r.keys()
+        if miss:
+            bad(f"{r.get('id', '?')}: 필수 필드 누락 {sorted(miss)}")
+            continue
+        if r["category"] not in _KNOWN_CATEGORIES:
+            bad(f"{r['id']}: 알 수 없는 category {r['category']!r}")
+        if r["domain"] not in ("stripe", "github"):
+            bad(f"{r['id']}: domain {r['domain']!r}")
+        if r["language"] not in ("ko", "en", "code"):
+            bad(f"{r['id']}: language {r['language']!r}")
+        if r["evaluation_role"] not in ("scored", "diagnostic"):
+            bad(f"{r['id']}: evaluation_role {r['evaluation_role']!r}")
+        exp_split = ("gate", "holdout") if r["evaluation_role"] == "scored" else ("diagnostic",)
+        if r["split"] not in exp_split:
+            bad(f"{r['id']}: split {r['split']!r} (evaluation_role={r['evaluation_role']})")
+        if r["answer_mode"] not in ("any", "all"):
+            bad(f"{r['id']}: answer_mode {r['answer_mode']!r}")
+        if not isinstance(r["accepted"], list) or not r["accepted"]:
+            bad(f"{r['id']}: accepted 비어있음")
+        for t in r.get("diagnostic_tags", []):
+            if t not in _KNOWN_TAGS:
+                bad(f"{r['id']}: 알 수 없는 diagnostic_tag {t!r}")
+
+    # 2) id / 정규화 query 중복 없음 + 레거시 20건과도 중복 없음
+    ids = [r["id"] for r in raw_items]
+    if len(set(ids)) != len(ids):
+        bad("id 중복 존재")
+    legacy = {_norm_query(x["query"]) for x in json.loads((_DIR / "queries.json").read_text())}
+    seen: set[str] = set()
+    for r in raw_items:
+        n = _norm_query(r["query"])
+        if n in seen:
+            bad(f"{r['id']}: query 정규화 중복 {r['query']!r}")
+        if n in legacy:
+            bad(f"{r['id']}: query가 레거시 queries.json과 중복 {r['query']!r}")
+        seen.add(n)
+
+    # 3) 레코드 수 / split 분포
+    if len(scored) != 120:
+        bad(f"scored {len(scored)} != 120")
+    if len(diag) != 4:
+        bad(f"diagnostic {len(diag)} != 4")
+    n_gate = sum(r["split"] == "gate" for r in scored)
+    n_hold = sum(r["split"] == "holdout" for r in scored)
+    if (n_gate, n_hold, len(diag)) != (96, 24, 4):
+        bad(f"split 분포 {(n_gate, n_hold, len(diag))} != (96, 24, 4)")
+
+    # 4) §5.2/§5.3/§5.4 quota 정확 일치
+    cat_want = {"C1-직접키워드": 12, "C2-한글패러프레이즈": 24, "C3-영문의역": 18,
+                "C4-흔한토큰범람": 12, "C5-decoy구분": 24, "C6-다개념": 12,
+                "C7-대형엔드포인트세부": 18}
+    for cat, want in cat_want.items():
+        got = sum(r["category"] == cat for r in scored)
+        if got != want:
+            bad(f"category quota {cat}: {got} != {want}")
+        rs = [r for r in scored if r["category"] == cat]
+        if rs and sum(r["domain"] == "stripe" for r in rs) != want // 2:
+            bad(f"category {cat} domain 50/50 아님")
+    lang = {k: sum(r["language"] == k for r in scored) for k in ("ko", "en", "code")}
+    if (lang["ko"], lang["en"], lang["code"]) != (58, 58, 4):
+        bad(f"언어 quota {lang} != ko58/en58/code4")
+    for dom in ("stripe", "github"):
+        dl = {k: sum(r["language"] == k for r in scored if r["domain"] == dom) for k in ("ko", "en", "code")}
+        if (dl["ko"], dl["en"], dl["code"]) != (29, 29, 2):
+            bad(f"{dom} 언어 quota {dl} != ko29/en29/code2")
+    split_want = {"C1-직접키워드": (10, 2), "C2-한글패러프레이즈": (19, 5), "C3-영문의역": (14, 4),
+                  "C4-흔한토큰범람": (10, 2), "C5-decoy구분": (19, 5), "C6-다개념": (10, 2),
+                  "C7-대형엔드포인트세부": (14, 4)}
+    for cat, (wg, wh) in split_want.items():
+        rs = [r for r in scored if r["category"] == cat]
+        got = (sum(r["split"] == "gate" for r in rs), sum(r["split"] == "holdout" for r in rs))
+        if got != (wg, wh):
+            bad(f"gate/holdout split {cat}: {got} != {(wg, wh)}")
+    hold = [r for r in scored if r["split"] == "holdout"]
+    if sum(r["domain"] == "stripe" for r in hold) != 12:
+        bad("holdout stripe != 12")
+    hl = {k: sum(r["language"] == k for r in hold) for k in ("ko", "en", "code")}
+    if (hl["ko"], hl["en"], hl["code"]) != (11, 11, 2):
+        bad(f"holdout 언어 {hl} != ko11/en11/code2")
+
+    # 5) corpus manifest SHA
+    if corpus_sha.get("stripe", "").split(":")[-1][:12] != "3653ad45bbec":
+        bad(f"stripe corpus SHA 불일치: {corpus_sha.get('stripe')}")
+    if corpus_sha.get("github", "").split(":")[-1][:12] != "80850db290cd":
+        bad(f"github corpus SHA 불일치: {corpus_sha.get('github')}")
+    mf = _DIR / "gate_manifest_v1.json"
+    if mf.exists():
+        man = json.loads(mf.read_text())
+        if man.get("corpus_sha256", {}).get("stripe") != corpus_sha.get("stripe"):
+            bad("gate_manifest_v1.json corpus_sha256.stripe 불일치")
+        if man.get("corpus_sha256", {}).get("github") != corpus_sha.get("github"):
+            bad("gate_manifest_v1.json corpus_sha256.github 불일치")
+
+    # 6) accepted 실재 (전량)
+    for r in raw_items:
+        for acc in r["accepted"]:
+            if (acc["method"], acc["path"]) not in valid_by_doc.get(acc["doc"], set()):
+                bad(f"{r['id']}: accepted 미존재 {acc['doc']} {acc['method']} {acc['path']}")
+
+    # 7) answer_mode 계약
+    for r in raw_items:
+        if r["answer_mode"] == "all":
+            if r["category"] != _C6 or len(r["accepted"]) != 2:
+                bad(f"{r['id']}: answer_mode=all 은 C6·accepted 2건이어야 함")
+        elif not (1 <= len(r["accepted"]) <= 3):
+            bad(f"{r['id']}: any accepted 수 {len(r['accepted'])} (1~3 허용)")
+
+    # 8) variants: ko 정확히 1건, en/code 없음, blank/중복/원문동일 거부
+    all_q = {_norm_query(r["query"]) for r in raw_items} | legacy
+    for r in raw_items:
+        v = r.get("variants")
+        if r["language"] == "ko":
+            if not v or len(v) != 1:
+                bad(f"{r['id']}: ko variants 정확히 1건 필요")
+            elif not v[0].strip():
+                bad(f"{r['id']}: blank variant")
+            elif _norm_query(v[0]) == _norm_query(r["query"]):
+                bad(f"{r['id']}: variant가 원문과 동일")
+            elif _norm_query(v[0]) in all_q:
+                bad(f"{r['id']}: variant가 다른 query와 중복 {v[0]!r}")
+        elif v is not None:
+            bad(f"{r['id']}: {r['language']} 레코드에 variants 존재")
+
+    # 9) pair_id: 정확히 두 레코드(root/child), 동일 domain/language, accepted 1건씩,
+    #    root path 가 child path 의 세그먼트 경계 prefix, endpoint 서로 다름
+    pairs: dict[str, list[dict]] = {}
+    for r in raw_items:
+        if "pair_id" in r:
+            if r.get("pair_role") not in ("root", "child"):
+                bad(f"{r['id']}: pair_role {r.get('pair_role')!r}")
+            pairs.setdefault(r["pair_id"], []).append(r)
+    for pid, prs in pairs.items():
+        if len(prs) != 2 or {x["pair_role"] for x in prs} != {"root", "child"}:
+            bad(f"pair {pid}: root/child 정확히 1건씩 아님")
+            continue
+        root = next(x for x in prs if x["pair_role"] == "root")
+        child = next(x for x in prs if x["pair_role"] == "child")
+        if root["domain"] != child["domain"] or root["language"] != child["language"]:
+            bad(f"pair {pid}: domain/language 불일치")
+        if root["split"] != child["split"]:
+            bad(f"pair {pid}: split 불일치")
+        if len(root["accepted"]) != 1 or len(child["accepted"]) != 1:
+            bad(f"pair {pid}: accepted 각 1건 아님")
+            continue
+        rp, cp = root["accepted"][0]["path"], child["accepted"][0]["path"]
+        if not cp.startswith(rp + "/"):
+            bad(f"pair {pid}: root path가 child path의 세그먼트 prefix 아님 ({rp} !< {cp})")
+        if (root["accepted"][0]["method"], rp) == (child["accepted"][0]["method"], cp):
+            bad(f"pair {pid}: root/child endpoint 동일")
+
+    if errs:
+        raise ValueError("§4.1 정적 검증 실패:\n  - " + "\n  - ".join(errs))
+
+
+def _load_and_validate_queries(
+    valid_by_doc: dict[str, set[tuple[str, str]]],
+    queries_file: Path,
+    split: str | None,
+    corpus_sha: dict[str, str],
+) -> list[EvalQuery]:
+    """질의 파일을 읽고 라벨 검증 게이트를 통과시킨다(§3.3 / §4.1).
 
     오타/추정 라벨이 조용히 미검출(rank=None)로 집계되는 것을 막기 위해,
-    실행 초입에 명확한 에러로 죽인다.
+    실행 초입에 명확한 에러로 죽인다. 확장 스키마 파일이면 §4.1 정적 검증도 돈다.
     """
-    raw_items = json.loads((_DIR / "queries.json").read_text())
-    bad: list[tuple[str, str, str, str]] = []
-    for item in raw_items:
-        for acc in item["accepted"]:
-            doc, method, path = acc["doc"], acc["method"], acc["path"]
-            if (method, path) not in valid_by_doc.get(doc, set()):
-                bad.append((item["query"], doc, method, path))
-    if bad:
-        raise ValueError(f"미존재 라벨(프리즈 코퍼스에 없는 accepted 엔드포인트): {bad}")
+    raw_items = json.loads(queries_file.read_text())
+    is_gate_schema = bool(raw_items) and "evaluation_role" in raw_items[0]
+
+    if is_gate_schema:
+        _validate_gate_schema(raw_items, valid_by_doc, corpus_sha)
+        # 확장 스키마인데 --split 미지정이면 diagnostic 4건이 headline·category 집계에
+        # 조용히 섞인다(§4.1-10). 기본을 gate+holdout 로 잡고, diagnostic 은 명시할 때만.
+        if split is None:
+            split = "all"
+    else:
+        if split is not None:
+            raise ValueError("--split 은 확장 스키마(queries_gate_v1.json)에서만 쓴다")
+        bad = [
+            (item["query"], acc["doc"], acc["method"], acc["path"])
+            for item in raw_items
+            for acc in item["accepted"]
+            if (acc["method"], acc["path"]) not in valid_by_doc.get(acc["doc"], set())
+        ]
+        if bad:
+            raise ValueError(f"미존재 라벨(프리즈 코퍼스에 없는 accepted 엔드포인트): {bad}")
+
+    if split == "gate":
+        raw_items = [r for r in raw_items if r.get("split") == "gate"]
+    elif split == "holdout":
+        raw_items = [r for r in raw_items if r.get("split") == "holdout"]
+    elif split == "diagnostic":
+        raw_items = [r for r in raw_items if r.get("split") == "diagnostic"]
+    elif split == "all":
+        raw_items = [r for r in raw_items if r.get("split") in ("gate", "holdout")]
 
     return [
         EvalQuery(
@@ -108,6 +332,13 @@ def _load_and_validate_queries(valid_by_doc: dict[str, set[tuple[str, str]]]) ->
             category=item["category"],
             accepted=[(acc["method"], acc["path"]) for acc in item["accepted"]],
             variants=item.get("variants", []),
+            domain=item.get("domain", ""),
+            language=item.get("language", ""),
+            evaluation_role=item.get("evaluation_role", "scored"),
+            split=item.get("split", ""),
+            answer_mode=item.get("answer_mode", "any"),
+            pair_id=item.get("pair_id"),
+            pair_role=item.get("pair_role"),
         )
         for item in raw_items
     ]
@@ -117,6 +348,17 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--strategy", choices=("rrf", "fallback", "both"), default="both")
     parser.add_argument("--top-k", type=int, default=TOP_K)
+    parser.add_argument(
+        "--queries-file",
+        default=str(_DIR / "queries.json"),
+        help="질의셋 경로. 기본값은 레거시 queries.json 전체. 확장 게이트셋은 queries_gate_v1.json.",
+    )
+    parser.add_argument(
+        "--split",
+        choices=("gate", "holdout", "all", "diagnostic"),
+        default=None,
+        help="확장 스키마 전용. scored를 split으로 거른다(all=gate+holdout). 미지정 시 파일 전체.",
+    )
     parser.add_argument(
         "--with-variants",
         action="store_true",
@@ -136,13 +378,26 @@ def _parse_args() -> argparse.Namespace:
 class StrategyRun:
     ranks: list[int | None]
     latencies_ms: list[float]  # 반복 포함 전체 표본(percentile 계산용)
+    #: 질의별 accepted 각 항목의 개별 순위(정렬 = eq.accepted). C6 coverage/complete·pair 표에 쓴다.
+    per_accepted_ranks: list[list[int | None]]
+    #: 검색 반환 list 자체가 빈 질의 수(§3.5 empty_result_rate)
+    empty_count: int
+
+
+def _rank_of_one(candidates, method: str, path: str) -> int | None:
+    for i, c in enumerate(candidates, start=1):
+        if (c.method, c.path) == (method, path):
+            return i
+    return None
 
 
 def _run_strategy(
     bundle, queries: list[EvalQuery], top_k: int, with_variants: bool, latency_reps: int
 ) -> StrategyRun:
     ranks: list[int | None] = []
+    per_accepted_ranks: list[list[int | None]] = []
     latencies_ms: list[float] = []
+    empty_count = 0
     for eq in queries:
         options = CandidateSearchOptions(
             top_k=top_k,
@@ -152,11 +407,19 @@ def _run_strategy(
         candidates = bundle.candidate_search.search(eq.query, options)
         latencies_ms.append((time.perf_counter() - start) * 1000)
         ranks.append(_rank_of_answer(candidates, eq.accepted))
+        per_accepted_ranks.append([_rank_of_one(candidates, m, p) for m, p in eq.accepted])
+        if not candidates:
+            empty_count += 1
         for _ in range(latency_reps - 1):
             start = time.perf_counter()
             bundle.candidate_search.search(eq.query, options)
             latencies_ms.append((time.perf_counter() - start) * 1000)
-    return StrategyRun(ranks=ranks, latencies_ms=latencies_ms)
+    return StrategyRun(
+        ranks=ranks,
+        latencies_ms=latencies_ms,
+        per_accepted_ranks=per_accepted_ranks,
+        empty_count=empty_count,
+    )
 
 
 def _percentile(values: list[float], p: float) -> float:
@@ -189,13 +452,79 @@ def _print_category_breakdown(queries: list[EvalQuery], ranks_by_strategy: dict[
         print(f"| {cat} | {len(idxs)} | " + " | ".join(cells) + " |")
 
 
+def _print_pair_table(
+    queries: list[EvalQuery], runs: dict[str, StrategyRun], top_k: int
+) -> None:
+    """§3.4 route pair 보조 표. 미검출/top-k 밖은 (top_k+1)로 cap 한 순위를 찍는다.
+
+    baseline vs candidate delta·non-regression 판정은 두 worktree 실행 결과를 lead가 대조한다.
+    """
+    pids = sorted({eq.pair_id for eq in queries if eq.pair_id})
+    if not pids:
+        return
+    cap = top_k + 1
+    idx_by_id = {eq.id: i for i, eq in enumerate(queries)}
+    strategies = list(runs)
+    print(f"\n### route pair 순위 (미검출·top{top_k} 밖 = {cap}로 cap)")
+    print("| pair | split | domain | role | accepted | " + " | ".join(f"{s} r_s" for s in strategies) + " |")
+    print("|---|---|---|---|---|" + "---|" * len(strategies))
+    for pid in pids:
+        members = [eq for eq in queries if eq.pair_id == pid]
+        for role in ("root", "child"):
+            eq = next((m for m in members if m.pair_role == role), None)
+            if eq is None:
+                continue
+            i = idx_by_id[eq.id]
+            m, p = eq.accepted[0]
+            cells = []
+            for s in strategies:
+                r = runs[s].ranks[i]
+                cells.append(str(r if (r is not None and r <= top_k) else cap))
+            print(f"| {pid} | {eq.split} | {eq.domain} | {role} | {m} {p} | " + " | ".join(cells) + " |")
+
+
+def _print_c6_aux(
+    queries: list[EvalQuery], runs: dict[str, StrategyRun], top_k: int
+) -> None:
+    """§3.3 C6 보조 게이트: coverage@k = top-k에서 찾은 accepted 수 / 2, complete@k = 둘 다 존재."""
+    c6_idx = [i for i, eq in enumerate(queries) if eq.answer_mode == "all"]
+    if not c6_idx:
+        return
+    strategies = list(runs)
+    print(f"\n### C6 all-of 보조 지표 (coverage@{top_k} / complete@{top_k})")
+    print("| id | " + " | ".join(f"{s} cov | {s} complete" for s in strategies) + " |")
+    print("|---|" + "---|---|" * len(strategies))
+    agg: dict[str, list[tuple[float, int]]] = {s: [] for s in strategies}
+    for i in c6_idx:
+        eq = queries[i]
+        cells = []
+        for s in strategies:
+            per = runs[s].per_accepted_ranks[i]
+            found = sum(1 for r in per if r is not None and r <= top_k)
+            cov = found / len(per)
+            complete = 1 if found == len(per) else 0
+            agg[s].append((cov, complete))
+            cells.append(f"{cov:.2f} | {complete}")
+        print(f"| {eq.id} | " + " | ".join(cells) + " |")
+    print("\n| 전략 | 평균 coverage | complete 비율 |")
+    print("|---|---|---|")
+    for s in strategies:
+        rows = agg[s]
+        mean_cov = sum(c for c, _ in rows) / len(rows)
+        comp_ratio = sum(k for _, k in rows) / len(rows)
+        print(f"| {s} | {mean_cov:.3f} | {comp_ratio:.1%} |")
+
+
 def main() -> None:
     args = _parse_args()
     strategies = ("fallback", "rrf") if args.strategy == "both" else (args.strategy,)
 
     manifest = _load_manifest()
     texts = _load_corpus_texts(manifest)
-    queries = _load_and_validate_queries(_valid_endpoints_by_doc(texts))
+    corpus_sha = {e["source_key"]: e["content_sha256"] for e in manifest}
+    queries = _load_and_validate_queries(
+        _valid_endpoints_by_doc(texts), Path(args.queries_file), args.split, corpus_sha
+    )
     doc_type_by_key = {e["source_key"]: e["doc_type"] for e in manifest}
 
     admin_url, test_url = _make_temp_db()
@@ -242,10 +571,15 @@ def main() -> None:
         print("\n### 지표 요약")
         print(f"(n={len(queries)}, top_k={args.top_k})")
         for s in strategies:
-            ranks = ranks_by_strategy[s].ranks
+            run = ranks_by_strategy[s]
+            ranks = run.ranks
             print(_format_summary_line(s, _summarize(ranks)))
-            no_result = sum(1 for r in ranks if r is None)
-            print(f"  - {s} No-result Rate: {no_result}/{len(ranks)} ({no_result / len(ranks):.1%})")
+            # §3.5: answer_miss@10 = 정답을 top-10 안에서 못 찾음 (1 - Recall@10)
+            miss = sum(1 for r in ranks if r is None or r > 10)
+            print(f"  - {s} answer_miss@10: {miss}/{len(ranks)} ({miss / len(ranks):.1%})")
+            # §3.5: empty_result_rate = 검색이 빈 결과를 반환 (miss와 별개 지표)
+            print(f"  - {s} empty_result_rate: {run.empty_count}/{len(ranks)} "
+                  f"({run.empty_count / len(ranks):.1%})")
 
         print(f"\n### Latency (질의당 {args.latency_reps}회 반복, 콜드 1회차 포함)")
         for s in strategies:
@@ -260,6 +594,8 @@ def main() -> None:
         print("- Search cost: $0 (로컬 CPU 임베딩·자체 호스팅 Postgres, 외부 과금 API 미호출 — 측정이 아닌 구조상 선언)")
 
         _print_category_breakdown(queries, {s: r.ranks for s, r in ranks_by_strategy.items()})
+        _print_pair_table(queries, ranks_by_strategy, args.top_k)
+        _print_c6_aux(queries, ranks_by_strategy, args.top_k)
 
         if args.strategy == "both":
             print("\n### 회귀(rrf가 fallback보다 나빠진 케이스, MRR 기준 병행 표기)")
