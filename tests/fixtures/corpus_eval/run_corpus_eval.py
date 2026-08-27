@@ -17,7 +17,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import resource
+import statistics
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -119,25 +122,55 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="queries.json의 variants(클라 LLM이 제공했을 영문 변형)를 query_variants로 함께 넘겨 재측정한다(doc/30 §7.3).",
     )
+    parser.add_argument(
+        "--latency-reps",
+        type=int,
+        default=5,
+        help="질의당 반복 검색 횟수. n=20 질의 그대로는 p99 표본이 1건(=max)이라 해상도가 없어, "
+        "기본 5회 반복으로 전략당 표본을 100건까지 확보한다(정확도 순위는 1회차만 채점).",
+    )
     return parser.parse_args()
 
 
+@dataclass
+class StrategyRun:
+    ranks: list[int | None]
+    latencies_ms: list[float]  # 반복 포함 전체 표본(percentile 계산용)
+
+
 def _run_strategy(
-    bundle, queries: list[EvalQuery], top_k: int, with_variants: bool
-) -> list[int | None]:
-    return [
-        _rank_of_answer(
-            bundle.candidate_search.search(
-                eq.query,
-                CandidateSearchOptions(
-                    top_k=top_k,
-                    query_variants=eq.variants if with_variants and eq.variants else None,
-                ),
-            ),
-            eq.accepted,
+    bundle, queries: list[EvalQuery], top_k: int, with_variants: bool, latency_reps: int
+) -> StrategyRun:
+    ranks: list[int | None] = []
+    latencies_ms: list[float] = []
+    for eq in queries:
+        options = CandidateSearchOptions(
+            top_k=top_k,
+            query_variants=eq.variants if with_variants and eq.variants else None,
         )
-        for eq in queries
-    ]
+        start = time.perf_counter()
+        candidates = bundle.candidate_search.search(eq.query, options)
+        latencies_ms.append((time.perf_counter() - start) * 1000)
+        ranks.append(_rank_of_answer(candidates, eq.accepted))
+        for _ in range(latency_reps - 1):
+            start = time.perf_counter()
+            bundle.candidate_search.search(eq.query, options)
+            latencies_ms.append((time.perf_counter() - start) * 1000)
+    return StrategyRun(ranks=ranks, latencies_ms=latencies_ms)
+
+
+def _percentile(values: list[float], p: float) -> float:
+    """`p`(0~100) 백분위수. `statistics.quantiles`는 n=1일 때 죽으므로 직접 처리한다."""
+    if len(values) == 1:
+        return values[0]
+    return statistics.quantiles(values, n=100, method="inclusive")[int(p) - 1]
+
+
+def _print_latency_summary(label: str, latencies_ms: list[float]) -> None:
+    p50 = _percentile(latencies_ms, 50)
+    p95 = _percentile(latencies_ms, 95)
+    p99 = _percentile(latencies_ms, 99)
+    print(f"- {label}: n={len(latencies_ms)} | p50 {p50:.1f}ms | p95 {p95:.1f}ms | p99 {p99:.1f}ms")
 
 
 def _print_category_breakdown(queries: list[EvalQuery], ranks_by_strategy: dict[str, list[int | None]]) -> None:
@@ -174,6 +207,7 @@ def main() -> None:
         print("is_semantic:", state.embedding_provider.is_semantic)
         print("with_variants:", args.with_variants)
         bundle = next(build_services(state))
+        rss_before_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         for source_key, raw in texts.items():
             result = bundle.sync_service.register(
                 project="default",
@@ -182,12 +216,18 @@ def main() -> None:
                 doc_type=doc_type_by_key[source_key],
             )
             print(f"등록: {source_key} -> document_id={result.document.id} endpoints={result.endpoints_count}")
+        rss_after_index_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
-        ranks_by_strategy: dict[str, list[int | None]] = {}
+        ranks_by_strategy: dict[str, StrategyRun] = {}
+        cpu_before = resource.getrusage(resource.RUSAGE_SELF)
         for strategy in strategies:
             state.search_strategy = strategy
             b = next(build_services(state))
-            ranks_by_strategy[strategy] = _run_strategy(b, queries, args.top_k, args.with_variants)
+            ranks_by_strategy[strategy] = _run_strategy(
+                b, queries, args.top_k, args.with_variants, args.latency_reps
+            )
+        cpu_after = resource.getrusage(resource.RUSAGE_SELF)
+        rss_peak_kb = cpu_after.ru_maxrss
 
         print(f"\n| # | 질의 | 카테고리 | 정답 | " + " | ".join(f"{s} 순위" for s in strategies) + " |")
         print("|---|---|---|---|" + "---|" * len(strategies))
@@ -195,20 +235,32 @@ def main() -> None:
             accepted_str = " or ".join(f"{m} {p}" for m, p in eq.accepted)
             cells = []
             for s in strategies:
-                r = ranks_by_strategy[s][i]
+                r = ranks_by_strategy[s].ranks[i]
                 cells.append(str(r) if r is not None else "미검출")
             print(f"| {eq.id} | {eq.query} | {eq.category} | {accepted_str} | " + " | ".join(cells) + " |")
 
         print("\n### 지표 요약")
         print(f"(n={len(queries)}, top_k={args.top_k})")
         for s in strategies:
-            print(_format_summary_line(s, _summarize(ranks_by_strategy[s])))
+            print(_format_summary_line(s, _summarize(ranks_by_strategy[s].ranks)))
 
-        _print_category_breakdown(queries, ranks_by_strategy)
+        print(f"\n### Latency (질의당 {args.latency_reps}회 반복, 콜드 1회차 포함)")
+        for s in strategies:
+            _print_latency_summary(s, ranks_by_strategy[s].latencies_ms)
+
+        print("\n### Resource")
+        print(f"- Memory: 색인 전 {rss_before_kb / 1024:.1f}MB -> 색인 후 {rss_after_index_kb / 1024:.1f}MB "
+              f"-> 검색 종료 시점 peak RSS {rss_peak_kb / 1024:.1f}MB (ru_maxrss, 프로세스 누적 peak)")
+        print(f"- CPU: 검색 루프 구간 사용자 {cpu_after.ru_utime - cpu_before.ru_utime:.3f}s "
+              f"+ 시스템 {cpu_after.ru_stime - cpu_before.ru_stime:.3f}s "
+              f"(질의 {sum(len(r.latencies_ms) for r in ranks_by_strategy.values())}건 합산)")
+        print("- Search cost: $0 (로컬 CPU 임베딩·자체 호스팅 Postgres, 외부 과금 API 미호출 — 측정이 아닌 구조상 선언)")
+
+        _print_category_breakdown(queries, {s: r.ranks for s, r in ranks_by_strategy.items()})
 
         if args.strategy == "both":
             print("\n### 회귀(rrf가 fallback보다 나빠진 케이스, MRR 기준 병행 표기)")
-            fb_ranks, rrf_ranks = ranks_by_strategy["fallback"], ranks_by_strategy["rrf"]
+            fb_ranks, rrf_ranks = ranks_by_strategy["fallback"].ranks, ranks_by_strategy["rrf"].ranks
             regressions = [
                 (eq.query, fb, rr)
                 for eq, fb, rr in zip(queries, fb_ranks, rrf_ranks, strict=True)
