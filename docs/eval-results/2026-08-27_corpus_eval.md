@@ -1,55 +1,65 @@
-# 평가 결과 2026-08-27
+# 검색 품질 평가 2026-08-27
 
-> 템플릿 초기화 상태. 수치는 `run_corpus_eval.py` 실제 실행 후 채운다.
+- commit SHA: 5a7efcb
+- 명령: uv run python tests/fixtures/corpus_eval/run_corpus_eval.py --strategy both --top-k 10
+- 코퍼스 content_sha256: stripe=3653ad45bbec, github=80850db290cd
 
-- 실행자 / 커밋 SHA: _(미실행)_
-- 코퍼스 매니페스트 content_sha256: _(미실행)_
-- 임베딩: intfloat/multilingual-e5-small (dim 384)
-- is_semantic: _(미실행)_
-- 명령: `uv run python tests/fixtures/corpus_eval/run_corpus_eval.py --strategy both --top-k 10`
+---
 
-## 검색 품질
+is_semantic: True
+with_variants: False
+등록: stripe -> document_id=40d411958e7945d7 endpoints=589
+등록: github -> document_id=7c452ab707ea44af endpoints=1220
 
-| 지표 | rrf | fallback | 기준선 대비 |
-|---|---|---|---|
-| Recall@1 | | | |
-| Recall@3 | | | |
-| Recall@5 | | | |
-| Recall@10 | | | |
-| MRR | | | |
-| nDCG@10 | | | |
-| No-result Rate | | | |
+| # | 질의 | 카테고리 | 정답 | fallback 순위 | rrf 순위 |
+|---|---|---|---|---|---|
+| q01 | POST /v1/customers | C1-직접키워드 | POST /v1/customers | 1 | 1 |
+| q02 | GET /repos/{owner}/{repo} | C1-직접키워드 | GET /repos/{owner}/{repo} | 1 | 1 |
+| q03 | create a checkout session | C1-직접키워드 | POST /v1/checkout/sessions | 1 | 1 |
+| q04 | 고객 새로 등록하고 싶어 | C2-한글패러프레이즈 | POST /v1/customers | 미검출 | 미검출 |
+| q05 | 결제 환불 처리해줘 | C2-한글패러프레이즈 | POST /v1/refunds | 미검출 | 미검출 |
+| q06 | 이슈 새로 만들기 | C2-한글패러프레이즈 | POST /repos/{owner}/{repo}/issues | 미검출 | 미검출 |
+| q07 | 저장소 삭제해줘 | C2-한글패러프레이즈 | DELETE /repos/{owner}/{repo} | 미검출 | 미검출 |
+| q08 | cancel my recurring payment | C3-영문의역 | DELETE /v1/subscriptions/{subscription_exposed_id} | 미검출 | 미검출 |
+| q09 | shut down a repository | C3-영문의역 | DELETE /repos/{owner}/{repo} | 미검출 | 미검출 |
+| q10 | show my billing history | C3-영문의역 | GET /v1/invoices | 미검출 | 미검출 |
+| q11 | customer | C4-흔한토큰범람 | GET /v1/customers | 미검출 | 미검출 |
+| q12 | pull request | C4-흔한토큰범람 | GET /repos/{owner}/{repo}/pulls | 미검출 | 미검출 |
+| q13 | delete a subscription | C5-decoy구분 | DELETE /v1/subscriptions/{subscription_exposed_id} | 9 | 6 |
+| q14 | get user information | C5-decoy구분 | GET /users/{username} | 3 | 1 |
+| q15 | list commits of a repo | C5-decoy구분 | GET /repos/{owner}/{repo}/commits | 2 | 2 |
+| q16 | 구독 취소하고 환불까지 | C6-다개념(복수정답) | DELETE /v1/subscriptions/{subscription_exposed_id} or POST /v1/refunds | 1 | 1 |
+| q17 | 이슈 목록 조회하고 새 이슈 생성 | C6-다개념(복수정답) | GET /repos/{owner}/{repo}/issues or POST /repos/{owner}/{repo}/issues | 미검출 | 미검출 |
+| q18 | 결제 생성 시 통화 단위 지정 | C7-대형엔드포인트세부 | POST /v1/charges | 미검출 | 미검출 |
+| q19 | 결제 인텐트에 자동 결제수단 설정 | C7-대형엔드포인트세부 | POST /v1/payment_intents | 5 | 5 |
+| q20 | 풀리퀘스트를 draft로 생성 | C7-대형엔드포인트세부 | POST /repos/{owner}/{repo}/pulls | 5 | 2 |
 
-### 카테고리별 분해 (Recall@3 / MRR)
+### 지표 요약
+(n=20, top_k=10)
+- fallback: Recall@1 20% Recall@3 30% Recall@5 40% Recall@10 45% | MRR 0.267 | nDCG@10 0.310
+  - fallback No-result Rate: 11/20 (55.0%)
+- rrf: Recall@1 25% Recall@3 35% Recall@5 40% Recall@10 45% | MRR 0.318 | nDCG@10 0.350
+  - rrf No-result Rate: 11/20 (55.0%)
 
-| 카테고리 | Recall@3 | MRR |
-|---|---|---|
-| C1-직접키워드 | | |
-| C2-한글패러프레이즈 | | |
-| C3-영문의역 | | |
-| C4-흔한토큰범람 | | |
-| C5-decoy구분 | | |
-| C6-다개념 | | |
-| C7-대형엔드포인트세부 | | |
+### Latency (질의당 5회 반복, 콜드 1회차 포함)
+- fallback: n=100 | p50 8.6ms | p95 47.7ms | p99 53.5ms
+- rrf: n=100 | p50 16.4ms | p95 32.6ms | p99 52.2ms
 
-### 회귀 목록 (기준선 대비 순위 하락 질의)
+### Resource
+- Memory: 색인 전 983.1MB -> 색인 후 1620.5MB -> 검색 종료 시점 peak RSS 1620.5MB (ru_maxrss, 프로세스 누적 peak)
+- CPU: 검색 루프 구간 사용자 3.081s + 시스템 0.053s (질의 200건 합산)
+- Search cost: $0 (로컬 CPU 임베딩·자체 호스팅 Postgres, 외부 과금 API 미호출 — 측정이 아닌 구조상 선언)
 
-- _(미실행)_
+### 카테고리별 분해(Recall@3 / MRR)
+| 카테고리 | n | fallback Recall@3 | fallback MRR | rrf Recall@3 | rrf MRR |
+|---|---|---|---|---|---|
+| C1-직접키워드 | 3 | 100% | 1.000 | 100% | 1.000 |
+| C2-한글패러프레이즈 | 4 | 0% | 0.000 | 0% | 0.000 |
+| C3-영문의역 | 3 | 0% | 0.000 | 0% | 0.000 |
+| C4-흔한토큰범람 | 2 | 0% | 0.000 | 0% | 0.000 |
+| C5-decoy구분 | 3 | 67% | 0.315 | 67% | 0.556 |
+| C6-다개념(복수정답) | 2 | 50% | 0.500 | 50% | 0.500 |
+| C7-대형엔드포인트세부 | 3 | 0% | 0.133 | 33% | 0.233 |
 
-## MCP 계층
-
-| 지표 | 값 | 목표 | 판정 |
-|---|---|---|---|
-| Tool Success Rate | | ≥ 99% | |
-| MCP Error / Timeout Rate | | < 1% | |
-
-## 성능
-
-| 지표 | P50 | P95 | 기준선 대비 |
-|---|---|---|---|
-| 검색 latency | | | |
-| end-to-end latency | | | |
-
-## 비고
-
-- 폴더 신설 커밋과 함께 생성된 초기 템플릿. 첫 측정 실행 시 이 파일을 채우거나 실행일자 파일을 새로 만든다.
+### 회귀(rrf가 fallback보다 나빠진 케이스, MRR 기준 병행 표기)
+- 없음
