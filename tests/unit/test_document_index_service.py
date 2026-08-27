@@ -134,6 +134,49 @@ def test_mime_created_owner_backfill_does_not_count_as_updated_or_fetch_body(
     assert row.owner == "owner@example.test"
 
 
+def test_folder_backfill_does_not_count_as_updated_or_fetch_body(
+    body_index_service, meta_repo, fake_drive_source
+) -> None:
+    """폴더 컬럼 백필은 값만 채우고 updated·본문 재fetch 를 유발하지 않는다(R3).
+
+    이 판정이 깨지면 백필 첫 실행에서 전 문서가 updated 로 잡혀 Drive 본문을
+    전량 다시 받는다(rate limit·시간 폭발).
+    """
+    fake_drive_source.put("d1", "설계서", "# 설계서\n\n본문 내용.", modified_at=_T1)
+    body_index_service.refresh(index_bodies=True)
+    fake_drive_source.reset_counts()
+
+    fake_drive_source.put(
+        "d1",
+        "설계서",
+        "본문",
+        modified_at=_T1,
+        folder_ancestor_ids=("root", "sub"),
+        folder_path="설계",
+    )
+    result = body_index_service.refresh(index_bodies=True)
+
+    assert result.updated == 0
+    assert result.added == 0
+    assert fake_drive_source.fetch_call_count == 0
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row.folder_ancestor_ids == ["root", "sub"]
+    assert row.folder_path == "설계"
+
+
+def test_new_row_stores_folder_columns(index_service, meta_repo, fake_drive_source) -> None:
+    """신규 행에도 폴더 컬럼이 저장된다(루트 직속 파일은 folder_path 가 빈 문자열)."""
+    fake_drive_source.put(
+        "d1", "설계서", "본문", modified_at=_T1, folder_ancestor_ids=("root",), folder_path=""
+    )
+
+    index_service.refresh()
+
+    row = meta_repo.find(DEFAULT_PROJECT, SOURCE_DRIVE, "d1")
+    assert row.folder_ancestor_ids == ["root"]
+    assert row.folder_path == ""
+
+
 def test_deleted_file_is_removed_from_cache(
     index_service, meta_repo, fake_drive_source
 ) -> None:

@@ -148,6 +148,8 @@ def _to_document_search_payload(items: list[DocumentSearchItem]) -> DocumentSear
             "indexed": item.indexed,
             "mime_type": item.mime_type,
             "owner": item.owner,
+            "folder_path": item.folder_path,
+            "folder_id": item.folder_id,
         }
         for item in items
     ]

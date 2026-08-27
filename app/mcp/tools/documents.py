@@ -124,6 +124,7 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
         created_after: str | None = None,
         created_before: str | None = None,
         owners: list[str] | None = None,
+        folder_ids: list[str] | None = None,
     ) -> DocumentSearchResponse | ErrorPayload:
         """팀 협업 문서(Google Drive / Notion)를 자연어·키워드로 검색한다.
 
@@ -168,16 +169,24 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
                 이메일로 저장되는 경우와 표시 이름으로 저장되는 경우가 있어
                 추측한 값은 매치되지 않는다. Notion 문서는 소유자 정보가
                 없으므로 이 필터를 주면 항상 제외된다.
+            folder_ids: 폴더 id 목록(OR, 최대 20개). 지정한 폴더와 그
+                하위(자손 포함) 문서만 남긴다 — 값은 결과 항목의 folder_id
+                필드를 **그대로 복사해서** 넣는다. Drive 전용이고, Notion·
+                백필 전 Drive 문서는 폴더 정보가 없어 이 필터를 주면 제외된다.
 
         Returns:
             items 키에 결과 리스트를 담은 dict. 각 항목은 title, source,
             project, url, snippet, score, version, snippet_as_of, external_id,
             matched_chunks, match_reasons, modified_at, indexed, mime_type,
-            owner 필드를 갖는다. mime_type 은 출처 시스템의 MIME 타입(Drive
-            전용, Notion·백필 전 Drive 문서는 null) — 다음 질의를 mime_types 로
-            좁힐 때 참고한다. owner 는 문서 소유자(Drive 전용, Notion·백필 전
-            Drive 문서는 null)다 — 같은 사람이 쓴 다른 문서를 찾으려면 이 값을
-            그대로 owners 에 넣어 재질의한다.
+            owner, folder_path, folder_id 필드를 갖는다. mime_type 은 출처
+            시스템의 MIME 타입(Drive 전용, Notion·백필 전 Drive 문서는 null)
+            — 다음 질의를 mime_types 로 좁힐 때 참고한다. owner 는 문서
+            소유자(Drive 전용, Notion·백필 전 Drive 문서는 null)다 — 같은
+            사람이 쓴 다른 문서를 찾으려면 이 값을 그대로 owners 에 넣어
+            재질의한다. folder_path 는 동기화 루트 기준 폴더 이름 경로(Drive
+            전용, 루트 직속은 "", Notion·백필 전 Drive 문서는 null)이고,
+            folder_id 는 직계 부모 폴더 id 다 — 같은 폴더나 그 하위 문서를
+            더 찾으려면 folder_id 를 folder_ids 에 넣어 재질의한다.
             snippet_as_of 는 스니펫이 만들어진 본문 색인 시점(ISO8601)이며,
             본문 청크 없이 제목 매치만으로 걸린 항목은 null 이다. external_id
             는 get_document(source, external_id) 에 그대로 넘기는 값이다 —
@@ -205,6 +214,7 @@ def register_document_tools(mcp: FastMCP, app_state: AppState) -> None:
                 created_after=created_after,
                 created_before=created_before,
                 owners=owners,
+                folder_ids=folder_ids,
             )
             items = bundle.document_search_service.search(query, options)
             return _to_document_search_payload(items)

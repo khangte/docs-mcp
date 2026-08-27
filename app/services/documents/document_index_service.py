@@ -526,6 +526,8 @@ def _new_row(project: str, source_name: str, meta: FileMeta, now: datetime) -> D
         mime_type=meta.mime_type,
         created_at=meta.created_at,
         owner=meta.owner,
+        folder_ancestor_ids=list(meta.folder_ancestor_ids) or None,
+        folder_path=meta.folder_path,
     )
 
 
@@ -535,16 +537,20 @@ def _apply_changes(row: DocumentMeta, meta: FileMeta, now: datetime) -> bool:
     `modified_at`·제목·URL 이 모두 같으면 `last_synced_at` 만 갱신하고 `updated`
     집계에는 넣지 않는다(SPEC 검증 기준: 수정 시각이 같으면 updated 아님).
 
-    `mime_type`/`created_at`/`owner` 는 `is_changed` 판정에 절대 넣지 말 것. 이 반환값은
-    `_stage_upsert` 에서 `needs_body_index` 로 쓰여 본문 재fetch·재색인을 트리거한다.
-    새 nullable 컬럼을 판정에 넣으면 백필 첫 실행에서 전 문서가 NULL → 값 으로 바뀌며
-    `updated` 로 잡혀 본문을 전량 다시 받는다(rate limit·시간 폭발). 항상 대입만 하면
-    백필은 UPDATE 한 번으로 끝난다 - 컬럼을 더 추가할 때도 이 규약을 지킬 것.
+    `mime_type`/`created_at`/`owner`/`folder_ancestor_ids`/`folder_path` 는 `is_changed`
+    판정에 절대 넣지 말 것. 이 반환값은 `_stage_upsert` 에서 `needs_body_index` 로 쓰여
+    본문 재fetch·재색인을 트리거한다. 새 nullable 컬럼을 판정에 넣으면 백필 첫 실행에서
+    전 문서가 NULL → 값 으로 바뀌며 `updated` 로 잡혀 본문을 전량 다시 받는다
+    (rate limit·시간 폭발). 항상 대입만 하면 백필은 UPDATE 한 번으로 끝난다 - 컬럼을
+    더 추가할 때도 이 규약을 지킬 것. 폴더 이동은 본문을 바꾸지 않으므로 재색인 사유가
+    아니라는 뜻이기도 하다.
     """
     row.last_synced_at = now
     row.mime_type = meta.mime_type
     row.created_at = meta.created_at
     row.owner = meta.owner
+    row.folder_ancestor_ids = list(meta.folder_ancestor_ids) or None
+    row.folder_path = meta.folder_path
     is_changed = (
         row.modified_at != meta.modified_at
         or row.title != meta.title

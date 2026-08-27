@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import PROJECT_MAX_LENGTH, Base
@@ -45,6 +46,12 @@ class DocumentMeta(Base):
         mime_type: 출처 시스템의 MIME 타입(Drive 전용, Notion 은 항상 NULL).
         created_at: 원본 시스템 기준 생성 시각. Drive/Notion 모두 채워진다.
         owner: 문서 소유자 이메일 또는 표시 이름(Drive 전용, Notion 은 항상 NULL).
+        folder_ancestor_ids: 동기화 루트부터 직계 부모까지의 폴더 id 목록
+            (Drive 전용, Notion 은 항상 NULL). `folder_ids` 필터가 이 배열과
+            겹치는지(`&&`)로 자손 포함 매칭을 한다.
+        folder_path: 같은 폴더 체인의 **이름**을 "/" 로 이은 경로. 동기화
+            루트 자신은 포함하지 않으므로 루트 직속 파일은 빈 문자열이다
+            (NULL 은 "Notion 이거나 아직 백필 안 됨" 이라는 다른 뜻이다).
     """
 
     __tablename__ = "document_meta"
@@ -93,3 +100,7 @@ class DocumentMeta(Base):
     mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     owner: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    folder_ancestor_ids: Mapped[list[str] | None] = mapped_column(
+        ARRAY(String(256)), nullable=True
+    )
+    folder_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)

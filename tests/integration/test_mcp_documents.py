@@ -107,7 +107,7 @@ async def test_openapi_tools_are_not_broken(mcp_server: FastMCP) -> None:
 
 @pytest.mark.asyncio()
 async def test_search_documents_signature(mcp_server: FastMCP) -> None:
-    """search_documents 는 11개 파라미터를 노출한다(62번: created_after/before/owners 추가)."""
+    """search_documents 는 12개 파라미터를 노출한다(62번: created/owners/folder_ids 추가)."""
     properties = await _tool_parameters(mcp_server, "search_documents")
 
     assert set(properties) == {
@@ -122,6 +122,7 @@ async def test_search_documents_signature(mcp_server: FastMCP) -> None:
         "created_after",
         "created_before",
         "owners",
+        "folder_ids",
     }
     assert properties["top_k"]["default"] == 5
 
@@ -469,13 +470,15 @@ _DOCUMENT_SEARCH_ITEM_FIELDS = {
     "indexed",
     "mime_type",
     "owner",
+    "folder_path",
+    "folder_id",
 }
 
 
 @pytest.mark.asyncio()
 async def test_search_documents_returns_expected_fields(seeded_mcp: FastMCP) -> None:
     """결과 항목은 근거·메타 필드 4개(matched_chunks/match_reasons/modified_at/indexed)를
-    포함해 15개 필드를 갖는다(57번 리뷰 §5 개선1)."""
+    포함해 17개 필드를 갖는다(57번 리뷰 §5 개선1, 62번: folder_path/folder_id 추가)."""
     items = _result(await seeded_mcp.call_tool("search_documents", {"query": "로그인"}))["items"]
 
     assert items
@@ -663,6 +666,46 @@ async def test_search_documents_owners_filter(seeded_mcp: FastMCP, fake_drive_so
     )["items"]
 
     assert [i["title"] for i in matched] == ["로그인 인증 설계서"]
+    assert excluded == []
+
+
+@pytest.mark.asyncio()
+async def test_search_documents_folder_ids_filter(
+    seeded_mcp: FastMCP, fake_drive_source
+) -> None:
+    """folder_ids 를 주면 대상 폴더의 자손 문서까지 남고, 응답에 folder_path/folder_id 가 실린다."""
+    fake_drive_source.put(
+        "d1",
+        "로그인 인증 설계서",
+        "OAuth 로그인 흐름 상세",
+        modified_at=_T1,
+        folder_ancestor_ids=("root", "sub", "leaf"),
+        folder_path="설계/인증/로그인",
+    )
+    fake_drive_source.put(
+        "d2",
+        "로그인 배포 메모",
+        "로그인 릴리스 노트",
+        modified_at=_T1,
+        folder_ancestor_ids=("other",),
+        folder_path="배포",
+    )
+    await seeded_mcp.call_tool("refresh_index", arguments={"index_bodies": False})
+
+    matched = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "folder_ids": ["sub"]}
+        )
+    )["items"]
+    excluded = _result(
+        await seeded_mcp.call_tool(
+            "search_documents", {"query": "로그인", "folder_ids": ["nonexistent"]}
+        )
+    )["items"]
+
+    assert [i["title"] for i in matched] == ["로그인 인증 설계서"]
+    assert matched[0]["folder_path"] == "설계/인증/로그인"
+    assert matched[0]["folder_id"] == "leaf"
     assert excluded == []
 
 

@@ -60,6 +60,22 @@ def register_source_tools(mcp: FastMCP, app_state: AppState) -> None:
                걸러낸다(값이 NULL 이므로) — 운영 순서를 지키지 않으면
                "검색이 갑자기 0건"으로 보인다.
 
+        folder_ancestor_ids/folder_path 백필 런북(62번, 위 컬럼들과 같은
+        방식 — nullable 2개 컬럼 추가 마이그레이션 배포 후 1회):
+            1. `uv run alembic upgrade head` — 전부 nullable 이라 무중단.
+            2. 코드 배포.
+            3. 프로젝트·소스별로 `refresh_index(project=..., index_bodies=False)`
+               1회. 폴더 컬럼도 `is_changed` 판정에 들어가지 않으므로(폴더
+               이동은 본문을 바꾸지 않음) 본문 재fetch 없이 메타 행만
+               갱신된다. Drive 는 목록 조회 시 폴더 트리를 이미 BFS 로
+               순회하므로 추가 API 호출도 없다.
+            4. 백필 확인: `SELECT source, count(*) FILTER (WHERE
+               folder_ancestor_ids IS NULL) AS null_folder, count(*) FROM
+               document_meta GROUP BY source;` — drive 행의 null_folder 가
+               0 이어야 한다(Notion 은 항상 NULL 이라 count(*) 와 같음).
+            5. 백필 전에는 `folder_ids` 필터가 Drive 문서까지 전부
+               걸러낸다(값이 NULL) — mime_type 백필과 같은 주의.
+
         Args:
             source: "drive" 또는 "notion" 만 갱신할 때 지정. 생략하면 구성된
                 모든 소스를 갱신한다. document 재동기화에는 관여하지

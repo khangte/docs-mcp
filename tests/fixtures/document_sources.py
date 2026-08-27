@@ -141,6 +141,8 @@ class FakeDocumentSource:
         mime_type: str | None = None,
         created_at: datetime | None = None,
         owner: str | None = None,
+        folder_ancestor_ids: tuple[str, ...] = (),
+        folder_path: str | None = None,
     ) -> None:
         """문서 한 건(메타 + 본문)을 등록하거나 덮어쓴다."""
         self.files = [f for f in self.files if f.external_id != external_id]
@@ -153,6 +155,8 @@ class FakeDocumentSource:
                 mime_type=mime_type,
                 created_at=created_at,
                 owner=owner,
+                folder_ancestor_ids=folder_ancestor_ids,
+                folder_path=folder_path,
             )
         )
         self.bodies[external_id] = body

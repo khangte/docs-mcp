@@ -90,6 +90,9 @@ _MAX_MIME_TYPE_LENGTH = 128
 #: `owners` 필터 원소 개수/길이 상한. 길이는 `document_meta.owner` 컬럼 폭과 같다.
 _MAX_OWNERS = 20
 _MAX_OWNER_LENGTH = 320
+#: `folder_ids` 필터 원소 개수/길이 상한. 길이는 `folder_ancestor_ids` 원소 폭과 같다.
+_MAX_FOLDER_IDS = 20
+_MAX_FOLDER_ID_LENGTH = 256
 
 #: keyword/vector arm 이 SQL 에서 이미 `chunk_type='section'` 으로 좁혀 조회하므로,
 #: 승자 청크의 chunk_type 은 DB 를 다시 읽지 않고 이 상수로 취급한다(57번 리뷰 §5 개선1).
@@ -109,6 +112,18 @@ _ARM_REASON = {
     ARM_KEYWORD: REASON_KEYWORD_MATCH,
     ARM_VECTOR: REASON_VECTOR_MATCH,
 }
+
+
+def _direct_parent_folder_id(row: DocumentMeta) -> str | None:
+    """조상 폴더 id 목록의 마지막 원소(직계 부모 폴더 id)를 돌려준다.
+
+    `folder_ancestor_ids` 는 [동기화 루트, ..., 직계 부모] 순서라 `[-1]` 이
+    이 문서가 바로 들어 있는 폴더다. 배열이 NULL(Notion·백필 전)이면 None.
+    """
+    ancestors = row.folder_ancestor_ids
+    if not ancestors:
+        return None
+    return ancestors[-1]
 
 
 def _filter_match_reasons(project: str | None, source: str | None) -> tuple[str, ...]:
@@ -266,6 +281,10 @@ class DocumentSearchOptions:
     #: 우선 저장되고 없을 때만 표시 이름이 들어간다. Notion 문서는 owner 가
     #: 항상 NULL 이라 이 필터를 지정하면 always 제외된다.
     owners: list[str] | None = None
+    #: 폴더 id 목록(OR). 대상 폴더와 그 하위(자손 포함) 문서를 남긴다.
+    #: Drive 전용 - Notion 문서는 folder_ancestor_ids 가 항상 NULL 이라 제외된다.
+    #: 응답의 `folder_id` 값을 그대로 넣어 하위 탐색에 쓴다.
+    folder_ids: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -313,6 +332,12 @@ class DocumentSearchItem:
     #: Notion·백필 전 Drive 문서는 None. 호출자가 이 값을 그대로 `owners`
     #: 필터에 복사해 넣을 수 있도록 노출한다.
     owner: str | None = None
+    #: 동기화 루트 기준 폴더 이름 경로(`document_meta.folder_path`). Drive 전용.
+    #: 루트 직속 파일은 "", Notion·백필 전 Drive 문서는 None.
+    folder_path: str | None = None
+    #: 직계 부모 폴더 id(`folder_ancestor_ids[-1]` 파생). 다음 질의의 `folder_ids`
+    #: 값으로 그대로 쓴다. 루트 직속·Notion·백필 전 문서는 None.
+    folder_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -664,6 +689,8 @@ class DocumentSearchService:
             indexed=row.document_id is not None,
             mime_type=row.mime_type,
             owner=row.owner,
+            folder_path=row.folder_path,
+            folder_id=_direct_parent_folder_id(row),
         )
 
     # --- indexed 전략: title+keyword+vector 3-arm RRF ---------------------
@@ -822,6 +849,8 @@ class DocumentSearchService:
             indexed=indexed,
             mime_type=row.mime_type,
             owner=row.owner,
+            folder_path=row.folder_path,
+            folder_id=_direct_parent_folder_id(row),
         )
 
     def _title_arm(
@@ -1017,6 +1046,20 @@ class DocumentSearchService:
                 stripped_owner = owner.strip()
                 if not stripped_owner or len(stripped_owner) > _MAX_OWNER_LENGTH:
                     raise ValidationError(f"invalid owner entry: {owner!r}")
+        if options.folder_ids is not None:
+            if not options.folder_ids:
+                raise ValidationError("folder_ids must not be empty when provided")
+            if len(options.folder_ids) > _MAX_FOLDER_IDS:
+                raise ValidationError(
+                    f"folder_ids must have at most {_MAX_FOLDER_IDS} entries"
+                )
+            for folder_id in options.folder_ids:
+                stripped_folder_id = folder_id.strip()
+                if (
+                    not stripped_folder_id
+                    or len(stripped_folder_id) > _MAX_FOLDER_ID_LENGTH
+                ):
+                    raise ValidationError(f"invalid folder_id entry: {folder_id!r}")
 
     def _parse_filter_datetime(self, value: str | None, field_name: str) -> datetime | None:
         """ISO8601 문자열을 tz-naive UTC datetime 으로 파싱한다.
@@ -1035,6 +1078,9 @@ class DocumentSearchService:
         """검증을 통과한 옵션으로 `DocumentMetaFilter` 를 만든다(호출 전 `_validate` 필수)."""
         mime_types = tuple(m.strip() for m in options.mime_types) if options.mime_types else ()
         owners = tuple(o.strip() for o in options.owners) if options.owners else ()
+        folder_ids = (
+            tuple(f.strip() for f in options.folder_ids) if options.folder_ids else ()
+        )
         return DocumentMetaFilter(
             modified_after=parse_rfc3339(options.modified_after),
             modified_before=parse_rfc3339(options.modified_before),
@@ -1042,6 +1088,7 @@ class DocumentSearchService:
             created_after=parse_rfc3339(options.created_after),
             created_before=parse_rfc3339(options.created_before),
             owners=owners,
+            folder_ids=folder_ids,
         )
 
     def _validate_source(self, source: str | None, allow_none: bool) -> str | None:

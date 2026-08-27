@@ -294,6 +294,126 @@ def test_drive_list_files_truncated_when_folder_search_hits_max_folders(
     assert listing.truncated is True
 
 
+def test_drive_list_files_records_folder_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BFS 로 내려가며 조상 폴더 id 배열과 이름 경로를 파일에 기록한다."""
+    pages = {
+        "root": {
+            "files": [
+                {"id": "sub", "name": "설계", "mimeType": FOLDER_MIME_TYPE},
+                {
+                    "id": "f1",
+                    "name": "루트 문서",
+                    "mimeType": GOOGLE_DOC_MIME_TYPE,
+                    "webViewLink": "https://drive.test/f1",
+                },
+            ]
+        },
+        "sub": {
+            "files": [
+                {"id": "sub2", "name": "2026", "mimeType": FOLDER_MIME_TYPE},
+                {
+                    "id": "f2",
+                    "name": "설계 문서",
+                    "mimeType": GOOGLE_DOC_MIME_TYPE,
+                    "webViewLink": "https://drive.test/f2",
+                },
+            ]
+        },
+        "sub2": {
+            "files": [
+                {
+                    "id": "f3",
+                    "name": "연간 계획",
+                    "mimeType": GOOGLE_DOC_MIME_TYPE,
+                    "webViewLink": "https://drive.test/f3",
+                }
+            ]
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.url.params["q"]
+        for folder in ("sub2", "sub", "root"):
+            if f"'{folder}' in parents" in query:
+                return _json(pages[folder])
+        return _json({"files": []})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    by_id = {f.external_id: f for f in source.list_files().files}
+
+    # 루트 직속 파일: 조상은 루트 하나, 이름 경로는 빈 문자열(루트 이름은 넣지 않는다).
+    assert by_id["f1"].folder_ancestor_ids == ("root",)
+    assert by_id["f1"].folder_path == ""
+    assert by_id["f2"].folder_ancestor_ids == ("root", "sub")
+    assert by_id["f2"].folder_path == "설계"
+    assert by_id["f3"].folder_ancestor_ids == ("root", "sub", "sub2")
+    assert by_id["f3"].folder_path == "설계/2026"
+
+
+def test_drive_list_files_deduplicates_multi_parent_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """같은 파일이 두 폴더에서 나와도 1건만 반환한다(최초 방문 승리).
+
+    중복을 그대로 두면 `_stage_upsert` 가 같은 (project, source, external_id)
+    행을 두 번 add() 해 unique 제약 위반으로 동기화 커밋이 통째로 실패한다.
+    """
+    pages = {
+        "root": {
+            "files": [
+                {"id": "a", "name": "A", "mimeType": FOLDER_MIME_TYPE},
+                {"id": "b", "name": "B", "mimeType": FOLDER_MIME_TYPE},
+            ]
+        },
+        "a": {
+            "files": [
+                {
+                    "id": "dup",
+                    "name": "공유 문서",
+                    "mimeType": GOOGLE_DOC_MIME_TYPE,
+                    "webViewLink": "https://drive.test/dup",
+                }
+            ]
+        },
+        "b": {
+            "files": [
+                {
+                    "id": "dup",
+                    "name": "공유 문서",
+                    "mimeType": GOOGLE_DOC_MIME_TYPE,
+                    "webViewLink": "https://drive.test/dup",
+                }
+            ]
+        },
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.url.params["q"]
+        for folder in ("root", "a", "b"):
+            if f"'{folder}' in parents" in query:
+                return _json(pages[folder])
+        return _json({"files": []})
+
+    source = GoogleDriveSource(folder_id="root", token_provider=StubTokenProvider())
+    _patch_client(monkeypatch, source, handler)
+
+    files = source.list_files().files
+
+    assert [f.external_id for f in files] == ["dup"]
+    # BFS 순서가 결정적이므로 먼저 방문한 폴더(A)의 경로가 남는다.
+    assert files[0].folder_path == "A"
+
+
+def test_drive_list_files_notion_style_defaults_are_empty() -> None:
+    """FileMeta 의 폴더 필드는 기본값이 있어 다른 어댑터는 무변경이다."""
+    meta = FileMeta(external_id="n1", title="문서", url="https://notion.test/n1")
+
+    assert meta.folder_ancestor_ids == ()
+    assert meta.folder_path is None
+
+
 # --- Drive: fetch ---------------------------------------------------------------
 
 

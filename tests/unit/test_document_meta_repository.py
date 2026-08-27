@@ -30,6 +30,7 @@ def _row(
     mime_type: str | None = None,
     created_at: datetime | None = None,
     owner: str | None = None,
+    folder_ancestor_ids: list[str] | None = None,
 ) -> DocumentMeta:
     """테스트용 메타 행을 만든다."""
     return DocumentMeta(
@@ -43,6 +44,7 @@ def _row(
         created_at=created_at,
         owner=owner,
         mime_type=mime_type,
+        folder_ancestor_ids=folder_ancestor_ids,
     )
 
 
@@ -636,3 +638,95 @@ def test_document_meta_filter_is_empty_tracks_every_field() -> None:
     assert DocumentMetaFilter(created_after=_NOW).is_empty() is False
     assert DocumentMetaFilter(created_before=_NOW).is_empty() is False
     assert DocumentMetaFilter(owners=("a@example.test",)).is_empty() is False
+
+
+def test_search_by_tokens_folder_ids_matches_descendants(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """조상 폴더 id 로 필터하면 그 아래 모든 문서가 잡힌다(자손 포함)."""
+    repo.add(
+        _row(SOURCE_DRIVE, "d1", "로그인 문서", folder_ancestor_ids=["root", "sub"])
+    )
+    repo.add(
+        _row(
+            SOURCE_DRIVE,
+            "d2",
+            "로그인 문서",
+            folder_ancestor_ids=["root", "sub", "sub2"],
+        )
+    )
+    repo.add(_row(SOURCE_DRIVE, "d3", "로그인 문서", folder_ancestor_ids=["root", "other"]))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(folder_ids=("sub",))
+    )
+
+    assert {m.external_id for m in found} == {"d1", "d2"}
+
+
+def test_search_by_tokens_folder_ids_root_matches_everything(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """동기화 루트 id 는 조상 배열에 항상 들어 있으므로 전체가 잡힌다."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", folder_ancestor_ids=["root"]))
+    repo.add(
+        _row(SOURCE_DRIVE, "d2", "로그인 문서", folder_ancestor_ids=["root", "sub"])
+    )
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(folder_ids=("root",))
+    )
+
+    assert {m.external_id for m in found} == {"d1", "d2"}
+
+
+def test_search_by_tokens_folder_ids_matches_any_of_multiple(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """folder_ids 는 목록 중 하나라도 조상에 있으면 통과시킨다(OR)."""
+    repo.add(_row(SOURCE_DRIVE, "d1", "로그인 문서", folder_ancestor_ids=["root", "a"]))
+    repo.add(_row(SOURCE_DRIVE, "d2", "로그인 문서", folder_ancestor_ids=["root", "b"]))
+    repo.add(_row(SOURCE_DRIVE, "d3", "로그인 문서", folder_ancestor_ids=["root", "c"]))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(folder_ids=("a", "b"))
+    )
+
+    assert {m.external_id for m in found} == {"d1", "d2"}
+
+
+def test_search_by_tokens_folder_ids_excludes_null_ancestors(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """조상 배열이 NULL(Notion·백필 전)이면 folder_ids 필터에 걸리지 않는다(R5)."""
+    repo.add(_row(SOURCE_NOTION, "n1", "로그인 문서", folder_ancestor_ids=None))
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(folder_ids=("root",))
+    )
+
+    assert list(found) == []
+
+
+def test_search_by_tokens_folder_ids_does_not_match_partial_id(
+    db_session, repo: DocumentMetaRepository
+) -> None:
+    """폴더 id 는 정확 일치다 - 부분 문자열이나 와일드카드로 걸리면 안 된다.
+
+    Drive 폴더 id 에는 `_` 가 들어가는데 LIKE 기반 구현이었다면 단일 문자
+    와일드카드로 해석돼 엉뚱한 폴더가 매치된다. 배열 overlap 은 그 위험이 없다.
+    """
+    repo.add(
+        _row(SOURCE_DRIVE, "d1", "로그인 문서", folder_ancestor_ids=["root", "a_b"])
+    )
+    db_session.commit()
+
+    found = repo.search_by_tokens(
+        ["로그인"], meta_filter=DocumentMetaFilter(folder_ids=("aXb",))
+    )
+
+    assert list(found) == []

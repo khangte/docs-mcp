@@ -237,6 +237,11 @@ class DocumentSearchItemPayload(TypedDict):
     mime_type: str | None
     #: 문서 소유자 이메일 또는 표시 이름(Drive 전용). Notion·백필 전 Drive 문서는 None.
     owner: str | None
+    #: 폴더 이름 경로(Drive 전용, 동기화 루트 제외). 루트 직속은 "".
+    #: Notion·백필 전 Drive 문서는 None.
+    folder_path: str | None
+    #: 직계 부모 폴더 id. 다음 질의의 folder_ids 에 그대로 넣어 하위 탐색에 쓴다.
+    folder_id: str | None
 
 
 class DocumentSearchResponse(TypedDict):

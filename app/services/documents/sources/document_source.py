@@ -31,6 +31,10 @@ class FileMeta:
         mime_type: 출처 시스템의 MIME 타입. Drive 전용, Notion 은 항상 None.
         created_at: 원본 시스템 기준 생성 시각. 알 수 없으면 None.
         owner: 문서 소유자 이메일 또는 표시 이름. Drive 전용, Notion 은 항상 None.
+        folder_ancestor_ids: 동기화 루트부터 직계 부모까지의 폴더 id 목록.
+            Drive 전용이며 다른 소스는 빈 튜플이다.
+        folder_path: 같은 폴더 체인의 이름을 "/" 로 이은 경로(동기화 루트
+            제외). Drive 루트 직속 파일은 빈 문자열, 다른 소스는 None 이다.
     """
 
     external_id: str
@@ -40,6 +44,8 @@ class FileMeta:
     mime_type: str | None = None
     created_at: datetime | None = None
     owner: str | None = None
+    folder_ancestor_ids: tuple[str, ...] = ()
+    folder_path: str | None = None
 
 
 @dataclass(frozen=True)

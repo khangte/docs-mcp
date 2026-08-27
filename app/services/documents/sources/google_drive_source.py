@@ -202,27 +202,57 @@ class GoogleDriveSource:
     def list_files(self) -> FileListing:
         """대상 폴더와 그 하위 폴더 안의 파일 메타데이터를 모두 반환한다.
 
-        폴더 자체는 결과에 포함하지 않고 탐색 큐에만 넣는다.
+        폴더 자체는 결과에 포함하지 않고 탐색 큐에만 넣는다. 큐 원소에 조상
+        폴더 id 목록과 이름 경로를 함께 실어, 파일을 수집하는 시점에 그 파일이
+        어느 경로에서 나왔는지를 기록한다 - 이미 도는 BFS 를 재사용하므로
+        Drive API 호출은 늘지 않는다. 동기화 루트 자신의 이름은 조회하지
+        않으므로(호출 1건을 아낀다) 이름 경로는 루트 기준 상대 경로다.
+
+        같은 파일이 두 폴더에서 나오면(레거시 다중 부모·바로가기) 최초 방문
+        한 건만 남긴다. 중복을 남기면 `_stage_upsert` 가 같은
+        (project, source, external_id) 행을 두 번 add() 해 unique 제약 위반으로
+        동기화 커밋이 통째로 실패한다.
 
         Raises:
             IntegrationError: 인증 실패·rate limit·네트워크 오류 시.
         """
         collected: list[FileMeta] = []
-        pending: deque[str] = deque([self._folder_id])
+        seen_files: set[str] = set()
+        duplicate_count = 0
+        # (폴더 id, 조상 id 목록, 이름 경로)
+        pending: deque[tuple[str, tuple[str, ...], str]] = deque(
+            [(self._folder_id, (self._folder_id,), "")]
+        )
         visited: set[str] = {self._folder_id}
 
         with self._client() as client:
             while pending and len(visited) <= MAX_FOLDERS:
-                folder_id = pending.popleft()
+                folder_id, ancestor_ids, folder_path = pending.popleft()
                 for raw in self._list_folder_children(client, folder_id):
                     if raw.get("mimeType") == FOLDER_MIME_TYPE:
                         child_id = str(raw.get("id") or "")
                         if child_id and child_id not in visited:
                             visited.add(child_id)
-                            pending.append(child_id)
+                            child_name = str(raw.get("name") or "").strip()
+                            child_path = (
+                                f"{folder_path}/{child_name}" if folder_path else child_name
+                            )
+                            pending.append(
+                                (child_id, (*ancestor_ids, child_id), child_path)
+                            )
                         continue
-                    collected.append(_to_file_meta(raw))
+                    file_id = str(raw.get("id") or "")
+                    if file_id in seen_files:
+                        duplicate_count += 1
+                        continue
+                    seen_files.add(file_id)
+                    collected.append(_to_file_meta(raw, ancestor_ids, folder_path))
 
+        if duplicate_count:
+            _LOG.info(
+                "drive 목록에서 중복 파일 %d건을 제거함(최초 방문 경로 유지)",
+                duplicate_count,
+            )
         if pending:
             _LOG.warning(
                 "drive 폴더 탐색 상한(%d)에 도달해 일부 하위 폴더를 건너뜀", MAX_FOLDERS
@@ -422,8 +452,16 @@ def _owner_from_raw(raw: dict[str, Any]) -> str | None:
     return first.get("emailAddress") or first.get("displayName") or None
 
 
-def _to_file_meta(raw: dict[str, Any]) -> FileMeta:
-    """Drive files.list 응답 항목 하나를 FileMeta 로 변환한다."""
+def _to_file_meta(
+    raw: dict[str, Any], ancestor_ids: tuple[str, ...], folder_path: str
+) -> FileMeta:
+    """Drive files.list 응답 항목 하나를 FileMeta 로 변환한다.
+
+    Args:
+        raw: files.list 가 돌려준 파일 항목 하나.
+        ancestor_ids: 동기화 루트부터 이 파일의 직계 부모까지의 폴더 id 목록.
+        folder_path: 같은 체인의 폴더 이름 경로(루트 제외, 루트 직속은 빈 문자열).
+    """
     file_id = str(raw.get("id") or "")
     return FileMeta(
         external_id=file_id,
@@ -433,4 +471,6 @@ def _to_file_meta(raw: dict[str, Any]) -> FileMeta:
         mime_type=raw.get("mimeType"),
         created_at=parse_rfc3339(raw.get("createdTime")),
         owner=_owner_from_raw(raw),
+        folder_ancestor_ids=ancestor_ids,
+        folder_path=folder_path,
     )

@@ -27,10 +27,12 @@ class DocumentMetaFilter:
         created_after: 생성 시각 포함(>=), tz-naive UTC.
         created_before: 생성 시각 포함(<=), tz-naive UTC.
         owners: 소유자 정확 일치 OR(대소문자 무시). 빈 튜플이면 조건 없음.
+        folder_ids: 폴더 id OR. 대상 폴더나 그 하위(자손 포함) 문서를 남긴다 -
+            `folder_ancestor_ids` 배열 중첩(&&)으로 판정한다. 빈 튜플이면 조건 없음.
 
     필터가 보는 컬럼이 NULL 인 행은 그 필터가 지정되면 제외된다(SQL 3값
-    논리 그대로 - 의도된 동작). Notion 문서는 `mime_type`/`owner` 가 항상
-    NULL 이므로 두 필터를 주면 언제나 빠진다.
+    논리 그대로 - 의도된 동작). Notion 문서는 `mime_type`/`owner`/
+    `folder_ancestor_ids` 가 항상 NULL 이므로 그 필터를 주면 언제나 빠진다.
     """
 
     modified_after: datetime | None = None
@@ -39,6 +41,7 @@ class DocumentMetaFilter:
     created_after: datetime | None = None
     created_before: datetime | None = None
     owners: tuple[str, ...] = field(default_factory=tuple)
+    folder_ids: tuple[str, ...] = field(default_factory=tuple)
 
     def is_empty(self) -> bool:
         """조건이 하나도 없으면 True.
@@ -70,6 +73,11 @@ def document_meta_conditions(f: DocumentMetaFilter) -> list[ColumnElement[bool]]
         conditions.append(
             func.lower(DocumentMeta.owner).in_([o.lower() for o in f.owners])
         )
+    if f.folder_ids:
+        # 배열 중첩(&&) 한 번으로 "조상 중 하나라도 일치" = 자손 포함 의미론이 나온다.
+        # 구분자 문자열 + LIKE 안은 쓰지 않는다 - Drive 폴더 id 에 들어가는 `_` 가
+        # LIKE 의 단일 문자 와일드카드라 엉뚱한 폴더가 조용히 매치된다.
+        conditions.append(DocumentMeta.folder_ancestor_ids.overlap(list(f.folder_ids)))
     return conditions
 
 

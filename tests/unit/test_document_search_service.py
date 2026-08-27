@@ -104,6 +104,8 @@ def _seed_meta(
     mime_type: str | None = None,
     created_at: datetime | None = None,
     owner: str | None = None,
+    folder_ancestor_ids: list[str] | None = None,
+    folder_path: str | None = None,
 ) -> DocumentMeta:
     """`document_meta` 행 하나를 저장하고 반환한다."""
     row = DocumentMeta(
@@ -117,6 +119,8 @@ def _seed_meta(
         mime_type=mime_type,
         created_at=created_at,
         owner=owner,
+        folder_ancestor_ids=folder_ancestor_ids,
+        folder_path=folder_path,
     )
     session.add(row)
     session.commit()
@@ -807,6 +811,39 @@ def test_search_item_owner_is_none_without_owner(
     items = search_service.search("로그인", DocumentSearchOptions())
 
     assert items[0].owner is None
+
+
+def test_search_item_exposes_folder_path_and_direct_parent_id(
+    db_session, search_service, fake_drive_source
+) -> None:
+    """결과 항목에 folder_path 와 직계 부모 폴더 id(folder_ancestor_ids[-1])를 싣는다."""
+    _seed_meta(
+        db_session,
+        SOURCE_DRIVE,
+        "d1",
+        "로그인 문서",
+        folder_ancestor_ids=["root", "sub"],
+        folder_path="설계/로그인",
+    )
+    fake_drive_source.bodies["d1"] = "본문"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert items[0].folder_path == "설계/로그인"
+    assert items[0].folder_id == "sub"
+
+
+def test_search_item_folder_fields_are_none_without_ancestors(
+    db_session, search_service, fake_notion_source
+) -> None:
+    """folder_ancestor_ids 가 NULL 인 문서(Notion)는 folder_path/folder_id 둘 다 None 이다."""
+    _seed_meta(db_session, SOURCE_NOTION, "n1", "로그인 문서")
+    fake_notion_source.bodies["n1"] = "본문"
+
+    items = search_service.search("로그인", DocumentSearchOptions())
+
+    assert items[0].folder_path is None
+    assert items[0].folder_id is None
 
 
 # --- 미구성 vs 결과 없음 구별 ---------------------------------------------------
@@ -1963,3 +2000,32 @@ def test_created_and_modified_filters_do_not_cross_validate(search_service) -> N
 
     assert meta_filter.created_after == datetime(2026, 8, 1, 0, 0, 0)
     assert meta_filter.modified_before == datetime(2026, 7, 1, 0, 0, 0)
+
+
+def test_folder_ids_empty_list_raises(search_service) -> None:
+    """folder_ids 를 빈 목록으로 주면 ValidationError 다."""
+    with pytest.raises(ValidationError, match="folder_ids must not be empty"):
+        search_service.search("로그인", DocumentSearchOptions(folder_ids=[]))
+
+
+def test_folder_ids_too_many_entries_raises(search_service) -> None:
+    """folder_ids 원소 개수 상한을 넘기면 ValidationError 다."""
+    with pytest.raises(ValidationError, match="at most"):
+        search_service.search(
+            "로그인", DocumentSearchOptions(folder_ids=[f"f{i}" for i in range(21)])
+        )
+
+
+def test_folder_ids_blank_entry_raises(search_service) -> None:
+    """공백뿐인 folder_ids 원소는 ValidationError 다."""
+    with pytest.raises(ValidationError, match="invalid folder_id entry"):
+        search_service.search("로그인", DocumentSearchOptions(folder_ids=["  "]))
+
+
+def test_build_meta_filter_maps_folder_ids(search_service) -> None:
+    """folder_ids 가 공백 제거돼 DocumentMetaFilter 로 옮겨진다."""
+    meta_filter = search_service._build_meta_filter(
+        DocumentSearchOptions(folder_ids=[" sub "])
+    )
+
+    assert meta_filter.folder_ids == ("sub",)
