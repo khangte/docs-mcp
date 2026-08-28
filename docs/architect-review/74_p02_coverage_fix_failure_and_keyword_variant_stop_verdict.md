@@ -115,6 +115,14 @@ developer는 73번의 미커밋 production/test 변경을 candidate commit으로
 현재 production 기준은 `ecc3e792`의 검색 동작이다. 여기에 이미 존재하는 vector variants
 경로는 유지한다. keyword variants를 full ranking signal로 승격하는 변경만 중단한다.
 
+> **(2026-08-28 정정 — 76번)** 이 문단은 저장소 상태를 잘못 기술했다. `75fa5f3`는
+> verdict 72 반려 이후에도 revert되지 않아 main HEAD에 남아 있다. 따라서 HEAD의 실제
+> 검색 동작은 `ecc3e792 + keyword-variant symmetrization`이며, `query_variants`가 빈
+> 경우에만 `ecc3e792`와 동일하다. component A(`8b4e36a`, `608731b`)는 `75fa5f3`가
+> `endpoint_route_reranker.py`를 삭제하며 되돌렸으므로 HEAD에 없다. 위 승급 반려 판정
+> 자체는 불변이며, `75fa5f3` revert 여부는 lead 결정 사항이다.
+> 근거: `docs/architect-review/76_verdict74_production_baseline_statement_verdict.md`
+
 ## 5. 다음 레버 — 별도 index representation 트랙
 
 p02가 요구하는 정보는 search-time rank weight가 아니라 색인 표현에 없다. 후속을 계속하려면
