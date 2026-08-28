@@ -247,3 +247,61 @@ def test_section_over_token_limit_splits_into_multiple_chunks_same_ref_id() -> N
     section_chunks = [c for c in chunks if c.chunk_type == "section"]
     assert len(section_chunks) > 1
     assert {c.ref_id for c in section_chunks} == {"doc:section:0"}
+
+
+def test_endpoint_chunk_carries_structure_fields() -> None:
+    """78번 §4: endpoint 청크는 leaf/intent/context 파생 필드를 함께 담는다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/repos/{owner}/{repo}/topics",
+        operation_id="repos/get-all-topics",
+        summary="Get all repository topics",
+        description="",
+        tags=["repos"],
+    )
+    document = ParsedDocument(title="t", version="1", endpoints=[endpoint])
+    chunks = build_chunks(document, {("GET", "/repos/{owner}/{repo}/topics"): "ep-1"})
+
+    endpoint_chunk = next(c for c in chunks if c.chunk_type == "endpoint")
+    assert endpoint_chunk.leaf_text == "topics topic"
+    assert endpoint_chunk.intent_text == (
+        "list index all browse Get all repository topics"
+    )
+    assert endpoint_chunk.context_text == (
+        "repos repo owner get-all-topics get-all-topic get all"
+    )
+
+
+def test_endpoint_chunk_text_is_unchanged_by_structure_fields() -> None:
+    """구조 필드는 `text` 를 바꾸지 않는다 — 재임베딩 0 이 이 설계의 전제다."""
+    endpoint = ParsedEndpoint(
+        method="GET",
+        path="/repos/{owner}/{repo}/topics",
+        operation_id="repos/get-all-topics",
+        summary="Get all repository topics",
+        description="",
+        tags=["repos"],
+    )
+    document = ParsedDocument(title="t", version="1", endpoints=[endpoint])
+    chunks = build_chunks(document, {("GET", "/repos/{owner}/{repo}/topics"): "ep-1"})
+
+    endpoint_chunk = next(c for c in chunks if c.chunk_type == "endpoint")
+    assert endpoint_chunk.text == build_endpoint_chunk_text(endpoint)
+    assert "list index all browse" not in endpoint_chunk.text
+
+
+def test_schema_and_section_chunks_have_empty_structure_fields() -> None:
+    """endpoint 가 아닌 청크는 구조 필드가 빈 문자열이다(생성 컬럼이 NULL 이 된다)."""
+    document = ParsedDocument(
+        title="t",
+        version="1",
+        schemas=[ParsedSchema(name="Pet", json_schema={}, description="")],
+        sections=[ParsedSection(title="Intro", content="hello")],
+    )
+    chunks = build_chunks(document, {}, {0: "sec-0"}, {0: "sch-0"})
+
+    for chunk in chunks:
+        assert chunk.chunk_type in ("schema", "section")
+        assert chunk.leaf_text == ""
+        assert chunk.intent_text == ""
+        assert chunk.context_text == ""

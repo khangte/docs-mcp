@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from app.core.logging import get_logger
 from app.models import EndpointBusinessMetadata
+from app.services.indexer.endpoint_structure import derive_endpoint_structure
 from app.services.indexer.section_splitter import CountTokens, build_section_chunks
 from app.services.parser.openapi_parser import (
     ParsedDocument,
@@ -23,11 +24,20 @@ _DESCRIPTION_MAX_CHARS = 300
 
 @dataclass
 class BuiltChunk:
-    """청크 텍스트 빌드 결과(타입/참조ID/텍스트)."""
+    """청크 텍스트 빌드 결과(타입/참조ID/텍스트 + 엔드포인트 구조 신호).
+
+    `leaf_text`/`intent_text`/`context_text` 는 endpoint 청크에만 채워지고
+    schema·section 청크는 빈 문자열이다(`docs/architect-review/78` §4.3).
+    이 세 필드는 `text` 에 섞이지 않는다 — `text` 가 바뀌면 재임베딩이
+    필요해지고 벡터 arm 불변 전제가 깨진다.
+    """
 
     chunk_type: str  # "endpoint" | "schema" | "section"
     ref_id: str  # endpoint_id, schema_id 또는 section_id
     text: str
+    leaf_text: str = ""
+    intent_text: str = ""
+    context_text: str = ""
 
 
 def build_endpoint_chunk_text(
@@ -149,11 +159,21 @@ def build_chunks(
         if not eid:
             continue
         metadata = (business_metadata or {}).get((endpoint.method, endpoint.path))
+        structure = derive_endpoint_structure(
+            method=endpoint.method,
+            path=endpoint.path,
+            summary=endpoint.summary or "",
+            tags=endpoint.tags,
+            operation_id=endpoint.operation_id,
+        )
         chunks.append(
             BuiltChunk(
                 chunk_type="endpoint",
                 ref_id=eid,
                 text=build_endpoint_chunk_text(endpoint, metadata=metadata),
+                leaf_text=structure.leaf_text,
+                intent_text=structure.intent_text,
+                context_text=structure.context_text,
             )
         )
     for idx, schema in enumerate(document.schemas):
