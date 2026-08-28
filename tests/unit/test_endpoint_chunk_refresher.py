@@ -111,3 +111,56 @@ def test_returns_false_when_endpoint_missing_from_spec(db_session, sample_openap
         embedding_provider=HashEmbeddingProvider(dim=EMBEDDING_DIM),
     )
     assert updated is False
+
+
+def _seed_document(session, doc_id: str, project: str = "default") -> None:
+    """`Document` 한 건을 저장한다(이미 있으면 건드리지 않는다)."""
+    if session.get(Document, doc_id) is not None:
+        return
+    session.add(
+        Document(
+            id=doc_id,
+            project=project,
+            source_url=None,
+            title=f"문서 {doc_id}",
+            content_hash="hash",
+            raw_text="{}",
+        )
+    )
+    session.flush()
+
+
+def test_metadata_writeback_preserves_structure_fields(db_session) -> None:
+    """78번 §5.4: metadata write-back 은 A/B/C 구조 컬럼을 비우지 않는다."""
+    from sqlalchemy import select
+
+    repo = ChunkRepository(db_session)
+    _seed_document(db_session, "doc-wb")
+    db_session.add(
+        Chunk(
+            id="c-wb",
+            document_id="doc-wb",
+            chunk_type="endpoint",
+            ref_id="ep-wb",
+            text="원래 텍스트",
+            leaf_text="topics topic",
+            intent_text="list index all browse Get all repository topics",
+            context_text="repos repo owner",
+        )
+    )
+    db_session.commit()
+
+    assert repo.update_endpoint_chunk(
+        document_id="doc-wb", ref_id="ep-wb", text="갱신된 텍스트", embedding=[0.0] * EMBEDDING_DIM
+    )
+    db_session.commit()
+
+    row = db_session.execute(
+        select(Chunk.text, Chunk.leaf_text, Chunk.intent_text, Chunk.context_text).where(
+            Chunk.id == "c-wb"
+        )
+    ).one()
+    assert row[0] == "갱신된 텍스트"
+    assert row[1] == "topics topic"
+    assert row[2] == "list index all browse Get all repository topics"
+    assert row[3] == "repos repo owner"
