@@ -27,9 +27,9 @@
     {
       "candidate_search_sha": "75fa5f3f98bcd119f1f7bf3645b018cc0db4996d",
       "component": "B-only (keyword-variant symmetrization)",
-      "verdict": "docs/architect-review/71_gate_effectiveness_hold_and_component_split_verdict.md",
+      "verdict": "docs/architect-review/72_bonly_holdout_pair_regression_promotion_verdict.md",
       "shared_index_fingerprint": "51b2cc2a1da4b9675d90947c98c7fd8d1a02acaaf7232b01f8548dbc8526d7d6",
-      "outcome": "gate/holdout/all all-PASS — §5.1 HARD 8/8, §5.2 EFFECTIVENESS 6/6, holdout OFF byte-identical + ON directionality PASS (wins 8 / losses 3)"
+      "outcome": "gate PASS; sealed holdout FAIL — p02 child 3→miss, holdout pair non-regression 1/2, effective 0/2; not promoted"
     }
   ],
   "rules": "docs/architect-review/69_search_quality_expanded_gate_set_design.md"
