@@ -13,30 +13,31 @@
 
 ## 결과 요약
 
-| 질의 | 카테고리 | variants | off top10 | on top10 | off top50 | on top50 | 분류 |
-|---|---|---|---|---|---|---|---|
-| q04 고객 새로 등록하고 싶어 | C2 | create a new customer | 미검출 | **1** | 미검출 | 1 | OK — variants 해결 |
-| q05 결제 환불 처리해줘 | C2 | refund a payment | 미검출 | 미검출 | 35 | 41 | FAMILY-RERANK 후보 |
-| q06 이슈 새로 만들기 | C2 | create a new issue | 미검출 | **3** | 16 | 9 | OK — variants 해결 |
-| q07 저장소 삭제해줘 | C2 | delete a repository | 미검출 | 미검출 | 미검출 | 22 | FAMILY-RERANK 후보 (variants가 후보군 유입) |
-| q08 cancel my recurring payment | C3 | (없음) | 미검출 | — | 39 | — | FAMILY-RERANK 후보 |
-| q09 shut down a repository | C3 | (없음) | 미검출 | — | 24 | — | FAMILY-RERANK 후보 |
-| q10 show my billing history | C3 | (없음) | 미검출 | — | 미검출 | — | **CANDIDATE-GEN 실패** (어휘 갭) |
-| q11 customer | C4 | (없음) | 미검출 | — | 미검출 | — | **CANDIDATE-GEN 실패** |
-| q12 pull request | C4 | (없음) | 미검출 | — | 29 | — | FAMILY-RERANK 후보 |
+| 질의                            | 카테고리 | variants              | off top10 | on top10 | off top50 | on top50 | 분류                                        |
+| ------------------------------- | -------- | --------------------- | --------- | -------- | --------- | -------- | ------------------------------------------- |
+| q04 고객 새로 등록하고 싶어     | C2       | create a new customer | 미검출    | **1**    | 미검출    | 1        | OK — variants 해결                          |
+| q05 결제 환불 처리해줘          | C2       | refund a payment      | 미검출    | 미검출   | 35        | 41       | FAMILY-RERANK 후보                          |
+| q06 이슈 새로 만들기            | C2       | create a new issue    | 미검출    | **3**    | 16        | 9        | OK — variants 해결                          |
+| q07 저장소 삭제해줘             | C2       | delete a repository   | 미검출    | 미검출   | 미검출    | 22       | FAMILY-RERANK 후보 (variants가 후보군 유입) |
+| q08 cancel my recurring payment | C3       | (없음)                | 미검출    | —        | 39        | —        | FAMILY-RERANK 후보                          |
+| q09 shut down a repository      | C3       | (없음)                | 미검출    | —        | 24        | —        | FAMILY-RERANK 후보                          |
+| q10 show my billing history     | C3       | (없음)                | 미검출    | —        | 미검출    | —        | **CANDIDATE-GEN 실패** (어휘 갭)            |
+| q11 customer                    | C4       | (없음)                | 미검출    | —        | 미검출    | —        | **CANDIDATE-GEN 실패**                      |
+| q12 pull request                | C4       | (없음)                | 미검출    | —        | 29        | —        | FAMILY-RERANK 후보                          |
 
 분류 규칙(67번 §1 해석 규칙 고정):
+
 - **OK**: best(top10) ≤ 3
 - **FAMILY-RERANK 후보**: top10엔 없으나 넓은 후보군 top50엔 있음 → 최종 융합/랭킹에서만 밀림
 - **CANDIDATE-GEN 실패**: top50 넓은 후보군에도 accepted 없음 → rerank 대상 아님, 색인 표현/후보 생성 문제
 
 ## 유형별 집계 (9건)
 
-| 유형 | 건수 | 질의 |
-|---|---|---|
-| OK (variants가 해결) | 2 | q04, q06 |
-| FAMILY-RERANK 후보 | 5 | q05, q07, q08, q09, q12 |
-| CANDIDATE-GEN 실패 (순수 어휘 갭) | 2 | q10, q11 |
+| 유형                              | 건수 | 질의                    |
+| --------------------------------- | ---- | ----------------------- |
+| OK (variants가 해결)              | 2    | q04, q06                |
+| FAMILY-RERANK 후보                | 5    | q05, q07, q08, q09, q12 |
+| CANDIDATE-GEN 실패 (순수 어휘 갭) | 2    | q10, q11                |
 
 ## 핵심 발견
 
@@ -71,11 +72,11 @@ child, 루트 `GET /v1/customers`는 top50에도 없다.
 
 ## 66번·67번 판정에 따른 다음 단계 매핑
 
-| 유형 | 건수 | 다음 레버 |
-|---|---|---|
-| FAMILY-RERANK 후보 | 5 | 67번 §1 → 66번 A: 질의 operation/list/create 의도 × path specificity 제한적 rerank 실험 대상. 무조건적 짧은 path boost 아님 |
-| variants가 해결 | 2 | variants 경로 우선 개선. 클라 LLM이 variants를 항상 제공한다는 계약이면 C2 회복 대부분 여기서 남 |
-| CANDIDATE-GEN 실패 | 2 | rerank 대상 아님. q11은 66번 B의 diagnostic 질의로 분리. q10은 66번 C의 lexical control(`list invoices`)과 순위 비교로 어휘 갭 크기 측정 |
+| 유형               | 건수 | 다음 레버                                                                                                                                |
+| ------------------ | ---- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| FAMILY-RERANK 후보 | 5    | 67번 §1 → 66번 A: 질의 operation/list/create 의도 × path specificity 제한적 rerank 실험 대상. 무조건적 짧은 path boost 아님              |
+| variants가 해결    | 2    | variants 경로 우선 개선. 클라 LLM이 variants를 항상 제공한다는 계약이면 C2 회복 대부분 여기서 남                                         |
+| CANDIDATE-GEN 실패 | 2    | rerank 대상 아님. q11은 66번 B의 diagnostic 질의로 분리. q10은 66번 C의 lexical control(`list invoices`)과 순위 비교로 어휘 갭 크기 측정 |
 
 ## 원본
 
