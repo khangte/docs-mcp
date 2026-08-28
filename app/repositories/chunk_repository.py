@@ -19,6 +19,14 @@ _HNSW_EF_SEARCH = 100
 #: 휴리스틱이라 env 로 노출하지 않는다.
 _HNSW_EF_SEARCH_FILTERED = 200
 
+#: 구조화 lexical 필드용 `ts_rank` 가중치 배열 `{D, C, B, A}`. Postgres 기본값을
+#: 그대로 쓰며 `docs/architect-review/78` §6.1 에서 상수로 동결했다 — 게이트
+#: 결과를 보고 조정하지 않는다(조정은 verdict 74 가 반려한 과적합과 같은 경로).
+_STRUCTURED_RANK_WEIGHTS = text("'{0.1, 0.2, 0.4, 1.0}'::float4[]")
+
+#: `lexical_field` 로 구조화 벡터를 고르는 값. 그 외 모든 값은 기존 `text_tsv`.
+_LEXICAL_FIELD_STRUCTURED = "structured"
+
 
 @dataclass
 class ChunkVectorHit:
@@ -190,6 +198,7 @@ class ChunkRepository:
         meta_filter: DocumentMetaFilter | None = None,
         phrase_terms: Sequence[Sequence[str]] | None = None,
         score_phrase_terms: Sequence[Sequence[str]] | None = None,
+        lexical_field: str = "text",
     ) -> list[ChunkTextHit]:
         """`chunk_type` 청크를 Postgres FTS(`text_tsv` GIN 인덱스)로 키워드 검색한다.
 
@@ -229,6 +238,13 @@ class ChunkRepository:
         `meta_filter` 는 `document_meta` EXISTS 서브쿼리로 건다(None 또는 빈
         필터면 조건 없이 기존과 동일하게 동작 - 엔드포인트 검색 호출부는
         인자를 넘기지 않으므로 무변경).
+
+        `lexical_field` 는 어느 lexical 벡터로 필터·채점할지 고른다.
+        `"text"`(기본)는 기존 `text_tsv` + 무가중 `ts_rank` 로 현행 동작 그대로다.
+        `"structured"` 는 `search_tsv`(leaf A / intent B / context C / text D) +
+        `_STRUCTURED_RANK_WEIGHTS` 가중 `ts_rank` 를 쓴다
+        (`docs/architect-review/78` §6). 미인식 값은 `"text"` 로 degrade 한다 —
+        `search_strategy`/`document_search_strategy` 와 같은 롤백 스위치 규약이다.
         """
         normalized_terms = [t for t in terms if t]
         normalized_phrase_groups = _normalize_phrase_groups(phrase_terms)
@@ -249,11 +265,16 @@ class ChunkRepository:
             if normalized_score_terms or normalized_score_phrase_groups
             else tsq
         )
-        rank = func.ts_rank(Chunk.text_tsv, score_tsq)
+        if lexical_field == _LEXICAL_FIELD_STRUCTURED:
+            lexical_column = Chunk.search_tsv
+            rank = func.ts_rank(_STRUCTURED_RANK_WEIGHTS, lexical_column, score_tsq)
+        else:
+            lexical_column = Chunk.text_tsv
+            rank = func.ts_rank(lexical_column, score_tsq)
         stmt = (
             select(Chunk.id, Chunk.ref_id, Chunk.document_id, rank.label("score"))
             .where(Chunk.chunk_type == chunk_type)
-            .where(Chunk.text_tsv.op("@@", is_comparison=True)(tsq))
+            .where(lexical_column.op("@@", is_comparison=True)(tsq))
         )
         if document_id is not None:
             stmt = stmt.where(Chunk.document_id == document_id)
