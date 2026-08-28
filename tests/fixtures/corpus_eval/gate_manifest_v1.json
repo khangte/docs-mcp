@@ -30,6 +30,25 @@
       "verdict": "docs/architect-review/72_bonly_holdout_pair_regression_promotion_verdict.md",
       "shared_index_fingerprint": "51b2cc2a1da4b9675d90947c98c7fd8d1a02acaaf7232b01f8548dbc8526d7d6",
       "outcome": "gate PASS; sealed holdout FAIL — p02 child 3→miss, holdout pair non-regression 1/2, effective 0/2; not promoted"
+    },
+    {
+      "candidate_search_sha": "73-coverage-fix-worktree (uncommitted)",
+      "candidate_base_sha": "17686f7cd981b930a020d0470625730501cbfc29",
+      "candidate_product_base_sha": "75fa5f3f98bcd119f1f7bf3645b018cc0db4996d",
+      "candidate_source_state_sha256": "36d2e5473b2fdfbee8013561dc71e6914f20fbc5d8e859f07321c9e90ffd112d",
+      "candidate_source_snapshot_session_id": "4a84df97-a1cf-4c1c-a2ed-4ef4a293f5a1",
+      "candidate_source_snapshot_message_uuid": "ede4f9d9-b61a-44e1-94a5-07847c473250",
+      "candidate_source_snapshot_timestamp": "2026-08-28T05:00:18.838Z",
+      "candidate_source_state_serialization": "logical-path ascending: <file_sha256><two spaces><logical_path><LF>",
+      "component": "B p02 fix (coverage-aware variant admission + merged top_k cap)",
+      "verdict": "docs/architect-review/74_p02_coverage_fix_failure_and_keyword_variant_stop_verdict.md",
+      "shared_index_fingerprint": "da3952f144ebf8d3b45e65c14318c54f01bcb1bf0ad1d4023422d1907fc02faa",
+      "raw_trace_transcript_session_id": "4a84df97-a1cf-4c1c-a2ed-4ef4a293f5a1",
+      "raw_trace_off_holdout_runner_message_uuid": "88e7cb59-d495-470b-adb6-42f0bf5bd306",
+      "raw_trace_on_holdout_p02_pair_message_uuid": "53fb663f-f5ba-442f-9fce-631b2377df77",
+      "raw_trace_arm_message_uuid": "8f0b73fe-6a56-41dc-ae3a-c0c237a01625",
+      "reproduction_trace": "developer-session:4a84df97-a1cf-4c1c-a2ed-4ef4a293f5a1; db:rrfeval_ed5b97f0; script-sha256:975e20ad40b43db66c38836e6a7a8c71ab5fbe6dcc98f3fd9006cc328d0010b1; report-sha256:99b831e0e2802de3354f34ed42bf27772396b2c23597ecace8cfa4bb33506fcd",
+      "outcome": "p02 dev-gate FAIL — child 11→9 but root 4→11, pair non-regression still fails; design premise disproven; not committed. Search-time keyword-variant track TERMINATED — baseline ecc3e792 + existing vector variants retained; no v2 freeze; further work requires a separate index-representation/reindex design outside ADR-0003 read-only scope"
     }
   ],
   "rules": "docs/architect-review/69_search_quality_expanded_gate_set_design.md"
