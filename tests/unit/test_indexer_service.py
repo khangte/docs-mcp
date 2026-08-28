@@ -149,3 +149,28 @@ def test_reindex_applies_business_metadata_by_method_path(
         if c.chunk_type == "endpoint" and "/pet/{petId}" in c.text and "[GET]" in c.text
     )
     assert "Keywords: adopt" in endpoint_chunk.text
+
+
+def test_indexed_endpoint_chunk_persists_structure_fields(
+    services_factory, sample_openapi_3: str
+) -> None:
+    """색인 경로가 구조 신호 3필드를 DB 행에 그대로 넣는다(78번 §6)."""
+    services = services_factory()
+    result = services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
+
+    chunks = [
+        c
+        for c in services.chunk_repo.list_by_document(result.document.id)
+        if c.chunk_type == "endpoint"
+    ]
+    assert chunks
+    assert all(c.leaf_text for c in chunks)
+    assert any("get" in c.intent_text for c in chunks)
+    schema_chunks = [
+        c
+        for c in services.chunk_repo.list_by_document(result.document.id)
+        if c.chunk_type == "schema"
+    ]
+    assert all(c.leaf_text == "" and c.intent_text == "" for c in schema_chunks)

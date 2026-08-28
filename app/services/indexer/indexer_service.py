@@ -124,6 +124,9 @@ class IndexerService:
                 chunk_type=built.chunk_type,
                 ref_id=built.ref_id,
                 text=built.text,
+                leaf_text=built.leaf_text,
+                intent_text=built.intent_text,
+                context_text=built.context_text,
                 embedding=vector,
             )
             self._chunk_repo.add(chunk)
