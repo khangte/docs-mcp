@@ -11,7 +11,8 @@
     우선) — 는 커밋 이력엔 있으나 `75fa5f3`가 `app/services/search/endpoint_route_reranker.py`를
     삭제하며 되돌려 **HEAD에 없다** (verdict 76).
 - 근거 문서: `docs/architect-review/74_p02_coverage_fix_failure_and_keyword_variant_stop_verdict.md`,
-  `docs/architect-review/76_verdict74_production_baseline_statement_verdict.md` (74 §4 production 기준 정정)
+  `docs/architect-review/76_verdict74_production_baseline_statement_verdict.md` (74 §4 production 기준 정정),
+  `docs/architect-review/77_diagnose_variants_drift_band_and_attribution_limit_verdict.md` (드리프트 대역·귀속 한계)
 - 코퍼스 content_sha256: stripe=`3653ad45bbec`, github=`80850db290cd`
   (full: stripe `3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5`,
   github `80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d`)
@@ -20,9 +21,9 @@
 
 1. **p02 route-pair 개발 게이트** — verdict 74가 반증한 73번 coverage-aware
    variant admission + merged `top_k` cap 후보의 shared-index holdout 재현.
-2. **C2~C4 variant 진단** — 현재 HEAD(`6f9e244` = `ecc3e792` + `75fa5f3`
-   keyword-variant symmetrization) 상태의 `diagnose_variants.py` 재측정.
-   q05·q07 영향 확인용.
+2. **C2~C4 variant 진단** — `75fa5f3` symmetrization 제거(revert `953c1c8`) 후
+   HEAD `cbe9d71` 상태의 `diagnose_variants.py` 재측정. B 포함 트리(`6f9e244`)
+   측정을 postrevert 수치로 갱신. q04~q07 영향 확인용.
 
 ---
 
@@ -95,12 +96,16 @@ target coverage(0.67)가 broad parent coverage(0.33) 이상인데도 admitted po
 
 ---
 
-## 2. C2~C4 variant 진단 (HEAD `6f9e244` = `ecc3e792` + `75fa5f3`)
+## 2. C2~C4 variant 진단 (HEAD `cbe9d71`, `75fa5f3` symmetrization 제거)
 
 ### 2.1 실행
 
 - 명령: `uv run python tests/fixtures/corpus_eval/diagnose_variants.py
   --top-k 10 --wide 50`
+- HEAD `cbe9d71`: revert `953c1c8`로 `75fa5f3` keyword-variant symmetrization
+  제거. **`git diff 429302c HEAD -- app/services/search/`가 비어 있다** —
+  postrevert 검색 코드는 doc 03 baseline(`429302c`)과 byte-identical이다
+  (`429302c`는 `ecc3e792`의 조상이고 그 사이 검색 코드 변경 없음).
 - 임시 DB(스크립트가 생성·삭제), corpus stripe=589 / github=1220 endpoints
   (`corpus_manifest.json` content_sha256 검증 통과)
 - 임베딩: `intfloat/multilingual-e5-small` (dim 384), is_semantic: true
@@ -115,34 +120,40 @@ target coverage(0.67)가 broad parent coverage(0.33) 이상인데도 admitted po
 - **FAMILY-RERANK 후보**: top10엔 없으나 넓은 후보군 top50엔 있음
 - **CANDIDATE-GEN 실패**: top50에도 accepted 없음
 
-### 2.3 결과 (doc 03 baseline `429302c` -> HEAD `6f9e244`)
+### 2.3 결과 (doc 03 baseline `429302c` -> HEAD `cbe9d71`, B 제거)
 
 `accepted 순위` = variants 있는 질의는 on, 없는 질의는 off. `미` = 미검출.
+postrevert 값은 `scratchpad/eval_variants_cbe9d71_postrevert.log`에서 전사.
 
-| 질의                            | 카테고리 | variants              | doc03 (top10 / top50) | HEAD (top10 / top50) | doc03 분류         | HEAD 분류          |
-| ------------------------------- | -------- | --------------------- | --------------------- | -------------------- | ------------------ | ------------------ |
-| q04 고객 새로 등록하고 싶어     | C2       | create a new customer | 1 / 1                 | 3 / 3                | OK                 | OK                 |
-| q05 결제 환불 처리해줘          | C2       | refund a payment      | 미 / 41               | **3 / 3**            | FAMILY-RERANK 후보 | **OK**             |
-| q06 이슈 새로 만들기            | C2       | create a new issue    | 3 / 3                 | 3 / 3                | OK                 | OK                 |
-| q07 저장소 삭제해줘             | C2       | delete a repository   | 미 / 22               | **6 / 6**            | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
-| q08 cancel my recurring payment | C3       | (없음)                | 미 / 39               | 미 / 39              | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
-| q09 shut down a repository       | C3       | (없음)                | 미 / 24               | 미 / 24              | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
-| q10 show my billing history      | C3       | (없음)                | 미 / 미               | 미 / 미              | CANDIDATE-GEN 실패 | CANDIDATE-GEN 실패 |
-| q11 customer                     | C4       | (없음)                | 미 / 미               | 미 / 미              | CANDIDATE-GEN 실패 | CANDIDATE-GEN 실패 |
-| q12 pull request                 | C4       | (없음)                | 미 / 29               | 미 / 29              | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
+| 질의                            | 카테고리 | variants              | doc03 (top10 / top50) | postrevert (top10 / top50) | doc03 분류         | postrevert 분류    |
+| ------------------------------- | -------- | --------------------- | --------------------- | -------------------------- | ------------------ | ------------------ |
+| q04 고객 새로 등록하고 싶어     | C2       | create a new customer | 1 / 1                 | 1 / 1                      | OK                 | OK                 |
+| q05 결제 환불 처리해줘          | C2       | refund a payment      | 미 / 41               | 미 / 44                    | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
+| q06 이슈 새로 만들기            | C2       | create a new issue    | 3 / 3                 | **5 / 11**                 | OK                 | **FAMILY-RERANK 후보** |
+| q07 저장소 삭제해줘             | C2       | delete a repository   | 미 / 22               | 미 / 24                    | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
+| q08 cancel my recurring payment | C3       | (없음)                | 미 / 39               | 미 / 39                    | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
+| q09 shut down a repository       | C3       | (없음)                | 미 / 24               | 미 / 24                    | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
+| q10 show my billing history      | C3       | (없음)                | 미 / 미               | 미 / 미                    | CANDIDATE-GEN 실패 | CANDIDATE-GEN 실패 |
+| q11 customer                     | C4       | (없음)                | 미 / 미               | 미 / 미                    | CANDIDATE-GEN 실패 | CANDIDATE-GEN 실패 |
+| q12 pull request                 | C4       | (없음)                | 미 / 29               | 미 / 29                    | FAMILY-RERANK 후보 | FAMILY-RERANK 후보 |
 
 ### 2.4 유형별 집계
 
-| 유형               | doc03 | HEAD | 질의 (HEAD)             |
-| ------------------ | ----: | ---: | ---------------------- |
-| OK                 |     2 |    3 | q04, q05, q06          |
-| FAMILY-RERANK 후보 |     5 |    4 | q07, q08, q09, q12     |
-| CANDIDATE-GEN 실패 |     2 |    2 | q10, q11               |
+| 유형               | doc03 | postrevert | 질의 (postrevert)               |
+| ------------------ | ----: | ---------: | ------------------------------- |
+| OK                 |     2 |          1 | q04                             |
+| FAMILY-RERANK 후보 |     5 |          6 | q05, q06, q07, q08, q09, q12    |
+| CANDIDATE-GEN 실패 |     2 |          2 | q10, q11                        |
 
-`OK`/`FAMILY-RERANK 후보`/`CANDIDATE-GEN 실패`는 doc 03의 실패 분류 라벨이지 기능
-이름이 아니다. component A(route-family rerank) 코드는 HEAD에 없으므로
-`FAMILY-RERANK 후보 5→4`를 A의 효과로 읽지 않는다(verdict 76 §5). 이 delta는
-반려된 component B(`75fa5f3`)가 포함된 트리에서 측정됐다.
+`OK`/`FAMILY-RERANK 후보`/`CANDIDATE-GEN 실패`는 doc 03의 실패 분류 라벨이다.
+postrevert 검색 코드는 `429302c` baseline과 byte-identical이므로 doc03 대비 분류
+이동(OK 2→1, FAMILY-RERANK 5→6)은 코드 변경이 아니다. 유일한 이동은 q06가 accepted
+rank 3 → 5로 OK 경계(≤3)를 넘어 FAMILY-RERANK로 분류된 것이며, 이는 run마다 임시 DB를
+새로 색인하는 데서 오는 재색인·e5-small 임베딩 비결정성이다(verdict 70 reindex
+nondeterminism). 코드 회귀가 아니다. q05 on-top50 41→44, q07 22→24도 같은 대역.
+B 포함 트리(`6f9e244`) 측정과의 차이 — OK 3→1, FAMILY-RERANK 4→6 — 는 §3.2에서
+다룬다: `6f9e244`에서 q05가 OK로, q07이 top10으로 올라간 것은 `75fa5f3` symmetrization
+단독 효과였고 revert로 되돌아갔다.
 
 ---
 
@@ -168,23 +179,26 @@ target coverage(0.67)가 broad parent coverage(0.33) 이상인데도 admitted po
 - v2 프리즈·holdout 저작 착수 금지 (새 candidate가 p02와 v1 exposed
   regression 통과 전까지).
 
-### 3.2 symmetrization 영향 (q04 회귀 · q05·q07 개선)
+### 3.2 symmetrization 영향 (B-tree 측정 vs revert 후 재측정)
 
-현재 HEAD(`6f9e244` = `ecc3e792` + `75fa5f3`)의 C2~C4 진단에서 두 건을 밀어올린
-것은 **keyword-variant symmetrization 단독 효과**다. component A(route-family
-rerank)는 HEAD에 없으므로(verdict 76) 이 개선의 귀속 대상이 아니다. 측정 delta는
-baseline `429302c`(= `ecc3e792` 검색 코드) 대비 `75fa5f3` 한 커밋뿐이다.
+B 포함 트리(`6f9e244`)의 C2~C4 진단에서 세 질의가 doc03 baseline 대비 움직였고,
+component A는 그 트리에 없으므로(verdict 76) 전부 **keyword-variant symmetrization
+단독 효과**다. `953c1c8` revert 후 HEAD `cbe9d71` 재측정에서 세 건 모두 baseline
+방향으로 되돌아갔다 — B의 효과였음이 확인된다.
 
-- **q05** `결제 환불 처리해줘` / `refund a payment`: FAMILY-RERANK 후보 → OK.
-  accepted `POST /v1/refunds`가 variants on top10 미검출 → 3위
-  (top50 41 → 3).
-- **q07** `저장소 삭제해줘` / `delete a repository`: FAMILY-RERANK 후보 유지,
-  단 accepted `DELETE /repos/{owner}/{repo}`가 top10에 진입(6위).
-  doc03 on top50 22 → HEAD on top10 6. off는 여전히 미검출.
-- **q04** `고객 새로 등록하고 싶어` / `create a new customer` (회귀): 분류는 OK
-  유지이나 accepted `POST /v1/customers` on top10 순위 1 → 3 (2계단 하락).
-  delta 귀속이 `75fa5f3` 단독이므로 이 악화도 symmetrization의 비용이다 —
-  B를 순개선으로만 읽지 않는다.
+- **q05** `결제 환불 처리해줘` / `refund a payment`: `6f9e244`에서 FAMILY-RERANK
+  후보 → OK (accepted `POST /v1/refunds` on top50 41 → top10 3위). revert 후
+  다시 FAMILY-RERANK 후보 (미 top10 / top50 44). B의 OK 승격분 소멸.
+- **q07** `저장소 삭제해줘` / `delete a repository`: `6f9e244`에서 accepted
+  `DELETE /repos/{owner}/{repo}`가 top10 6위로 진입 (doc03 on top50 22). revert
+  후 top10 이탈, top50 24위. B의 top10 진입분 소멸.
+- **q04** `고객 새로 등록하고 싶어` / `create a new customer`: `6f9e244`에서
+  accepted `POST /v1/customers` on top10 순위 1 → 3 (2계단 하락, 분류는 OK 유지),
+  revert 후 top10 1위로 복귀. 단 이 1→3→1 왕복은 §2.4 드리프트 대역(top10 2계단 /
+  top50 3계단)과 같은 크기이고 세 수치 모두 공유 인덱스가 아닌 별도 run이다.
+  단독 실행으로는 B 비용으로 확정할 수 없다 — 확정하려면 공유 물리 인덱스 짝
+  실행이 필요하다(verdict 77). B가 순개선이 아니라는 결론은 p02 게이트 FAIL이라는
+  독립 증거로 이미 선다.
 
 그러나 이 C2~C4 진단 개선은 p02 route-pair 개발 게이트 FAIL을 상쇄하지 않는다
 (verdict 74 §1 — aggregate·개별 진단 개선으로 pair loss를 덮지 않는다).
@@ -200,9 +214,14 @@ p02 root regression(4→11)은 그대로다.
    token 보존, method × path shape operation alias, 가중 lexical field,
    결정적 생성.
 4. 그 전까지 v2 프리즈·holdout 저작 착수 금지.
-5. §2 진단(`429302c`→HEAD)은 반려된 component B(`75fa5f3`)가 포함된 트리에서
-   측정됐다. `75fa5f3` revert가 결정되면 이 eval은 revert 후 재측정해야 baseline으로
-   쓸 수 있다(verdict 76 §5).
+5. §2 진단은 처음 반려된 component B(`75fa5f3`)가 포함된 트리(`6f9e244`)에서
+   측정됐으나, `75fa5f3`가 `953c1c8`로 제거됐으므로 postrevert 재측정(HEAD
+   `cbe9d71`) 수치로 갱신했다. postrevert 검색 코드는 `429302c` baseline과
+   byte-identical이다(verdict 76 §5).
+6. 순위 이동을 코드 효과로 귀속하는 비교에는 `diagnose_variants.py`의 run별 임시
+   DB를 쓰지 않는다 — `run_corpus_eval.py --mode preflight/eval` 공유 물리 인덱스
+   짝 실행을 쓴다(verdict 70 §4.3/§4.4, verdict 77; 이 문서 §1 p02 게이트가 쓴
+   방식). 새 도구는 만들지 않는다.
 
 ---
 
@@ -210,6 +229,8 @@ p02 root regression(4→11)은 그대로다.
 
 - p02 shared-index 감사 기록: `docs/eval-results/04_2026-08-28_p02_shared_index_eval.md`
 - C2~C4 진단 raw 로그 (질의별 top-10 덤프 포함):
-  `scratchpad/eval_variants_6f9e244_run2.log`
-  (전체 경로: `/tmp/claude-1000/-home-kang-projects-docs-mcp--team-developer/9ebe7e5a-32fd-4a2d-9429-1c97113d6032/scratchpad/eval_variants_6f9e244_run2.log`)
+  - B 포함 트리(`6f9e244`) 측정: `scratchpad/eval_variants_6f9e244_run2.log`
+  - postrevert(`cbe9d71`, B 제거) 재측정: `scratchpad/eval_variants_cbe9d71_postrevert.log`
+    (§2·§3.2 현재 수치의 출처)
+  - postrevert 비교 정리: `scratchpad/postrevert_eval_report.md`
 - 재현: §1.1 / §2.1 명령 그대로.
