@@ -14,14 +14,17 @@
   논리 경로 오름차순으로 `<file_sha256><두 칸><logical_path><LF>` 직렬화해 산출
 - shared-index: `rrfeval_ed5b97f0`, fingerprint
   `da3952f144ebf8d3b45e65c14318c54f01bcb1bf0ad1d4023422d1907fc02faa`
-  (endpoint/chunk `github=1220`, `stripe=589`; query SHA
-  `6eb897d24d681d1389963007a184ded043d3ae914cf862f6ffd8aba7f75838d8`)
+  (endpoint/chunk `github=1220`, `stripe=589`; query SHA-256
+  `6eb897d24d681d1389963007a184ded043d3ae914cf862f6ffd8aba7f75838d8`; corpus SHA-256
+  stripe `3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5`,
+  github `80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d`)
 - raw 실행 trace UUID: OFF holdout runner `88e7cb59-d495-470b-adb6-42f0bf5bd306`, ON p02 pair
   `53fb663f-f5ba-442f-9fce-631b2377df77`, arm trace `8f0b73fe-6a56-41dc-ae3a-c0c237a01625`
 - 재현 산출물: developer session `4a84df97-a1cf-4c1c-a2ed-4ef4a293f5a1`; 재현 스크립트
-  `repro_p02_73.py` SHA-256 `975e20ad40b43db66c38836e6a7a8c71ab5fbe6dcc98f3fd9006cc328d0010b1`;
-  결과 보고 `73_impl_and_p02_repro_report.md` SHA-256
-  `99b831e0e2802de3354f34ed42bf27772396b2c23597ecace8cfa4bb33506fcd`
+  `repro_p02_73.py` SHA-256 `975e20ad40b43db66c38836e6a7a8c71ab5fbe6dcc98f3fd9006cc328d0010b1`
+  (스크립트·중간 보고는 scratch 정리로 소멸); 감사 기록은
+  `docs/eval-results/04_2026-08-28_p02_shared_index_eval.md`에 보존 (6파일 preimage 표,
+  route pair OFF/ON, trace UUID 포함)
 
 ## 1. 판정 요약
 
