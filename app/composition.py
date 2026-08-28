@@ -61,6 +61,9 @@ class AppState:
     #: "indexed"(기본, doc36 Phase3 RRF) | "fetch"(롤백 스위치). `DocumentSearchService` 로
     #: 그대로 전달된다.
     document_search_strategy: str = "indexed"
+    #: "text"(기본, 기존 `text_tsv`) | "structured"(가중 `search_tsv`, 78번 설계).
+    #: `KeywordSearch` 로 그대로 전달된다.
+    search_lexical_field: str = "text"
     #: 호출 LLM write-back 활성화 여부(docs/architect-review/56 §2.3).
     #: `MetadataWritebackService` 로 그대로 전달된다.
     metadata_writeback_enabled: bool = True
@@ -85,6 +88,7 @@ class AppState:
         notion_source_builder: Callable[[str, str], DocumentSource | None] | None = None,
         search_strategy: str | None = None,
         document_search_strategy: str | None = None,
+        search_lexical_field: str | None = None,
         metadata_writeback_enabled: bool | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
@@ -128,6 +132,11 @@ class AppState:
                 settings.document_search_strategy
                 if document_search_strategy is None
                 else document_search_strategy
+            ),
+            search_lexical_field=(
+                settings.search_lexical_field
+                if search_lexical_field is None
+                else search_lexical_field
             ),
             metadata_writeback_enabled=(
                 settings.business_metadata_writeback_enabled
@@ -212,7 +221,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             indexer=indexer,
             fetcher=state.fetcher,
         )
-        keyword_search = KeywordSearch(chunk_repo)
+        keyword_search = KeywordSearch(chunk_repo, lexical_field=state.search_lexical_field)
         vector_search = VectorSearch(state.embedding_provider, chunk_repo)
         example_service = RequestExampleService(endpoint_repo)
         candidate_search = EndpointCandidateSearch(

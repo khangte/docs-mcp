@@ -31,9 +31,15 @@ class KeywordHit:
 class KeywordSearch:
     """`chunk.text_tsv` GIN 인덱스로 endpoint 청크를 키워드 검색한다."""
 
-    def __init__(self, chunk_repo: ChunkRepository) -> None:
-        """청크 저장소 의존성을 보관한다."""
+    def __init__(self, chunk_repo: ChunkRepository, lexical_field: str = "text") -> None:
+        """청크 저장소와 lexical 벡터 선택값을 보관한다.
+
+        `lexical_field` 는 `"structured"` 일 때만 가중 `search_tsv` 경로를
+        쓰고, 그 외 값은 전부 기존 `text_tsv` 로 degrade 한다
+        (`docs/architect-review/78` §6, 롤백 스위치 규약).
+        """
         self._chunk_repo = chunk_repo
+        self._lexical_field = "structured" if lexical_field == "structured" else "text"
 
     def search(
         self,
@@ -64,5 +70,6 @@ class KeywordSearch:
             document_id=document_id,
             project=project,
             score_terms=terms,
+            lexical_field=self._lexical_field,
         )
         return [KeywordHit(chunk_id=h.chunk_id, ref_id=h.ref_id, score=h.score) for h in hits]
