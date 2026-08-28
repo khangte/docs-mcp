@@ -375,6 +375,14 @@ def _parse_args() -> argparse.Namespace:
         help="eval/determinism/cleanup 모드에서 쓸 공유 임시 DB 접속 URL(preflight 출력값).",
     )
     parser.add_argument(
+        "--lexical-field",
+        choices=("text", "structured"),
+        default="text",
+        help="키워드 arm 이 쓸 lexical 벡터. text=현행 chunk.text_tsv(baseline), "
+        "structured=가중 chunk.search_tsv(78번 설계 candidate). 같은 공유 인덱스 위에서 "
+        "이 값만 바꿔 baseline/candidate 를 비교한다(78번 §8.1).",
+    )
+    parser.add_argument(
         "--with-variants",
         action="store_true",
         help="queries.json의 variants(클라 LLM이 제공했을 영문 변형)를 query_variants로 함께 넘겨 재측정한다(doc/30 §7.3).",
@@ -560,7 +568,9 @@ def _doc_key_by_id(engine) -> dict[str, str]:
     return {doc_id: known.get(int(n), f"doc:{doc_id[:8]}") for doc_id, n in rows}
 
 
-def _print_shared_index_fingerprint(engine, queries_file: Path) -> None:
+def _print_shared_index_fingerprint(
+    engine, queries_file: Path, lexical_field: str = "text"
+) -> None:
     """§4.3 shared-index 지문. 네 실행이 같은 물리 인덱스를 읽는지 대조하는 SELECT 전용 요약."""
     from sqlalchemy import text as _sql
 
@@ -594,6 +604,7 @@ def _print_shared_index_fingerprint(engine, queries_file: Path) -> None:
     print(f"- (doc, method, path, chunk_id) sorted SHA-256: {fp}")
     print(f"- query SHA-256: {qsha}")
     print(f"- fixture commit: {_fixture_commit()}")
+    print(f"- lexical field: {lexical_field}")
 
 
 def _evaluate_and_report(
@@ -605,6 +616,7 @@ def _evaluate_and_report(
     cpu_before = resource.getrusage(resource.RUSAGE_SELF)
     for strategy in strategies:
         state.search_strategy = strategy
+        state.search_lexical_field = args.lexical_field
         b = next(build_services(state))
         ranks_by_strategy[strategy] = _run_strategy(
             b, queries, args.top_k, args.with_variants, args.latency_reps
@@ -702,7 +714,7 @@ def _cmd_preflight(args: argparse.Namespace) -> None:
     print(f"- DB URL: {test_url}")
     for k in sorted(content_sha):
         print(f"- {k}: content_sha256={content_sha[k]} document_id={doc_id_by_key.get(k, '?')}")
-    _print_shared_index_fingerprint(engine, Path(args.queries_file))
+    _print_shared_index_fingerprint(engine, Path(args.queries_file), args.lexical_field)
     print(
         f"\n임시 DB 유지(drop 안 함). "
         f"평가:  --mode eval --db-url '{test_url}'  |  "
@@ -761,7 +773,7 @@ def _cmd_determinism(args: argparse.Namespace) -> None:
                     f"{s} {queries[i].id}: variants 없는 질의인데 OFF/ON capped rank 불일치 {a} != {b}"
                 )
 
-    _print_shared_index_fingerprint(engine, Path(args.queries_file))
+    _print_shared_index_fingerprint(engine, Path(args.queries_file), args.lexical_field)
     print("\n### 결정성 preflight (§4.4)")
     if problems:
         print("FAIL — 하네스/검색 결정성 문제. gate 실행 금지, 재회부.")
@@ -802,7 +814,7 @@ def main() -> None:
         print("is_semantic:", state.embedding_provider.is_semantic)
         print("with_variants:", args.with_variants)
         print(f"shared-index 재사용: {args.db_url} (등록·재색인·drop 생략, read-only)")
-        _print_shared_index_fingerprint(engine, Path(args.queries_file))
+        _print_shared_index_fingerprint(engine, Path(args.queries_file), args.lexical_field)
         _evaluate_and_report(state, queries, strategies, args, indexed_rss=None)
         return
 
