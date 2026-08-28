@@ -21,15 +21,10 @@ from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
-from app.models.openapi import ApiEndpoint
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope
-from app.services.search.endpoint_route_reranker import (
-    RouteCandidate,
-    rerank_endpoints_by_route_family,
-)
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
 from app.services.search.vector_search import VectorSearch
@@ -235,38 +230,8 @@ class EndpointCandidateSearch:
         else:
             _LOG.debug("벡터 arm 생략(rrf 전략, 키워드 단독 degrade): 임베딩 백엔드 비의미론적")
 
-        # 제한 rerank 를 위해 넓게(top_k=width) 융합·hydrate 한 뒤, route-family
-        # 안에서만 순열하고 마지막에 top_k 로 자른다(설계 68 §4.1).
-        fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
-        endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
-        reranked = self._rerank_by_route_family(fused, endpoints, query, query_variants)
-        return self._to_candidates_from_fused(reranked[:top_k], endpoints)
-
-    def _rerank_by_route_family(
-        self,
-        fused: list[FusedResult],
-        endpoints: dict[str, ApiEndpoint],
-        query: str,
-        query_variants: list[str] | None,
-    ) -> list[FusedResult]:
-        """RRF 순서를 route-family 안에서만 재배열한다(설계 68 §4).
-
-        `endpoint_route_reranker` 는 순수 함수다 — 여기서는 hydrate 한 endpoint 로
-        `RouteCandidate` 를 만들어 넘기고, 돌려받은 순서대로 `FusedResult` 를 다시
-        정렬한다. RRF 점수·`match_type` 은 건드리지 않는다.
-        """
-        route_candidates = [
-            RouteCandidate(ref_id=item.ref_id, method=ep.method, path=ep.path)
-            for item in fused
-            if (ep := endpoints.get(item.ref_id)) is not None
-        ]
-        nonblank_variants = [v for v in (query_variants or []) if v and v.strip()]
-        reranked = rerank_endpoints_by_route_family(route_candidates, query, nonblank_variants)
-        new_rank = {rc.ref_id: position for position, rc in enumerate(reranked)}
-        return sorted(
-            (item for item in fused if item.ref_id in new_rank),
-            key=lambda item: new_rank[item.ref_id],
-        )
+        fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=top_k)
+        return self._to_candidates_from_fused(fused)
 
     def _search_keyword_with_variants(
         self,
@@ -429,18 +394,14 @@ class EndpointCandidateSearch:
         return candidates
 
     def _to_candidates_from_fused(
-        self,
-        fused: list[FusedResult],
-        endpoints: dict[str, ApiEndpoint] | None = None,
+        self, fused: list[FusedResult]
     ) -> list[EndpointCandidate]:
         """RRF 융합 결과(ref_id + match_type)를 후보 DTO 로 변환한다.
 
         결과당 `get()` 을 반복하던 N+1 을 `get_many()` 배치 조회 한 번으로
-        대체한다(Q3). 이미 hydrate 한 `endpoints` 를 넘기면 재조회하지 않는다
-        (설계 68 §4.1 — wide 융합 경로에서 `get_many` 1회).
+        대체한다(Q3).
         """
-        if endpoints is None:
-            endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
+        endpoints = self._endpoint_repo.get_many([item.ref_id for item in fused])
         candidates: list[EndpointCandidate] = []
         for item in fused:
             endpoint = endpoints.get(item.ref_id)

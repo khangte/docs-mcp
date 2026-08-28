@@ -725,11 +725,6 @@ def _endpoint_ref_ids(bundle) -> list[str]:
     return [c.ref_id for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
 
 
-def _endpoint_ids_by_path(bundle) -> dict[tuple[str, str], str]:
-    """(method, path) → 엔드포인트 id. route-family rerank 시나리오 조립용."""
-    return {(e.method, e.path): e.id for e in bundle.endpoint_repo.list_all()}
-
-
 def test_keyword_variant_independent_rank_feeds_rrf(app_state, sample_openapi_3: str) -> None:
     """variant 를 독립 키워드 검색해 얻은 상위 등수가 실제 RRF 순위에 기여한다.
 
@@ -799,76 +794,3 @@ def test_keyword_blank_and_duplicate_variants_are_dropped(app_state, sample_open
         ("주문 목록 조회", None),
         ("list orders", None),
     ]
-
-
-def test_wide_family_member_promoted_into_top_k(app_state, sample_openapi_3: str) -> None:
-    """wide RRF 후보에만 있던 family member 가 route-family 순열로 top_k 안에 진입한다.
-
-    `/pet` family 상위를 collection/GET 이 채우고 item-delete 후보가 3위(top_k=2
-    밖)여도, DELETE 의도 + item shape 정합이면 family 슬롯 재배열로 1위가 된다.
-    """
-    _register(app_state, sample_openapi_3)
-    bundle = _bundle(app_state)
-    ids = _endpoint_ids_by_path(bundle)
-    pet_root = ids[("POST", "/pet")]
-    pet_get = ids[("GET", "/pet/{petId}")]
-    pet_delete = ids[("DELETE", "/pet/{petId}")]
-
-    keyword_search = _ScriptedKeywordSearch({"delete a pet": [pet_root, pet_get, pet_delete]})
-    search = _rrf_only_search(bundle, keyword_search)
-
-    out = search.search("delete a pet", CandidateSearchOptions(top_k=2))
-    result_ids = [c.endpoint_id for c in out]
-
-    assert result_ids[0] == pet_delete
-    assert pet_delete in result_ids
-
-
-def test_exact_result_is_unchanged_by_route_family_rerank(
-    app_state, sample_openapi_3: str
-) -> None:
-    """정확 일치 후보는 rank 1·match_type "exact" 로 고정 — A 가 밀어내지 못한다."""
-    _register(app_state, sample_openapi_3)
-    bundle = _bundle(app_state)
-    ids = _endpoint_ids_by_path(bundle)
-    pet_root = ids[("POST", "/pet")]
-    pet_get = ids[("GET", "/pet/{petId}")]
-    pet_delete = ids[("DELETE", "/pet/{petId}")]
-
-    keyword_search = _ScriptedKeywordSearch(
-        {"DELETE /pet/{petId}": [pet_root, pet_get, pet_delete]}
-    )
-    search = _rrf_only_search(bundle, keyword_search)
-
-    out = search.search("DELETE /pet/{petId}", CandidateSearchOptions(top_k=3))
-
-    assert (out[0].endpoint_id, out[0].match_type) == (pet_delete, "exact")
-
-
-def test_fallback_strategy_skips_route_family_rerank(
-    app_state, sample_openapi_3: str
-) -> None:
-    """`fallback` 전략은 route-family rerank 를 전혀 거치지 않는다(키워드 순서 그대로)."""
-    _register(app_state, sample_openapi_3)
-    bundle = _bundle(app_state)
-    ids = _endpoint_ids_by_path(bundle)
-    scripted = [
-        ids[("POST", "/pet")],
-        ids[("GET", "/pet/{petId}")],
-        ids[("DELETE", "/pet/{petId}")],
-    ]
-
-    keyword_search = _ScriptedKeywordSearch({"delete a pet": scripted})
-    search = EndpointCandidateSearch(
-        chunk_repo=bundle.chunk_repo,
-        endpoint_repo=bundle.endpoint_repo,
-        keyword_search=keyword_search,
-        vector_search=SimpleNamespace(search=lambda *a, **k: []),
-        vector_fallback_enabled=False,
-        document_repo=bundle.document_repo,
-        search_strategy="fallback",
-    )
-
-    out = search.search("delete a pet", CandidateSearchOptions(top_k=3))
-
-    assert [c.endpoint_id for c in out] == scripted
