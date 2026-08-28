@@ -103,6 +103,73 @@ def test_per_index_family_key_array_is_invariant() -> None:
     assert out[0].ref_id == "cust_root"
 
 
+def test_p09_line_items_child_already_first_stays_first() -> None:
+    """p09 축소 재현: query 가 명시한 line_items child 가 이미 1위면 rerank 뒤에도 1위.
+
+    같은 family 에 sessions collection·session item 이 함께 있어도 ancestor context 인
+    얕은 sessions 를 위로 올리지 않는다(70번 §2).
+    """
+    ordered = [
+        _c("line_items", "GET", "/v1/checkout/sessions/{session}/line_items"),
+        _c("sessions", "GET", "/v1/checkout/sessions"),
+        _c("session", "GET", "/v1/checkout/sessions/{session}"),
+    ]
+    out = rerank_endpoints_by_route_family(
+        ordered, "list the line items inside that checkout session", []
+    )
+    assert _order(out)[0] == "line_items"
+
+
+def test_parent_and_child_both_named_prefers_deepest_matched_leaf() -> None:
+    """parent·child resource 가 질의에 함께 있으면 더 깊은 명시 leaf 를 앞세운다."""
+    ordered = [
+        _c("issues", "GET", "/repos/{owner}/{repo}/issues"),
+        _c("issue", "GET", "/repos/{owner}/{repo}/issues/{issue_number}"),
+        _c("comments", "GET", "/repos/{owner}/{repo}/issues/{issue_number}/comments"),
+    ]
+    out = rerank_endpoints_by_route_family(
+        ordered, "list the comments on that issue", []
+    )
+    assert _order(out) == ["comments", "issues", "issue"]
+
+
+def test_get_one_keeps_item_endpoint_not_deeper_untargeted_child() -> None:
+    """target 없는 더 깊은 child 가 있어도 GET_ONE 은 명시된 item endpoint 를 유지한다."""
+    ordered = [
+        _c("sessions", "GET", "/v1/checkout/sessions"),
+        _c("session", "GET", "/v1/checkout/sessions/{session}"),
+        _c("line_items", "GET", "/v1/checkout/sessions/{session}/line_items"),
+    ]
+    out = rerank_endpoints_by_route_family(ordered, "get the checkout session", [])
+    assert _order(out)[0] == "session"
+
+
+def test_no_explicit_child_resource_keeps_shallow_root() -> None:
+    """resource token 이 없으면(명시 child 없음) 기존 shallow root fallback 을 유지한다."""
+    ordered = [
+        _c("child", "GET", "/v1/things/{id}/parts"),
+        _c("root", "GET", "/v1/things"),
+    ]
+    out = rerank_endpoints_by_route_family(ordered, "list all", [])
+    assert _order(out) == ["root", "child"]
+
+
+def test_deepest_leaf_rerank_keeps_other_family_slot_fixed() -> None:
+    """deepest-leaf 승급이 일어나도 다른 family 의 전역 슬롯은 그대로다."""
+    ordered = [
+        _c("sessions", "GET", "/v1/checkout/sessions"),
+        _c("other", "GET", "/v1/refunds"),
+        _c("session", "GET", "/v1/checkout/sessions/{session}"),
+        _c("line_items", "GET", "/v1/checkout/sessions/{session}/line_items"),
+    ]
+    out = rerank_endpoints_by_route_family(
+        ordered, "list the line items inside that checkout session", []
+    )
+    assert out[1].ref_id == "other"
+    assert out[0].ref_id == "line_items"
+    assert {c.ref_id for c in out} == {"sessions", "other", "session", "line_items"}
+
+
 def test_tie_falls_back_to_original_rank_then_ref_id() -> None:
     """호환성 tuple 이 동점이면 원래 RRF rank, 그다음 ref_id 로 결정적이다."""
     ordered = [

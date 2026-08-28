@@ -360,6 +360,21 @@ def _parse_args() -> argparse.Namespace:
         help="확장 스키마 전용. scored를 split으로 거른다(all=gate+holdout). 미지정 시 파일 전체.",
     )
     parser.add_argument(
+        "--mode",
+        choices=("full", "preflight", "eval", "determinism", "cleanup"),
+        default="full",
+        help="full=자체 임시DB 생성·색인·drop(기본, 기존 동작). "
+        "preflight=공유 임시DB 1회 생성+corpus 색인 후 유지(DB URL·fingerprint 출력). "
+        "eval=--db-url의 공유 인덱스에 read-only 평가(색인·drop 생략). "
+        "determinism=§4.4 결정성 검증(OFF 2회 동일 + variants 없는 질의 OFF/ON 동일). "
+        "cleanup=--db-url 임시DB drop.",
+    )
+    parser.add_argument(
+        "--db-url",
+        default=None,
+        help="eval/determinism/cleanup 모드에서 쓸 공유 임시 DB 접속 URL(preflight 출력값).",
+    )
+    parser.add_argument(
         "--with-variants",
         action="store_true",
         help="queries.json의 variants(클라 LLM이 제공했을 영문 변형)를 query_variants로 함께 넘겨 재측정한다(doc/30 §7.3).",
@@ -515,8 +530,260 @@ def _print_c6_aux(
         print(f"| {s} | {mean_cov:.3f} | {comp_ratio:.1%} |")
 
 
+def _capped(rank: int | None, top_k: int) -> int:
+    """미검출·top-k 밖을 (top_k+1)로 cap 한 per-query 순위(결정성 비교용)."""
+    return rank if rank is not None and rank <= top_k else top_k + 1
+
+
+def _fixture_commit() -> str:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(_DIR), "rev-parse", "HEAD"],
+            capture_output=True, text=True, check=True,
+        )
+        return out.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
+def _doc_key_by_id(engine) -> dict[str, str]:
+    """document_id → 소스 키. endpoint 수(stripe 589 / github 1220)로 식별한다."""
+    from sqlalchemy import text as _sql
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            _sql("SELECT document_id, count(*) FROM app.api_endpoint GROUP BY document_id")
+        ).all()
+    known = {589: "stripe", 1220: "github"}
+    return {doc_id: known.get(int(n), f"doc:{doc_id[:8]}") for doc_id, n in rows}
+
+
+def _print_shared_index_fingerprint(engine, queries_file: Path) -> None:
+    """§4.3 shared-index 지문. 네 실행이 같은 물리 인덱스를 읽는지 대조하는 SELECT 전용 요약."""
+    from sqlalchemy import text as _sql
+
+    key_by_id = _doc_key_by_id(engine)
+    with engine.connect() as conn:
+        rows = conn.execute(
+            _sql(
+                "SELECT e.document_id, e.method, e.path, ch.id "
+                "FROM app.chunk ch JOIN app.api_endpoint e ON ch.ref_id = e.id "
+                "WHERE ch.chunk_type = 'endpoint'"
+            )
+        ).all()
+    triples = sorted(
+        (key_by_id.get(doc_id, doc_id), method, path, chunk_id)
+        for doc_id, method, path, chunk_id in rows
+    )
+    fp = hashlib.sha256("\n".join("\t".join(t) for t in triples).encode()).hexdigest()
+    # endpoint 수는 chunk join 이 아니라 api_endpoint 원본으로 센다.
+    with engine.connect() as conn:
+        ep_rows = conn.execute(
+            _sql("SELECT document_id, count(*) FROM app.api_endpoint GROUP BY document_id")
+        ).all()
+    endpoints = {key_by_id.get(d, d): int(n) for d, n in ep_rows}
+    chunk_by_key: dict[str, int] = {}
+    for k, _m, _p, _c in triples:
+        chunk_by_key[k] = chunk_by_key.get(k, 0) + 1
+    qsha = hashlib.sha256(queries_file.read_bytes()).hexdigest()
+    print("\n### shared-index fingerprint")
+    print("- endpoint 수: " + ", ".join(f"{k}={endpoints.get(k, 0)}" for k in sorted(endpoints)))
+    print("- endpoint chunk 수: " + ", ".join(f"{k}={chunk_by_key[k]}" for k in sorted(chunk_by_key)))
+    print(f"- (doc, method, path, chunk_id) sorted SHA-256: {fp}")
+    print(f"- query SHA-256: {qsha}")
+    print(f"- fixture commit: {_fixture_commit()}")
+
+
+def _evaluate_and_report(
+    state, queries: list[EvalQuery], strategies: tuple[str, ...], args: argparse.Namespace,
+    indexed_rss: tuple[int, int] | None,
+) -> None:
+    """전략별 검색 실행 + 리포트. indexed_rss=None 이면 색인은 별도(preflight) 프로세스."""
+    ranks_by_strategy: dict[str, StrategyRun] = {}
+    cpu_before = resource.getrusage(resource.RUSAGE_SELF)
+    for strategy in strategies:
+        state.search_strategy = strategy
+        b = next(build_services(state))
+        ranks_by_strategy[strategy] = _run_strategy(
+            b, queries, args.top_k, args.with_variants, args.latency_reps
+        )
+    cpu_after = resource.getrusage(resource.RUSAGE_SELF)
+    rss_peak_kb = cpu_after.ru_maxrss
+
+    print(f"\n| # | 질의 | 카테고리 | 정답 | " + " | ".join(f"{s} 순위" for s in strategies) + " |")
+    print("|---|---|---|---|" + "---|" * len(strategies))
+    for i, eq in enumerate(queries):
+        accepted_str = " or ".join(f"{m} {p}" for m, p in eq.accepted)
+        cells = []
+        for s in strategies:
+            r = ranks_by_strategy[s].ranks[i]
+            cells.append(str(r) if r is not None else "미검출")
+        print(f"| {eq.id} | {eq.query} | {eq.category} | {accepted_str} | " + " | ".join(cells) + " |")
+
+    print("\n### 지표 요약")
+    print(f"(n={len(queries)}, top_k={args.top_k})")
+    for s in strategies:
+        run = ranks_by_strategy[s]
+        ranks = run.ranks
+        print(_format_summary_line(s, _summarize(ranks)))
+        # §3.5: answer_miss@10 = 정답을 top-10 안에서 못 찾음 (1 - Recall@10)
+        miss = sum(1 for r in ranks if r is None or r > 10)
+        print(f"  - {s} answer_miss@10: {miss}/{len(ranks)} ({miss / len(ranks):.1%})")
+        # §3.5: empty_result_rate = 검색이 빈 결과를 반환 (miss와 별개 지표)
+        print(f"  - {s} empty_result_rate: {run.empty_count}/{len(ranks)} "
+              f"({run.empty_count / len(ranks):.1%})")
+
+    print(f"\n### Latency (질의당 {args.latency_reps}회 반복, 콜드 1회차 포함)")
+    for s in strategies:
+        _print_latency_summary(s, ranks_by_strategy[s].latencies_ms)
+
+    print("\n### Resource")
+    if indexed_rss is not None:
+        rss_before_kb, rss_after_index_kb = indexed_rss
+        print(f"- Memory: 색인 전 {rss_before_kb / 1024:.1f}MB -> 색인 후 {rss_after_index_kb / 1024:.1f}MB "
+              f"-> 검색 종료 시점 peak RSS {rss_peak_kb / 1024:.1f}MB (ru_maxrss, 프로세스 누적 peak)")
+    else:
+        print(f"- Memory: 검색 종료 시점 peak RSS {rss_peak_kb / 1024:.1f}MB "
+              f"(ru_maxrss; 색인은 별도 preflight 프로세스라 색인 전/후 표기 없음)")
+    print(f"- CPU: 검색 루프 구간 사용자 {cpu_after.ru_utime - cpu_before.ru_utime:.3f}s "
+          f"+ 시스템 {cpu_after.ru_stime - cpu_before.ru_stime:.3f}s "
+          f"(질의 {sum(len(r.latencies_ms) for r in ranks_by_strategy.values())}건 합산)")
+    print("- Search cost: $0 (로컬 CPU 임베딩·자체 호스팅 Postgres, 외부 과금 API 미호출 — 측정이 아닌 구조상 선언)")
+
+    _print_category_breakdown(queries, {s: r.ranks for s, r in ranks_by_strategy.items()})
+    _print_pair_table(queries, ranks_by_strategy, args.top_k)
+    _print_c6_aux(queries, ranks_by_strategy, args.top_k)
+
+    if args.strategy == "both":
+        print("\n### 회귀(rrf가 fallback보다 나빠진 케이스, MRR 기준 병행 표기)")
+        fb_ranks, rrf_ranks = ranks_by_strategy["fallback"].ranks, ranks_by_strategy["rrf"].ranks
+        regressions = [
+            (eq.query, fb, rr)
+            for eq, fb, rr in zip(queries, fb_ranks, rrf_ranks, strict=True)
+            if fb != rr and not (fb is None or (rr is not None and rr < fb))
+        ]
+        if regressions:
+            from metrics import reciprocal_rank  # type: ignore[import-not-found]
+
+            for q, fb, rr in regressions:
+                mrr_delta = reciprocal_rank(rr) - reciprocal_rank(fb)
+                print(f"- {q!r}: fallback={fb} -> rrf={rr} (MRR delta {mrr_delta:+.3f})")
+        else:
+            print("- 없음")
+
+
+def _cmd_preflight(args: argparse.Namespace) -> None:
+    """§4.3 (1)(2): 임시 DB 1회 생성 + frozen corpus 색인, drop 하지 않고 지문 출력."""
+    manifest = _load_manifest()
+    texts = _load_corpus_texts(manifest)
+    doc_type_by_key = {e["source_key"]: e["doc_type"] for e in manifest}
+    content_sha = {e["source_key"]: e["content_sha256"] for e in manifest}
+
+    admin_url, test_url = _make_temp_db()
+    dbname = test_url.rsplit("/", 1)[1]
+    engine = create_db_engine(test_url)
+    create_all(engine)
+    state = AppState.from_engine(engine=engine, fetcher=InMemoryFetcher())
+    print("is_semantic:", state.embedding_provider.is_semantic)
+    bundle = next(build_services(state))
+    doc_id_by_key: dict[str, str] = {}
+    for source_key, raw in texts.items():
+        result = bundle.sync_service.register(
+            project="default", source_url=None,
+            raw_document=raw, doc_type=doc_type_by_key[source_key],
+        )
+        doc_id_by_key[source_key] = result.document.id
+        print(f"등록: {source_key} -> document_id={result.document.id} endpoints={result.endpoints_count}")
+
+    print("\n### shared-index preflight")
+    print(f"- DB 식별자: {dbname}")
+    print(f"- DB URL: {test_url}")
+    for k in sorted(content_sha):
+        print(f"- {k}: content_sha256={content_sha[k]} document_id={doc_id_by_key.get(k, '?')}")
+    _print_shared_index_fingerprint(engine, Path(args.queries_file))
+    print(
+        f"\n임시 DB 유지(drop 안 함). "
+        f"평가:  --mode eval --db-url '{test_url}'  |  "
+        f"결정성:  --mode determinism --db-url '{test_url}'  |  "
+        f"정리:  --mode cleanup --db-url '{test_url}'"
+    )
+
+
+def _cmd_cleanup(args: argparse.Namespace) -> None:
+    """§4.3 (4): 네 실행이 끝난 뒤 명시적으로 임시 DB 정리."""
+    if not args.db_url:
+        raise SystemExit("--mode cleanup 에는 --db-url 필요")
+    dbname = args.db_url.rsplit("/", 1)[1]
+    admin_url = args.db_url.rsplit("/", 1)[0] + "/docs_mcp"
+    _drop_temp_db(admin_url, dbname)
+    print(f"임시 DB drop 완료: {dbname}")
+
+
+def _load_shared_queries(args: argparse.Namespace) -> list[EvalQuery]:
+    manifest = _load_manifest()
+    texts = _load_corpus_texts(manifest)
+    corpus_sha = {e["source_key"]: e["content_sha256"] for e in manifest}
+    return _load_and_validate_queries(
+        _valid_endpoints_by_doc(texts), Path(args.queries_file), args.split, corpus_sha
+    )
+
+
+def _cmd_determinism(args: argparse.Namespace) -> None:
+    """§4.4: 같은 shared index에서 OFF 2회 동일 + variants 없는 질의 OFF/ON 동일 검증."""
+    if not args.db_url:
+        raise SystemExit("--mode determinism 에는 --db-url 필요")
+    queries = _load_shared_queries(args)
+    engine = create_db_engine(args.db_url)
+    state = AppState.from_engine(engine=engine, fetcher=InMemoryFetcher())
+    strategies = ("fallback", "rrf")
+
+    def run(with_variants: bool) -> dict[str, list[int]]:
+        out: dict[str, list[int]] = {}
+        for s in strategies:
+            state.search_strategy = s
+            b = next(build_services(state))
+            r = _run_strategy(b, queries, args.top_k, with_variants, 1)
+            out[s] = [_capped(x, args.top_k) for x in r.ranks]
+        return out
+
+    off1, off2, on1 = run(False), run(False), run(True)
+
+    problems: list[str] = []
+    for s in strategies:
+        for i, (a, b) in enumerate(zip(off1[s], off2[s], strict=True)):
+            if a != b:
+                problems.append(f"{s} {queries[i].id}: OFF 재실행 capped rank 불일치 {a} != {b}")
+        for i, (a, b) in enumerate(zip(off1[s], on1[s], strict=True)):
+            if not queries[i].variants and a != b:
+                problems.append(
+                    f"{s} {queries[i].id}: variants 없는 질의인데 OFF/ON capped rank 불일치 {a} != {b}"
+                )
+
+    _print_shared_index_fingerprint(engine, Path(args.queries_file))
+    print("\n### 결정성 preflight (§4.4)")
+    if problems:
+        print("FAIL — 하네스/검색 결정성 문제. gate 실행 금지, 재회부.")
+        for p in problems:
+            print(f"- {p}")
+        raise SystemExit(1)
+    print("PASS — OFF 2회 per-query capped rank 완전 동일, variants 없는 질의 OFF/ON 동일.")
+
+
 def main() -> None:
     args = _parse_args()
+
+    if args.mode == "preflight":
+        _cmd_preflight(args)
+        return
+    if args.mode == "cleanup":
+        _cmd_cleanup(args)
+        return
+    if args.mode == "determinism":
+        _cmd_determinism(args)
+        return
+
     strategies = ("fallback", "rrf") if args.strategy == "both" else (args.strategy,)
 
     manifest = _load_manifest()
@@ -527,6 +794,19 @@ def main() -> None:
     )
     doc_type_by_key = {e["source_key"]: e["doc_type"] for e in manifest}
 
+    if args.mode == "eval":
+        if not args.db_url:
+            raise SystemExit("--mode eval 에는 --db-url 필요 (preflight가 출력한 DB URL)")
+        engine = create_db_engine(args.db_url)
+        state = AppState.from_engine(engine=engine, fetcher=InMemoryFetcher())
+        print("is_semantic:", state.embedding_provider.is_semantic)
+        print("with_variants:", args.with_variants)
+        print(f"shared-index 재사용: {args.db_url} (등록·재색인·drop 생략, read-only)")
+        _print_shared_index_fingerprint(engine, Path(args.queries_file))
+        _evaluate_and_report(state, queries, strategies, args, indexed_rss=None)
+        return
+
+    # mode == full: 기존 동작(자체 임시 DB 생성 → 색인 → 평가 → drop) 그대로.
     admin_url, test_url = _make_temp_db()
     dbname = test_url.rsplit("/", 1)[1]
     try:
@@ -547,72 +827,10 @@ def main() -> None:
             print(f"등록: {source_key} -> document_id={result.document.id} endpoints={result.endpoints_count}")
         rss_after_index_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
-        ranks_by_strategy: dict[str, StrategyRun] = {}
-        cpu_before = resource.getrusage(resource.RUSAGE_SELF)
-        for strategy in strategies:
-            state.search_strategy = strategy
-            b = next(build_services(state))
-            ranks_by_strategy[strategy] = _run_strategy(
-                b, queries, args.top_k, args.with_variants, args.latency_reps
-            )
-        cpu_after = resource.getrusage(resource.RUSAGE_SELF)
-        rss_peak_kb = cpu_after.ru_maxrss
-
-        print(f"\n| # | 질의 | 카테고리 | 정답 | " + " | ".join(f"{s} 순위" for s in strategies) + " |")
-        print("|---|---|---|---|" + "---|" * len(strategies))
-        for i, eq in enumerate(queries):
-            accepted_str = " or ".join(f"{m} {p}" for m, p in eq.accepted)
-            cells = []
-            for s in strategies:
-                r = ranks_by_strategy[s].ranks[i]
-                cells.append(str(r) if r is not None else "미검출")
-            print(f"| {eq.id} | {eq.query} | {eq.category} | {accepted_str} | " + " | ".join(cells) + " |")
-
-        print("\n### 지표 요약")
-        print(f"(n={len(queries)}, top_k={args.top_k})")
-        for s in strategies:
-            run = ranks_by_strategy[s]
-            ranks = run.ranks
-            print(_format_summary_line(s, _summarize(ranks)))
-            # §3.5: answer_miss@10 = 정답을 top-10 안에서 못 찾음 (1 - Recall@10)
-            miss = sum(1 for r in ranks if r is None or r > 10)
-            print(f"  - {s} answer_miss@10: {miss}/{len(ranks)} ({miss / len(ranks):.1%})")
-            # §3.5: empty_result_rate = 검색이 빈 결과를 반환 (miss와 별개 지표)
-            print(f"  - {s} empty_result_rate: {run.empty_count}/{len(ranks)} "
-                  f"({run.empty_count / len(ranks):.1%})")
-
-        print(f"\n### Latency (질의당 {args.latency_reps}회 반복, 콜드 1회차 포함)")
-        for s in strategies:
-            _print_latency_summary(s, ranks_by_strategy[s].latencies_ms)
-
-        print("\n### Resource")
-        print(f"- Memory: 색인 전 {rss_before_kb / 1024:.1f}MB -> 색인 후 {rss_after_index_kb / 1024:.1f}MB "
-              f"-> 검색 종료 시점 peak RSS {rss_peak_kb / 1024:.1f}MB (ru_maxrss, 프로세스 누적 peak)")
-        print(f"- CPU: 검색 루프 구간 사용자 {cpu_after.ru_utime - cpu_before.ru_utime:.3f}s "
-              f"+ 시스템 {cpu_after.ru_stime - cpu_before.ru_stime:.3f}s "
-              f"(질의 {sum(len(r.latencies_ms) for r in ranks_by_strategy.values())}건 합산)")
-        print("- Search cost: $0 (로컬 CPU 임베딩·자체 호스팅 Postgres, 외부 과금 API 미호출 — 측정이 아닌 구조상 선언)")
-
-        _print_category_breakdown(queries, {s: r.ranks for s, r in ranks_by_strategy.items()})
-        _print_pair_table(queries, ranks_by_strategy, args.top_k)
-        _print_c6_aux(queries, ranks_by_strategy, args.top_k)
-
-        if args.strategy == "both":
-            print("\n### 회귀(rrf가 fallback보다 나빠진 케이스, MRR 기준 병행 표기)")
-            fb_ranks, rrf_ranks = ranks_by_strategy["fallback"].ranks, ranks_by_strategy["rrf"].ranks
-            regressions = [
-                (eq.query, fb, rr)
-                for eq, fb, rr in zip(queries, fb_ranks, rrf_ranks, strict=True)
-                if fb != rr and not (fb is None or (rr is not None and rr < fb))
-            ]
-            if regressions:
-                from metrics import reciprocal_rank  # type: ignore[import-not-found]
-
-                for q, fb, rr in regressions:
-                    mrr_delta = reciprocal_rank(rr) - reciprocal_rank(fb)
-                    print(f"- {q!r}: fallback={fb} -> rrf={rr} (MRR delta {mrr_delta:+.3f})")
-            else:
-                print("- 없음")
+        _evaluate_and_report(
+            state, queries, strategies, args,
+            indexed_rss=(rss_before_kb, rss_after_index_kb),
+        )
     finally:
         _drop_temp_db(admin_url, dbname)
 

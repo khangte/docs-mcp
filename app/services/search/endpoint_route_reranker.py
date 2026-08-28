@@ -260,17 +260,22 @@ def rerank_endpoints_by_route_family(
         if resource_tokens and resource_tokens.isdisjoint(family_leaves):
             continue
 
+        # target match 가 있는 family 에서는 질의가 명시한 가장 깊은 leaf 를
+        # specificity 기준으로 삼는다(70번 §2.2). ancestor context 로 함께 언급된
+        # 얕은 collection/item 이 주 target 인 child 를 밀어내지 않게 한다.
+        # target match 가 없으면 기존 보수적 root/item fallback(min depth)을 유지한다.
         if any(f.target_match for f in feats):
             qualifying = [f for f in feats if f.target_match]
+            preferred_depth = max(f.relative_depth for f in qualifying)
         else:
             qualifying = [f for f in feats if f.method_match and f.shape_match]
-        min_depth = min((f.relative_depth for f in qualifying), default=-1)
+            preferred_depth = min((f.relative_depth for f in qualifying), default=-1)
         qualifying_ids = {id(f) for f in qualifying}
 
         order = sorted(
             feats,
             key=lambda f: _sortable(
-                f, id(f) in qualifying_ids and f.relative_depth == min_depth
+                f, id(f) in qualifying_ids and f.relative_depth == preferred_depth
             ),
         )
         for slot, feat in zip(indices, order, strict=True):
