@@ -99,3 +99,36 @@ component B가 포함된 트리에서 측정됐다. q05 refund 회복분의 귀�
 | component A HEAD 잔존 | **없음 — `75fa5f3`가 reranker 삭제** |
 | `75fa5f3` 처리 | **revert 권고, lead 결정 사항** |
 | developer eval baseline | **revert 시 재측정 필요** |
+
+## 7. revert 방법 판정 (2026-08-28 추가)
+
+developer가 `git revert --no-commit 75fa5f3` 대신 ecc3e792 checkout을 적용한 이탈을
+**승인한다**.
+
+`75fa5f3`의 diff는 component B 추가와 component A 삭제를 함께 담는다. 이를 그대로
+revert하면 A 삭제가 취소되어 `endpoint_route_reranker.py`가 되살아나고 워킹트리가
+`608731b`(A+B) 상태가 된다. A는 verdict 71에서 효과성 미달로 반려됐으므로, 이는
+반려 후보 하나를 지우려다 다른 반려 후보를 되살리는 결과다. 목표는 endpoint RRF를
+`ecc3e792` fusion 경로로 되돌리는 것이지 `75fa5f3` 커밋의 역연산이 아니다.
+
+검증 결과:
+
+- `git diff ecc3e792 -- app/ tests/unit/` = 비어 있음. 두 트리가 동일하다.
+- `app/services/search/endpoint_route_reranker.py`,
+  `tests/unit/test_endpoint_route_reranker.py` 부재 유지 — A는 되살아나지 않았다.
+- `git diff --stat HEAD -- app/ tests/` = 2파일 8+/166-.
+- `tests/fixtures/` 는 되돌리지 않았다(`ecc3e792` 대비 3394+/73-). gate set v1,
+  `run_corpus_eval.py --mode preflight/eval/determinism/cleanup`, manifest는 평가
+  인프라이며 제품 검색 경로가 아니므로 보존이 맞다.
+- `gate_manifest_v1.json` 의 `baseline_search_sha = ecc3e7923e216bf8e6b72ed609d5990749b2f700`
+  가 이제 HEAD 검색 동작과 일치한다. `75fa5f3` 참조는 모두 historical result
+  record이므로 정정 불필요.
+
+커밋 시 유의:
+
+1. 커밋 메시지에 `git revert`가 아니라 `ecc3e792` checkout으로 되돌렸음과 그 이유
+   (A 부활 회피)를 남긴다. 이력만 보면 revert 커밋을 기대하게 된다.
+2. `8b4e36a`·`608731b`는 이력에 남되 그 A 코드는 `75fa5f3` 이후 HEAD에 존재한 적이
+   없다. 별도 조치 불요.
+3. 이 커밋 이후 `docs/eval-results/05_2026-08-28_keyword_variant_p02_eval.md` §2 진단은
+   반려된 B가 포함된 트리의 측정이 된다. baseline으로 쓰려면 재측정해야 한다(§5).
