@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
@@ -25,8 +26,12 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope
-from app.services.search.keyword_search import KeywordSearch
+from app.services.search.keyword_search import KeywordSearch, tokenize_terms
 from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
+from app.services.search.structured_augmentation import (
+    RrfSearchTrace,
+    apply_structured_augmentation,
+)
 from app.services.search.vector_search import VectorSearch
 
 _LOG = get_logger("docs_mcp.search.candidate")
@@ -79,6 +84,13 @@ class CandidateSearchOptions:
     #: `docs/architect-review/12_rag_depth_directions.md` 후보4의 "벡터 arm은
     #: 손대지 않는다" 결정을 뒤집었다).
     query_variants: list[str] | None = None
+    #: base-wide RRF 직후(첫 결과를 top_k 로 자르기 전) 스냅샷을 한 번 받는
+    #: request-scoped 콜백. v3 gate eval trace 전용이며 제품 경로에서는 None
+    #: 이라 trace tuple 생성 외 추가 I/O 가 없다(`docs/architect-review/87`
+    #: Task 4). repr/compare 에서 제외한다.
+    rrf_trace_sink: Callable[[RrfSearchTrace], None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
 
 class EndpointCandidateSearch:
@@ -164,7 +176,12 @@ class EndpointCandidateSearch:
             )
         else:
             rest = self._search_rrf(
-                normalized_query, remaining_top_k, document_id, project, options.query_variants
+                normalized_query,
+                remaining_top_k,
+                document_id,
+                project,
+                options.query_variants,
+                options.rrf_trace_sink,
             )
         seen_ids = {c.endpoint_id for c in exact_candidates}
         return exact_candidates + [c for c in rest if c.endpoint_id not in seen_ids]
@@ -219,8 +236,16 @@ class EndpointCandidateSearch:
         document_id: str | None,
         project: str | None,
         query_variants: list[str] | None,
+        rrf_trace_sink: Callable[[RrfSearchTrace], None] | None = None,
     ) -> list[EndpointCandidate]:
-        """키워드·벡터 두 ranker를 항상 병렬 실행해 RRF로 융합한다."""
+        """키워드·벡터 두 ranker를 항상 병렬 실행해 RRF로 융합한다.
+
+        RRF 는 `width`(top_k 보다 넓게)로 base-wide 를 만든 뒤, structured
+        augmentation 이 활성일 때만 vector-only 후보를 A/B/C original-query
+        구조 점수로 최대 한 칸 승격하고, 그 결과를 top_k 로 자른다
+        (`docs/architect-review/87`). `query_variants` 는 keyword/vector arm
+        에만 현행대로 전달하고 구조 scorer 에는 넘기지 않는다.
+        """
         width = max(top_k * _CANDIDATE_WIDTH_MULTIPLIER, _MIN_CANDIDATE_WIDTH)
 
         keyword_hits = self._keyword_search.search(
@@ -232,21 +257,52 @@ class EndpointCandidateSearch:
         )
         keyword_ref_ids = [h.ref_id for h in keyword_hits]
 
-        vector_ref_ids: list[str] = []
+        vector_hits: list[tuple[str, float]] = []
         if self._vector_fallback_enabled:
             candidate_ids = (
                 self._chunk_repo.list_endpoint_chunk_ids(document_id=document_id, project=project)
                 if document_id is not None or project is not None
                 else None
             )
-            vector_ref_ids = self._search_vector_with_variants(
+            vector_hits = self._search_vector_with_variants(
                 query, query_variants, width, candidate_ids
             )
         else:
             _LOG.debug("벡터 arm 생략(rrf 전략, 키워드 단독 degrade): 임베딩 백엔드 비의미론적")
+        vector_ref_ids = [ref_id for ref_id, _ in vector_hits]
 
-        fused = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=top_k)
-        return self._to_candidates_from_fused(fused)
+        base_wide = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
+        final_wide: list[FusedResult] = list(base_wide)
+        structured_scores: dict[str, float] = {}
+        if self._structured_augmentation_enabled:
+            protected = frozenset(keyword_ref_ids)
+            eligible = [x.ref_id for x in base_wide if x.ref_id not in protected]
+            raw_scores = self._chunk_repo.score_endpoint_structured_augmentation(
+                tokenize_terms(query), eligible
+            )
+            structured_scores = {ref_id: raw_scores.get(ref_id, 0.0) for ref_id in eligible}
+            final_wide = list(
+                apply_structured_augmentation(
+                    base_wide,
+                    protected_ref_ids=protected,
+                    augmentation_scores=structured_scores,
+                ).fused
+            )
+
+        if rrf_trace_sink is not None:
+            rrf_trace_sink(
+                RrfSearchTrace(
+                    augmentation_enabled=self._structured_augmentation_enabled,
+                    keyword_hits=tuple((h.ref_id, h.score) for h in keyword_hits),
+                    vector_hits=tuple(vector_hits),
+                    base_wide=tuple(base_wide),
+                    protected_ref_ids=frozenset(keyword_ref_ids),
+                    structured_scores=tuple(structured_scores.items()),
+                    final_wide=tuple(final_wide),
+                )
+            )
+
+        return self._to_candidates_from_fused(final_wide[:top_k])
 
     def _search_vector_with_variants(
         self,
@@ -254,14 +310,18 @@ class EndpointCandidateSearch:
         query_variants: list[str] | None,
         width: int,
         candidate_ids: set[str] | None,
-    ) -> list[str]:
+    ) -> list[tuple[str, float]]:
         """원본 질의 + `query_variants` 를 각각 벡터 검색해 등수 최솟값으로 병합한다.
 
         교차언어(예: 한글 원본 + 영문 변형) 질의에서 벡터 arm이 원본만으로는
         약하고 변형(동일언어 비교)에서 강해지는 사례를 놓치지 않기 위해,
-        어느 한 질의에서든 상위였던 후보를 살린다(§7.2).
+        어느 한 질의에서든 상위였던 후보를 살린다(§7.2). 반환은 `(ref_id,
+        score)` 이고 정렬 키는 `(best_rank, ref_id)` 로 현행과 동일하다 —
+        score 는 eval trace 비교용이며 RRF 계산·정렬에는 쓰지 않는다. 같은
+        best rank 가 여러 variant 에서 나오면 큰 score 를 택한다.
         """
         best_rank: dict[str, int] = {}
+        best_score: dict[str, float] = {}
         for candidate_query in [query, *(query_variants or [])]:
             hits = self._vector_search.search(candidate_query, top_k=width, candidates=candidate_ids)
             for rank, hit in enumerate(hits, start=1):
@@ -269,7 +329,13 @@ class EndpointCandidateSearch:
                     continue
                 if hit.ref_id not in best_rank or rank < best_rank[hit.ref_id]:
                     best_rank[hit.ref_id] = rank
-        return [ref_id for ref_id, _ in sorted(best_rank.items(), key=lambda item: (item[1], item[0]))]
+                    best_score[hit.ref_id] = hit.score
+                elif rank == best_rank[hit.ref_id] and hit.score > best_score[hit.ref_id]:
+                    best_score[hit.ref_id] = hit.score
+        return [
+            (ref_id, best_score[ref_id])
+            for ref_id, _ in sorted(best_rank.items(), key=lambda item: (item[1], item[0]))
+        ]
 
     def _validate(
         self, query: str, options: CandidateSearchOptions
