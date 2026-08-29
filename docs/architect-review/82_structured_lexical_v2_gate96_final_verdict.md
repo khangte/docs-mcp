@@ -142,19 +142,20 @@ HARD FAIL이므로 정식 판정은 하지 않는다. 다만 다음 실행값은
 
 ## 7. shared index cleanup 판정
 
-**cleanup을 지시한다.** `rrfeval_1b75828f`는 ephemeral 평가 DB이고 holdout을 열지 않으므로
+**cleanup 완료.** `rrfeval_1b75828f`는 ephemeral 평가 DB이고 holdout을 열지 않으므로
 더 유지할 목적이 없다. 보존 근거는 fixture/result commit과 fingerprint, query/corpus SHA,
 raw gate 로그로 충분하다.
 
-developer는 holdout 명령을 실행하지 말고 다음 cleanup만 수행한다.
+developer는 holdout 명령을 실행하지 않고 다음 cleanup만 수행했다.
 
 ```bash
 cd /home/kang/projects/docs-mcp && uv run python tests/fixtures/corpus_eval/run_corpus_eval.py \
-  --mode cleanup --db-url 'postgresql+psycopg://postgres:postgres@localhost:5432/rrfeval_1b75828f'
+  --mode cleanup --db-url 'postgresql+psycopg://docs_mcp:docs_mcp@localhost:5432/rrfeval_1b75828f'
 ```
 
-cleanup 뒤 DB 부재를 확인하고 lead/architect에 보고한다. raw gate 로그는 scratch 수명에
-의존하므로 필요한 pair 근거는 이미 commit된 eval 결과와 이 verdict에 남겼다.
+`--mode cleanup` drop 성공 뒤 `pg_database` 조회 0건으로 DB 부재를 확인했다. holdout은
+실행하지 않았다. raw gate 로그는 scratch 수명에 의존하므로 필요한 pair 근거는 이미
+commit된 eval 결과와 이 verdict에 남겼다.
 
 ## 8. 최종 상태
 
@@ -165,7 +166,7 @@ cleanup 뒤 DB 부재를 확인하고 lead/architect에 보고한다. raw gate �
 | `structured` 활성화 | **최종 반려** |
 | 운영 lexical field | **`text` 유지** |
 | 같은 v2 재시험 | **금지** |
-| shared DB | **cleanup 지시** |
+| shared DB | **cleanup 완료, 부재 확인** |
 | 후속 | gate-only 기전 진단 후 별도 candidate 설계 여부 판단; 승급은 신규 v3 |
 
 weighted structured lexical 표현은 v1 exposed에서 HARD를 통과했지만 v2 신규 endpoint/query
