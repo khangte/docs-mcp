@@ -24,6 +24,12 @@ _HNSW_EF_SEARCH_FILTERED = 200
 #: 결과를 보고 조정하지 않는다(조정은 verdict 74 가 반려한 과적합과 같은 경로).
 _STRUCTURED_RANK_WEIGHTS = text("'{0.1, 0.2, 0.4, 1.0}'::float4[]")
 
+#: structured augmentation postprocessor 전용 `ts_rank` 가중치 배열 `{D, C, B, A}`.
+#: D 만 0 으로 고정해 A/B/C 기존 배치를 그대로 보존한다 — D(=기존 `text` 전체)
+#: lexeme 이 query 에 맞더라도 augmentation score 는 0 이다
+#: (`docs/architect-review/87` I5, §2).
+_STRUCTURED_AUGMENTATION_RANK_WEIGHTS = text("'{0.0, 0.2, 0.4, 1.0}'::float4[]")
+
 #: `lexical_field` 로 구조화 벡터를 고르는 값. 그 외 모든 값은 기존 `text_tsv`.
 _LEXICAL_FIELD_STRUCTURED = "structured"
 
@@ -292,6 +298,38 @@ class ChunkRepository:
             ChunkTextHit(chunk_id=cid, ref_id=ref_id, document_id=doc_id, score=float(score))
             for cid, ref_id, doc_id, score in rows
         ]
+
+    def score_endpoint_structured_augmentation(
+        self,
+        terms: Sequence[str],
+        ref_ids: Sequence[str],
+    ) -> dict[str, float]:
+        """Original-query A/B/C 점수를 ref_id 제한 SQL 1회로 반환한다.
+
+        base-wide vector-only 후보(`ref_ids`)만 대상으로 `search_tsv`
+        (leaf A / intent B / context C / text D)에 original-query tsquery 를
+        매겨 `{ref_id: max ts_rank}` 를 돌려준다. weight 배열은
+        `{D,C,B,A}={0.0,0.2,0.4,1.0}` 로 D 를 0 고정해 A/B/C 기존 비율만
+        쓴다(`docs/architect-review/87` I5). variant·alias 확장 query 는 이
+        메서드에 넘기지 않는다 — `_build_tsquery_str(terms, [])` 로 original
+        query tsquery 를 한 번만 만든다. `terms`/`ref_ids` 는 dedupe 하며
+        어느 쪽이든 비면 SQL 없이 `{}` 를 반환한다. 반환에 없는 eligible
+        ref 를 `0.0` 으로 채우는 것은 호출부 몫이다.
+        """
+        unique_terms = list(dict.fromkeys(t for t in terms if t))
+        unique_ref_ids = list(dict.fromkeys(r for r in ref_ids if r))
+        if not unique_terms or not unique_ref_ids:
+            return {}
+        tsq = func.to_tsquery("simple", _build_tsquery_str(unique_terms, []))
+        rank = func.ts_rank(_STRUCTURED_AUGMENTATION_RANK_WEIGHTS, Chunk.search_tsv, tsq)
+        stmt = (
+            select(Chunk.ref_id, func.max(rank).label("augmentation_score"))
+            .where(Chunk.chunk_type == "endpoint")
+            .where(Chunk.ref_id.in_(unique_ref_ids))
+            .group_by(Chunk.ref_id)
+        )
+        rows = self._session.execute(stmt).all()
+        return {ref_id: float(score) for ref_id, score in rows}
 
     def search_by_vector(
         self,
