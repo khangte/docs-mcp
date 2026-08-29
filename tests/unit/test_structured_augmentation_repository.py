@@ -10,8 +10,6 @@ base-wide vector-only 후보 전용 A/B/C original-query batch scorer 계약
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-
 import sqlalchemy as sa
 
 from app.models import Chunk, Document

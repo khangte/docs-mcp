@@ -323,7 +323,9 @@ class EndpointCandidateSearch:
         best_rank: dict[str, int] = {}
         best_score: dict[str, float] = {}
         for candidate_query in [query, *(query_variants or [])]:
-            hits = self._vector_search.search(candidate_query, top_k=width, candidates=candidate_ids)
+            hits = self._vector_search.search(
+                candidate_query, top_k=width, candidates=candidate_ids
+            )
             for rank, hit in enumerate(hits, start=1):
                 if hit.score <= 0.0:
                     continue

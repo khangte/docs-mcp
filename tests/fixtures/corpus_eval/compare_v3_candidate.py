@@ -145,7 +145,8 @@ def _run_hard(
 ) -> None:
     errs: list[str] = []
 
-    for label, base, cand in (("OFF", baseline_off, candidate_off), ("ON", baseline_on, candidate_on)):
+    _arms = (("OFF", baseline_off, candidate_off), ("ON", baseline_on, candidate_on))
+    for label, base, cand in _arms:
         _check_arm_parity(base, cand, "keyword", "Text-arm parity", errs)
         _check_arm_parity(base, cand, "vector", "Vector-arm parity", errs)
         _check_arm_parity(base, cand, "base_wide", "Base-wide RRF parity", errs)
@@ -167,15 +168,19 @@ def _run_hard(
                     errs.append(
                         f"Bounded displacement: {row['id']} {ref} {br}->{final_rank[ref]}"
                     )
-            if _max_structured_score(row) == 0.0 and _refs(row["final_wide"]) != _refs(row["base_wide"]):
+            fw, bw = _refs(row["final_wide"]), _refs(row["base_wide"])
+            if _max_structured_score(row) == 0.0 and fw != bw:
                 errs.append(f"Zero-score no-op: {row['id']} final-wide 가 base-wide 와 다름")
-            if sorted(_refs(row["final_wide"])) != sorted(_refs(row["base_wide"])):
+            if sorted(fw) != sorted(bw):
                 errs.append(f"No injection/drop: {row['id']} base-wide multiset 변화")
 
-    for label, base, cand in (("OFF", baseline_off, candidate_off), ("ON", baseline_on, candidate_on)):
-        safe, total = _pair_safe_count(base, cand, "gate" if route_pairs == _GATE_ROUTE_PAIRS else None)
+    split_filter = "gate" if route_pairs == _GATE_ROUTE_PAIRS else None
+    for label, base, cand in _arms:
+        safe, total = _pair_safe_count(base, cand, split_filter)
         if total != route_pairs or safe < route_pairs:
-            errs.append(f"Pair gate({label}): {safe}/{route_pairs} pair-safe (route pair {total}개)")
+            errs.append(
+                f"Pair gate({label}): {safe}/{route_pairs} pair-safe (route pair {total})"
+            )
 
     if errs:
         raise ValueError("candidate HARD 위반:\n  - " + "\n  - ".join(errs))
