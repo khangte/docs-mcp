@@ -22,6 +22,7 @@ import resource
 import statistics
 import sys
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -109,10 +110,189 @@ def _norm_query(q: str) -> str:
     return re.sub(r"\s+", " ", q.strip().casefold())
 
 
+def _norm_query_strict(q: str) -> str:
+    """v2 신규성 계약(§3)용 정규화: Unicode NFKC → trim → whitespace collapse → casefold."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", q).strip().casefold())
+
+
+#: --queries-file basename → 그 데이터셋 버전의 frozen manifest. 러너 하드코딩을
+#: 없애고(§6) 각 버전이 자기 manifest·quota·SHA 를 검증하게 한다.
+_MANIFEST_BY_QUERY_FILE = {
+    "queries_gate_v1.json": "gate_manifest_v1.json",
+    "queries_gate_v2.json": "gate_manifest_v2.json",
+}
+
+
+def _validate_v2_novelty(raw_items: list[dict]) -> None:
+    """§3 v2 신규성 계약. legacy queries.json 과 v1 queries_gate_v1.json 을 함께 읽어
+    ID/정규화 query/variant/accepted label/endpoint·query pair/route pair/C6 를 전부
+    대조한다. DB 검색을 시작하기 전 로더 단계에서 돈다(§6). 하나라도 위반하면 죽는다.
+    """
+    errs: list[str] = []
+
+    def bad(msg: str) -> None:
+        errs.append(msg)
+
+    legacy = json.loads((_DIR / "queries.json").read_text())
+    v1 = json.loads((_DIR / "queries_gate_v1.json").read_text())
+
+    def acc_tuples(r: dict) -> set[tuple[str, str, str]]:
+        return {(a["doc"], a["method"], a["path"]) for a in r["accepted"]}
+
+    def route_family(path: str) -> str:
+        segs = [s for s in path.split("/") if s and not s.startswith("{")]
+        return "/".join(segs[:2])
+
+    # 1) ID 패턴/번호/불교집합
+    ids = [r["id"] for r in raw_items]
+    for r in raw_items:
+        if not re.fullmatch(r"v2g\d{3}", r["id"]):
+            bad(f"{r['id']}: v2 id 패턴(v2gNNN) 아님")
+    nums = sorted(int(x[3:]) for x in ids if re.fullmatch(r"v2g\d{3}", x))
+    if nums != list(range(1, 125)):
+        bad("v2 id 번호가 v2g001~v2g124 연속 아님")
+    if {r["id"] for r in v1} & set(ids):
+        bad(f"v2 id 가 v1 과 겹침: {sorted({r['id'] for r in v1} & set(ids))}")
+    v2_pair_ids = {r["pair_id"] for r in raw_items if r.get("pair_id")}
+    for pid in v2_pair_ids:
+        if not re.fullmatch(r"v2p\d{2}", pid):
+            bad(f"{pid}: v2 pair id 패턴(v2pNN) 아님")
+
+    # 2) 정규화 query/variant 가 legacy/v1 및 v2 내부와 불일치 (NFKC strict)
+    prior_q: set[str] = set()
+    for src in (legacy, v1):
+        for r in src:
+            prior_q.add(_norm_query_strict(r["query"]))
+            for v in r.get("variants", []) or []:
+                prior_q.add(_norm_query_strict(v))
+    seen: set[str] = set()
+    for r in raw_items:
+        n = _norm_query_strict(r["query"])
+        if n in prior_q:
+            bad(f"{r['id']}: 정규화 query 가 legacy/v1 과 중복 {r['query']!r}")
+        if n in seen:
+            bad(f"{r['id']}: 정규화 query 가 v2 내부에서 중복 {r['query']!r}")
+        seen.add(n)
+        for v in r.get("variants", []) or []:
+            nv = _norm_query_strict(v)
+            if nv in prior_q:
+                bad(f"{r['id']}: 정규화 variant 가 legacy/v1 과 중복 {v!r}")
+            if nv in seen:
+                bad(f"{r['id']}: 정규화 variant 가 다른 v2 query/variant 와 중복 {v!r}")
+            seen.add(nv)
+
+    # 3) accepted label(전량) 이 v1 scored+diagnostic accepted tuple 에 없음
+    v1_acc: set[tuple[str, str, str]] = set()
+    for r in v1:
+        v1_acc |= acc_tuples(r)
+    for r in raw_items:
+        for t in acc_tuples(r):
+            if t in v1_acc:
+                bad(f"{r['id']}: accepted tuple 이 v1 재사용 {t}")
+
+    # 4) v2 내부에서 scored 레코드끼리 accepted tuple 공유 금지(C6 두 endpoint 포함)
+    owner: dict[tuple[str, str, str], str] = {}
+    for r in raw_items:
+        for t in acc_tuples(r):
+            if t in owner:
+                bad(f"{r['id']}: accepted tuple {t} 가 {owner[t]} 과 중복")
+            else:
+                owner[t] = r["id"]
+
+    # 5) endpoint/query pair 조합(정규화 query + 정렬된 accepted tuple 집합) 이 legacy/v1 에 없음
+    def combo(r: dict) -> tuple:
+        return (_norm_query_strict(r["query"]),
+                tuple(sorted((a["doc"], a["method"], a["path"]) for a in r["accepted"])))
+
+    prior_combo = {combo(r) for r in legacy} | {combo(r) for r in v1}
+    for r in raw_items:
+        if combo(r) in prior_combo:
+            bad(f"{r['id']}: endpoint/query 조합이 legacy/v1 재사용")
+
+    # 6) route pair: v1 pair id / 두 accepted endpoint / route family 재사용 금지
+    v1_pairs: dict[str, list[dict]] = {}
+    for r in v1:
+        if r.get("pair_id"):
+            v1_pairs.setdefault(r["pair_id"], []).append(r)
+    v1_pair_endpoints: set[tuple[str, str, str]] = set()
+    v1_pair_families: set[tuple[str, str]] = set()
+    for prs in v1_pairs.values():
+        for r in prs:
+            a = r["accepted"][0]
+            v1_pair_endpoints.add((a["doc"], a["method"], a["path"]))
+            v1_pair_families.add((r["domain"], route_family(a["path"])))
+    v2_pairs: dict[str, list[dict]] = {}
+    for r in raw_items:
+        if r.get("pair_id"):
+            v2_pairs.setdefault(r["pair_id"], []).append(r)
+    if sorted(v2_pairs) != [f"v2p{i:02d}" for i in range(1, 13)]:
+        bad(f"v2 pair id 집합이 v2p01~v2p12 정확히 아님: {sorted(v2_pairs)}")
+    for pid, prs in v2_pairs.items():
+        if len(prs) != 2:
+            bad(f"{pid}: pair 멤버 2건 아님 ({len(prs)})")
+    for pid, prs in v2_pairs.items():
+        if pid in v1_pairs:
+            bad(f"{pid}: pair id 가 v1 재사용")
+        fam: set[tuple[str, str]] = set()
+        for r in prs:
+            a = r["accepted"][0]
+            if (a["doc"], a["method"], a["path"]) in v1_pair_endpoints:
+                bad(f"{pid}: pair accepted endpoint 가 v1 pair 재사용 {a['method']} {a['path']}")
+            fam.add((r["domain"], route_family(a["path"])))
+        if fam & v1_pair_families:
+            bad(f"{pid}: route family 가 v1 pair 재사용 {sorted(fam & v1_pair_families)}")
+
+    # 7) C6: 두 endpoint 모두 v1 accepted 와 불일치 + v2 내부 C6 끼리 중복 없음
+    c6_sets: list[tuple] = []
+    for r in raw_items:
+        if r["category"] != _C6:
+            continue
+        s = tuple(sorted((a["doc"], a["method"], a["path"]) for a in r["accepted"]))
+        if s in c6_sets:
+            bad(f"{r['id']}: C6 endpoint 집합이 다른 C6 와 중복")
+        c6_sets.append(s)
+        for t in acc_tuples(r):
+            if t in v1_acc:
+                bad(f"{r['id']}: C6 endpoint 가 v1 accepted {t}")
+
+    if errs:
+        raise ValueError("§3 v2 신규성 검증 실패:\n  - " + "\n  - ".join(errs))
+
+
+def _verify_manifest_shas(queries_file: Path, raw_items: list[dict], manifest_path: Path) -> None:
+    """manifest 의 query_sha256 / split_sha256 을 파일 실제값과 대조한다(§5·§6).
+
+    프리즈된 fixture 와 manifest 가 어긋난 채로 평가가 도는 것을 로더 단계에서 막는다.
+    split_sha256 은 §5.4 직렬화(scored 를 id 오름차순, `<id><TAB><split><LF>`)로 재계산한다.
+    """
+    if not manifest_path.exists():
+        raise ValueError(f"manifest 없음: {manifest_path.name}")
+    man = json.loads(manifest_path.read_text())
+    errs: list[str] = []
+    want_q = man.get("query_sha256")
+    if want_q:
+        got_q = hashlib.sha256(queries_file.read_bytes()).hexdigest()
+        if got_q != want_q:
+            errs.append(f"query_sha256 불일치: 파일 {got_q} != manifest {want_q}")
+    want_s = man.get("split_sha256")
+    if want_s:
+        scored = sorted(
+            (r for r in raw_items if r.get("evaluation_role") == "scored"),
+            key=lambda r: r["id"],
+        )
+        blob = "".join(f"{r['id']}\t{r['split']}\n" for r in scored)
+        got_s = hashlib.sha256(blob.encode()).hexdigest()
+        if got_s != want_s:
+            errs.append(f"split_sha256 불일치: 산출 {got_s} != manifest {want_s}")
+    if errs:
+        raise ValueError(f"{manifest_path.name} SHA 검증 실패:\n  - " + "\n  - ".join(errs))
+
+
 def _validate_gate_schema(
     raw_items: list[dict],
     valid_by_doc: dict[str, set[tuple[str, str]]],
     corpus_sha: dict[str, str],
+    manifest_path: Path,
 ) -> None:
     """§4.1 정적 검증. 검색 실행 전에 전부 통과해야 한다(하나라도 실패하면 죽는다).
 
@@ -215,13 +395,13 @@ def _validate_gate_schema(
         bad(f"stripe corpus SHA 불일치: {corpus_sha.get('stripe')}")
     if corpus_sha.get("github", "").split(":")[-1][:12] != "80850db290cd":
         bad(f"github corpus SHA 불일치: {corpus_sha.get('github')}")
-    mf = _DIR / "gate_manifest_v1.json"
+    mf = manifest_path
     if mf.exists():
         man = json.loads(mf.read_text())
         if man.get("corpus_sha256", {}).get("stripe") != corpus_sha.get("stripe"):
-            bad("gate_manifest_v1.json corpus_sha256.stripe 불일치")
+            bad(f"{mf.name} corpus_sha256.stripe 불일치")
         if man.get("corpus_sha256", {}).get("github") != corpus_sha.get("github"):
-            bad("gate_manifest_v1.json corpus_sha256.github 불일치")
+            bad(f"{mf.name} corpus_sha256.github 불일치")
 
     # 6) accepted 실재 (전량)
     for r in raw_items:
@@ -299,7 +479,16 @@ def _load_and_validate_queries(
     is_gate_schema = bool(raw_items) and "evaluation_role" in raw_items[0]
 
     if is_gate_schema:
-        _validate_gate_schema(raw_items, valid_by_doc, corpus_sha)
+        if queries_file.name not in _MANIFEST_BY_QUERY_FILE:
+            raise ValueError(
+                f"등록되지 않은 gate 스키마 질의 파일: {queries_file.name} "
+                f"(허용: {sorted(_MANIFEST_BY_QUERY_FILE)})"
+            )
+        manifest_path = _DIR / _MANIFEST_BY_QUERY_FILE[queries_file.name]
+        _validate_gate_schema(raw_items, valid_by_doc, corpus_sha, manifest_path)
+        _verify_manifest_shas(queries_file, raw_items, manifest_path)
+        if queries_file.name == "queries_gate_v2.json":
+            _validate_v2_novelty(raw_items)
         # 확장 스키마인데 --split 미지정이면 diagnostic 4건이 headline·category 집계에
         # 조용히 섞인다(§4.1-10). 기본을 gate+holdout 로 잡고, diagnostic 은 명시할 때만.
         if split is None:
