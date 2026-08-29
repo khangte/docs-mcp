@@ -918,6 +918,11 @@ def _parse_args() -> argparse.Namespace:
             "--report-json 은 이름이 정확히 scratchpad 인 디렉터리 하위 경로만 허용한다 "
             "(resolve 후 path component 검사 — scratchpad-evil, scratchpad/../ 우회 차단)"
         )
+    if args.report_json is not None and args.strategy != "both":
+        parser.error(
+            "--report-json 은 --strategy both 를 요구한다 (88번 A2: rrf 전략만으로는 "
+            "unaffected_paths.fallback 이 공집합이라 fallback rank parity 를 실측하지 못한다)"
+        )
     return args
 
 
@@ -1226,8 +1231,12 @@ def _augmentation_trace_row(eq: EvalQuery, trace, candidates, endpoint_by_ref: d
         "id": eq.id,
         "split": eq.split,
         "category": eq.category,
+        "language": eq.language,
+        "answer_mode": eq.answer_mode,
         "pair_id": eq.pair_id,
         "pair_role": eq.pair_role,
+        "result_empty": not candidates,
+        "per_accepted_ranks": [_rank_of_one(candidates, m, p) for m, p in eq.accepted],
         "keyword": _hits(trace.keyword_hits),
         "vector": _hits(trace.vector_hits),
         "base_wide": _fused(trace.base_wide),
@@ -1333,6 +1342,10 @@ def _evaluate_and_report(
             "identity": _augmentation_identity_root(state.engine),
             "arm": "candidate" if args.structured_augmentation == "on" else "baseline",
             "augmentation_enabled": args.structured_augmentation == "on",
+            "variants_enabled": args.with_variants,
+            "lexical_field": args.lexical_field,
+            "strategy": args.strategy,
+            "top_k": args.top_k,
             "split_scope": args.split or "all",
             "queries": trace_rows,
             "unaffected_paths": {
