@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "dataset_version": "v2",
+  "status": "frozen",
+  "query_file": "queries_gate_v2.json",
+  "query_sha256": "a325583905a624c4e8293b7abff49e65741bc4aa6d0e09e48d5ed74bfa0346e5",
+  "query_sha256_method": "raw file bytes (sha256sum tests/fixtures/corpus_eval/queries_gate_v2.json)",
+  "split_sha256": "a53c1ab7eb7ce21b2afc4ea8cc0b28ae6809a236cc9d08061d5f42b5448b9a9a",
+  "split_sha256_method": "scored rows sorted by id: <id><TAB><split><LF> x120, sha256 of concatenation",
+  "counts": {
+    "total": 124,
+    "scored": 120,
+    "diagnostic": 4,
+    "gate": 96,
+    "holdout": 24
+  },
+  "corpus_sha256": {
+    "stripe": "3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5",
+    "github": "80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d"
+  },
+  "novelty_against": {
+    "legacy_query_sha256": "8f61cb99006e0d07923111fc919aaaa7489b486b0fffca15928efce75355441f",
+    "v1_query_sha256": "6eb897d24d681d1389963007a184ded043d3ae914cf862f6ffd8aba7f75838d8"
+  },
+  "product_source_sha": "468ffafad253b112f59917b9b9c703786078be83",
+  "baseline_lexical_field": "text",
+  "candidate_lexical_field": "structured",
+  "rules": "docs/architect-review/80_structured_lexical_v2_sealed_holdout_freeze_design.md",
+  "rules_git_sha": "cef9214"
+}
