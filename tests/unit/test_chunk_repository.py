@@ -1089,3 +1089,186 @@ def test_search_by_vector_meta_filter_raises_ef_search_floor(db_session) -> None
 
     value = db_session.execute(text("SHOW hnsw.ef_search")).scalar()
     assert int(value) == 200
+
+
+def test_text_tsv_expression_matches_shared_normalization() -> None:
+    """`TEXT_TSV_EXPRESSION` 은 기존 리터럴 그대로여야 한다(alembic 스푸리어스 diff 방지)."""
+    from app.models.chunk import TEXT_TSV_EXPRESSION, _norm_sql
+
+    assert TEXT_TSV_EXPRESSION == f"to_tsvector('simple', {_norm_sql('text')})"
+
+
+def test_search_tsv_weights_endpoint_fields(db_session) -> None:
+    """endpoint 청크의 search_tsv 는 A/B/C/D 가중치를 갖는다."""
+    from sqlalchemy import select
+
+    from app.models import Chunk
+
+    _seed_document(db_session, "doc-w")
+    db_session.add(
+        Chunk(
+            id="c-w1",
+            document_id="doc-w",
+            chunk_type="endpoint",
+            ref_id="ep-w1",
+            text="[GET] /repos/{owner}/{repo}/topics — Get all repository topics",
+            leaf_text="topics topic",
+            intent_text="list index all browse Get all repository topics",
+            context_text="repos repo owner",
+        )
+    )
+    db_session.commit()
+
+    tsv = db_session.execute(
+        select(Chunk.search_tsv).where(Chunk.id == "c-w1")
+    ).scalar_one()
+    assert "'topics':1A" in tsv
+    assert "'list':" in tsv and "B" in tsv
+    assert "'repos':" in tsv
+
+
+def test_search_tsv_is_null_for_non_endpoint_chunks(db_session) -> None:
+    """section/schema 청크는 search_tsv 가 NULL 이라 부분 인덱스 비용이 0이다."""
+    from sqlalchemy import select
+
+    from app.models import Chunk
+
+    _seed_document(db_session, "doc-w2")
+    db_session.add(
+        Chunk(
+            id="c-w2",
+            document_id="doc-w2",
+            chunk_type="section",
+            ref_id="sec-1",
+            text="본문 텍스트",
+        )
+    )
+    db_session.commit()
+
+    assert (
+        db_session.execute(select(Chunk.search_tsv).where(Chunk.id == "c-w2")).scalar_one()
+        is None
+    )
+
+
+def test_search_tsv_lexemes_are_superset_of_text_tsv(db_session) -> None:
+    """78번 §8.3 불변식: 후보 집합이 줄어드는 일은 구조적으로 불가능하다."""
+    import re
+
+    from sqlalchemy import select
+
+    from app.models import Chunk
+
+    _seed_document(db_session, "doc-w3")
+    db_session.add(
+        Chunk(
+            id="c-w3",
+            document_id="doc-w3",
+            chunk_type="endpoint",
+            ref_id="ep-w3",
+            text="[DELETE] /v1/subscriptions/{id} — Cancel a subscription 구독 취소",
+            leaf_text="subscriptions subscription",
+            intent_text="delete remove destroy Cancel a subscription",
+            context_text="v1",
+        )
+    )
+    db_session.commit()
+
+    row = db_session.execute(
+        select(Chunk.text_tsv, Chunk.search_tsv).where(Chunk.id == "c-w3")
+    ).one()
+    def lexemes(tsv: str | None) -> set[str]:
+        return set(re.findall(r"'([^']+)'", tsv or ""))
+
+    assert lexemes(row[0]) <= lexemes(row[1])
+
+
+def _seed_endpoint_chunk_with_structure(
+    session, chunk_id: str, document_id: str, *, text: str, leaf: str, intent: str, context: str
+) -> None:
+    """구조 필드를 채운 endpoint 청크 한 건을 저장한다."""
+    from app.models import Chunk
+
+    _seed_document(session, document_id)
+    session.add(
+        Chunk(
+            id=chunk_id,
+            document_id=document_id,
+            chunk_type="endpoint",
+            ref_id=f"ep-{chunk_id}",
+            text=text,
+            leaf_text=leaf,
+            intent_text=intent,
+            context_text=context,
+        )
+    )
+
+
+def test_structured_field_ranks_leaf_match_above_description_flood(db_session) -> None:
+    """78번 §2: leaf 가 A 가중이면 설명 반복이 많은 형제를 이긴다."""
+    repo = ChunkRepository(db_session)
+    _seed_endpoint_chunk_with_structure(
+        db_session,
+        "c-target",
+        "doc-s",
+        text="[GET] /repos/{owner}/{repo}/topics — Get all repository topics",
+        leaf="topics topic",
+        intent="list index all browse Get all repository topics",
+        context="repos repo owner",
+    )
+    _seed_endpoint_chunk_with_structure(
+        db_session,
+        "c-flood",
+        "doc-s",
+        text=(
+            "[GET] /repos/{owner}/{repo}/collaborators — List repository collaborators. "
+            "topics topics topics topics topics topics about the repository"
+        ),
+        leaf="collaborators collaborator",
+        intent="list index all browse List repository collaborators",
+        context="repos repo owner",
+    )
+    db_session.commit()
+
+    flat = repo.search_endpoint_by_text(["topics"], top_k=5)
+    weighted = repo.search_endpoint_by_text(["topics"], top_k=5, lexical_field="structured")
+
+    assert flat[0].chunk_id == "c-flood"
+    assert weighted[0].chunk_id == "c-target"
+
+
+def test_lexical_field_defaults_and_unknown_values_use_text_tsv(db_session) -> None:
+    """기본값과 미인식 값은 기존 `text_tsv` 경로로 안전하게 degrade 한다."""
+    repo = ChunkRepository(db_session)
+    _seed_endpoint_chunk_with_structure(
+        db_session, "c-d1", "doc-d", text="find pet by id", leaf="pets pet", intent="", context=""
+    )
+    db_session.commit()
+
+    default_hits = repo.search_endpoint_by_text(["pet"], top_k=5)
+    unknown_hits = repo.search_endpoint_by_text(["pet"], top_k=5, lexical_field="nope")
+
+    assert [h.chunk_id for h in default_hits] == ["c-d1"]
+    assert [h.chunk_id for h in unknown_hits] == ["c-d1"]
+    assert default_hits[0].score == unknown_hits[0].score
+
+
+def test_structured_field_does_not_shrink_candidate_set(db_session) -> None:
+    """78번 §8.3: D 가 `text` 전체이므로 flat 에서 잡히던 것은 전부 잡힌다."""
+    repo = ChunkRepository(db_session)
+    _seed_endpoint_chunk_with_structure(
+        db_session,
+        "c-only-desc",
+        "doc-n",
+        text="[POST] /v1/charges — Create a charge. 통화 단위를 지정한다",
+        leaf="charges charge",
+        intent="create add new register Create a charge",
+        context="v1",
+    )
+    db_session.commit()
+
+    flat = repo.search_endpoint_by_text(["통화"], top_k=5)
+    weighted = repo.search_endpoint_by_text(["통화"], top_k=5, lexical_field="structured")
+
+    assert {h.chunk_id for h in flat} == {"c-only-desc"}
+    assert {h.chunk_id for h in weighted} == {"c-only-desc"}

@@ -44,6 +44,13 @@ class Settings:
     document_search_strategy: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_DOCUMENT_SEARCH_STRATEGY", "indexed")
     )
+    #: "text"(기본, 기존 `chunk.text_tsv` 단일 필드 무가중 ts_rank — 롤백
+    #: 스위치로 상시 보존) | "structured"(`chunk.search_tsv` 가중 A/B/C/D,
+    #: `docs/architect-review/78`). search_endpoints 키워드 arm 전용이며
+    #: 미인식 값은 안전하게 "text" 로 degrade 한다.
+    search_lexical_field: str = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_LEXICAL_FIELD", "text")
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )

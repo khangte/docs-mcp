@@ -18,3 +18,7 @@ PostgreSQL의 `pgvector` 확장을 사용하여 벡터 유사도 검색을 구�
   전환하고 `VectorSearch`가 DB에 코사인 거리(`<=>`) 쿼리를 직접 던지는 방식으로 교체.
   기존 `InMemoryVectorIndex`(프로세스 메모리 dict)는 제거. `docs/exec_plans/vector-index-persist/SPEC.md`
   참고. Keyword Search는 아직 tsvector가 아닌 애플리케이션 레벨 토큰 매칭 유지(TODO).
+- **후속 결정(ADR-0005)**: 엔드포인트 keyword arm 의 lexical 표현을 단일
+  `to_tsvector('simple', text)` 에서 색인 시점 구조화 + 가중 `setweight` 다중 필드로
+  옮겼다. 하이브리드 구성(FTS × 벡터 RRF) 자체는 그대로다.
+  `docs/adr/0005_weighted_endpoint_lexical_index.md` 참고.

@@ -42,3 +42,5 @@ NNNN-<kebab-case-title>.md
 - [ADR-0001: 저장형 검색 구조 채택](0001_storage_search_structure.md)
 - [ADR-0002: pgvector 기반 하이브리드 검색 도입](0002_pgvector_hybrid_search.md)
 - [ADR-0003: MCP 도구의 읽기 전용 경계 유지](0003_read_only_mcp_boundary.md)
+- [ADR-0004: 로컬 임베딩 제공자 채택](0004_local_embedding_provider.md)
+- [ADR-0005: 엔드포인트 lexical 표현의 색인 시점 구조화와 가중 tsvector 채택](0005_weighted_endpoint_lexical_index.md)

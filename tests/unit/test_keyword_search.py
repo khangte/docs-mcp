@@ -152,3 +152,39 @@ def test_keyword_search_matches_korean_query(db_session) -> None:
     hits = search.search("주문 목록", top_k=5)
 
     assert [h.chunk_id for h in hits] == ["c1"]
+
+
+def test_keyword_search_passes_lexical_field_through(db_session) -> None:
+    """`lexical_field="structured"` 는 구조화 벡터 경로로 라우팅된다."""
+    _seed_document(db_session, "doc-l")
+    db_session.add(
+        Chunk(
+            id="c-l1",
+            document_id="doc-l",
+            chunk_type="endpoint",
+            ref_id="ep-l1",
+            text="[GET] /v1/customers — List all customers",
+            leaf_text="customers customer",
+            intent_text="list index all browse List all customers",
+            context_text="v1",
+        )
+    )
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    structured = KeywordSearch(repo, lexical_field="structured").search("customer", top_k=5)
+    flat = KeywordSearch(repo).search("customer", top_k=5)
+
+    assert [h.ref_id for h in structured] == ["ep-l1"]
+    assert [h.ref_id for h in flat] == []
+
+
+def test_keyword_search_degrades_unknown_lexical_field(db_session) -> None:
+    """미인식 값은 기존 text 경로로 degrade 한다."""
+    _seed_chunk(db_session, "c-l2", "doc-l2", "find pet by id", ref_id="ep-l2")
+    db_session.commit()
+    repo = ChunkRepository(db_session)
+
+    hits = KeywordSearch(repo, lexical_field="바보값").search("pet", top_k=5)
+
+    assert [h.ref_id for h in hits] == ["ep-l2"]
