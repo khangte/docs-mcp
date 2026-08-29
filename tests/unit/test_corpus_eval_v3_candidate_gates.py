@@ -342,3 +342,27 @@ def test_runner_accepts_augmentation_on_with_text_lexical(
     args = rce._parse_args()
     assert args.structured_augmentation == "on"
     assert args.report_json == "/tmp/x/scratchpad/trace.json"
+
+
+def test_runner_rejects_report_json_in_lookalike_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`scratchpad` 를 substring 으로만 담은 경로(예: scratchpad-evil)는 거부한다."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_corpus_eval.py", "--structured-augmentation", "on",
+         "--report-json", "/tmp/scratchpad-evil/trace.json"],
+    )
+    with pytest.raises(SystemExit):
+        rce._parse_args()
+
+
+def test_runner_rejects_report_json_traversal_escape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`scratchpad/../` 로 scratchpad 밖으로 빠져나가는 경로는 거부한다."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["run_corpus_eval.py", "--structured-augmentation", "on",
+         "--report-json", "scratchpad/../secret/trace.json"],
+    )
+    with pytest.raises(SystemExit):
+        rce._parse_args()

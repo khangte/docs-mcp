@@ -913,8 +913,11 @@ def _parse_args() -> argparse.Namespace:
             "--structured-augmentation on 은 --lexical-field structured 와 함께 쓸 수 없다 "
             "(87번 설계: augmentation 은 text keyword arm 위에서만 동작)"
         )
-    if args.report_json is not None and "scratchpad" not in args.report_json:
-        parser.error("--report-json 은 scratchpad 경로만 허용한다")
+    if args.report_json is not None and "scratchpad" not in Path(args.report_json).resolve().parts:
+        parser.error(
+            "--report-json 은 이름이 정확히 scratchpad 인 디렉터리 하위 경로만 허용한다 "
+            "(resolve 후 path component 검사 — scratchpad-evil, scratchpad/../ 우회 차단)"
+        )
     return args
 
 
