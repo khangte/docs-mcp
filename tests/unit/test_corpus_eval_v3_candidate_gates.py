@@ -156,7 +156,7 @@ def _row(qid: str, meta_row: dict, behavior: str, *, arm: str) -> dict:
         answer_rank = None if behavior == "cross" else base_answer_rank
 
     if meta_row["answer_mode"] == "all":
-        second = answer_rank + 1 if isinstance(answer_rank, int) else 40
+        second = answer_rank + 1 if isinstance(answer_rank, int) else None
         per_accepted = [answer_rank, second]
     else:
         per_accepted = [answer_rank]
@@ -356,6 +356,43 @@ def test_execution_role_trips_when_top_k_not_ten() -> None:
         cmp.compare_gate(b_off, c_off, b_on, c_on)
 
 
+# verdict 89 R1: False 실행축 필드 누락/None/문자열/비-bool 이 truthiness 로 통과하던 경로
+def test_execution_role_trips_when_variants_enabled_key_missing() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    del b_off["variants_enabled"]  # False 기대 run — bool(None)==False 로 통과하면 안 됨
+    with pytest.raises(ValueError, match="execution identity"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+def test_execution_role_trips_when_variants_enabled_is_none() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    b_off["variants_enabled"] = None
+    with pytest.raises(ValueError, match="execution identity"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+def test_execution_role_trips_when_variants_enabled_is_string_bool() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    b_on["variants_enabled"] = "false"  # True 기대 run — bool("false")==True 로 통과하면 안 됨
+    with pytest.raises(ValueError, match="execution identity"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+def test_execution_role_trips_when_augmentation_enabled_non_bool() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    c_on["augmentation_enabled"] = 1  # True 기대 run — bool(1)==True 로 통과하면 안 됨
+    with pytest.raises(ValueError, match="execution identity"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+def test_execution_role_trips_when_strategy_is_fallback() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    for rep in (b_off, c_off, b_on, c_on):
+        rep["strategy"] = "fallback"  # runner 는 both 만 낸다
+    with pytest.raises(ValueError, match="execution identity"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
 # --------------------------------------------------------------------------
 # 88 §5 C4: ID 집합 / metadata 일치
 # --------------------------------------------------------------------------
@@ -418,7 +455,7 @@ def test_fallback_parity_trips_on_partial_coverage() -> None:
 def test_fallback_parity_trips_when_baseline_candidate_ranks_differ() -> None:
     b_off, c_off, b_on, c_on = _gate_four()
     some_id = next(iter(_GATE_META))
-    c_off["unaffected_paths"]["fallback"][some_id] = 999
+    c_off["unaffected_paths"]["fallback"][some_id] = 9  # 유효 rank 지만 baseline 7 과 불일치
     with pytest.raises(ValueError, match="fallback exactness"):
         cmp.compare_gate(b_off, c_off, b_on, c_on)
 
@@ -429,6 +466,78 @@ def test_all_three_unaffected_maps_empty_still_fails_hard8() -> None:
     for rep in (b_off, c_off, b_on, c_on):
         rep["unaffected_paths"] = {"exact": {}, "document": {}, "fallback": {}}
     with pytest.raises(ValueError, match="fallback exactness"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+# --------------------------------------------------------------------------
+# verdict 89 R2: row schema fail-closed (result_empty / per_accepted_ranks / raw rank)
+# --------------------------------------------------------------------------
+def test_row_schema_trips_when_result_empty_missing() -> None:
+    reports = list(_gate_four())
+    del reports[1]["queries"][0]["result_empty"]
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_result_empty_non_bool() -> None:
+    reports = list(_gate_four())
+    reports[1]["queries"][0]["result_empty"] = 0  # falsy 지만 bool 아님
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_c6_per_accepted_ranks_missing() -> None:
+    reports = list(_gate_four())
+    row = next(r for r in reports[1]["queries"] if r["answer_mode"] == "all")
+    del row["per_accepted_ranks"]
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_per_accepted_ranks_wrong_length() -> None:
+    reports = list(_gate_four())
+    row = next(r for r in reports[3]["queries"] if r["answer_mode"] == "all")
+    row["per_accepted_ranks"] = [6]  # frozen accepted count 2
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_per_accepted_rank_out_of_range() -> None:
+    reports = list(_gate_four())
+    row = next(r for r in reports[3]["queries"] if r["answer_mode"] == "all")
+    row["per_accepted_ranks"] = [6, 40]
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_per_accepted_rank_bad_type() -> None:
+    reports = list(_gate_four())
+    row = next(r for r in reports[3]["queries"] if r["answer_mode"] == "all")
+    row["per_accepted_ranks"] = [6, "7"]
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_answer_rank_out_of_range() -> None:
+    reports = list(_gate_four())
+    reports[1]["queries"][0]["answer_rank"] = 11
+    with pytest.raises(ValueError, match="row schema"):
+        cmp.check_row_schema(reports, scope="gate")
+
+
+def test_row_schema_trips_when_fallback_rank_out_of_range() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    some_id = next(iter(_GATE_META))
+    for rep in (b_off, c_off, b_on, c_on):
+        rep["unaffected_paths"]["fallback"][some_id] = 40  # parity 는 유지, 범위만 위반
+    with pytest.raises(ValueError, match="fallback exactness"):
+        cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+def test_row_schema_wired_into_compare_gate() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    del c_off["queries"][0]["result_empty"]
+    with pytest.raises(ValueError, match="row schema"):
         cmp.compare_gate(b_off, c_off, b_on, c_on)
 
 
@@ -537,7 +646,7 @@ def test_common_hard_per_category_hit_loss_floor_trips() -> None:
 def test_common_hard_c6_complete_regression_trips() -> None:
     b_off, c_off, b_on, c_on = _gate_four()
     row = next(r for r in c_on["queries"] if r["answer_mode"] == "all")
-    row["per_accepted_ranks"] = [6, 40]  # baseline [6,7] 대비 complete 상실
+    row["per_accepted_ranks"] = [6, None]  # baseline [6,7] 대비 complete 상실(상쇄 없음)
     with pytest.raises(ValueError, match="C6"):
         cmp.compare_gate(b_off, c_off, b_on, c_on)
 
@@ -547,6 +656,70 @@ def test_common_hard_empty_result_increase_trips() -> None:
     c_on["queries"][0]["result_empty"] = True
     with pytest.raises(ValueError, match="Empty-result"):
         cmp.compare_gate(b_off, c_off, b_on, c_on)
+
+
+# verdict 89 R3: per-category floor 는 gross loss 가 아니라 frozen 순손실이다
+def _stable_cat_ids(report: dict, cat: str, plan: dict, n: int) -> list[str]:
+    return [
+        r["id"] for r in report["queries"]
+        if r["category"] == cat and not r["pair_id"] and r["id"] not in plan
+    ][:n]
+
+
+def test_per_category_net_loss_passes_when_losses_offset_by_gains() -> None:
+    """같은 category loss 2 / gain 2 는 순손실 0 이라 PASS(gross loss 였으면 FAIL)."""
+    b_off, c_off, b_on, c_on = _gate_four()
+    cat = "C7-대형엔드포인트세부"
+    for base, cand, plan in ((b_off, c_off, _GATE_PLAN), (b_on, c_on, _GATE_PLAN)):
+        ids = _stable_cat_ids(base, cat, plan, 4)
+        b_by = {r["id"]: r for r in base["queries"]}
+        c_by = {r["id"]: r for r in cand["queries"]}
+        for qid in ids[:2]:   # loss: baseline hit -> candidate 미검출
+            c_by[qid]["answer_rank"] = None
+        for qid in ids[2:4]:  # gain: baseline 미검출 -> candidate hit
+            b_by[qid]["answer_rank"] = None
+    cmp.check_common_hard(b_off, c_off, b_on, c_on, mode="gate")
+
+
+def test_per_category_net_loss_trips_when_losses_not_offset() -> None:
+    """loss 2 / gain 0 은 순손실 2 라 FAIL."""
+    b_off, c_off, b_on, c_on = _gate_four()
+    cat = "C7-대형엔드포인트세부"
+    for cand in (c_off, c_on):
+        for qid in _stable_cat_ids(cand, cat, _GATE_PLAN, 2):
+            next(r for r in cand["queries"] if r["id"] == qid)["answer_rank"] = None
+    with pytest.raises(ValueError, match="Per-category floor"):
+        cmp.check_common_hard(b_off, c_off, b_on, c_on, mode="gate")
+
+
+# verdict 89 R4: C6 는 per-query 가 아니라 OFF/ON 별 aggregate coverage/complete 다
+def test_c6_aggregate_passes_when_query_losses_offset_by_gains() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    for base, cand in ((b_off, c_off), (b_on, c_on)):
+        q1, q2 = [r["id"] for r in base["queries"] if r["answer_mode"] == "all"][:2]
+        b_by = {r["id"]: r for r in base["queries"]}
+        c_by = {r["id"]: r for r in cand["queries"]}
+        b_by[q1]["per_accepted_ranks"] = [6, None]  # baseline cov 0.5 / complete 0
+        b_by[q2]["per_accepted_ranks"] = [6, 7]      # baseline cov 1.0 / complete 1
+        c_by[q1]["per_accepted_ranks"] = [6, 7]      # candidate cov 1.0 / complete 1
+        c_by[q2]["per_accepted_ranks"] = [6, None]   # candidate cov 0.5 / complete 0
+    cmp.check_common_hard(b_off, c_off, b_on, c_on, mode="gate")
+
+
+def test_c6_aggregate_mean_coverage_drop_trips() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    row = next(r for r in c_off["queries"] if r["answer_mode"] == "all")
+    row["per_accepted_ranks"] = [6, None]  # 상쇄 없는 aggregate 하락
+    with pytest.raises(ValueError, match="C6 mean coverage"):
+        cmp.check_common_hard(b_off, c_off, b_on, c_on, mode="gate")
+
+
+def test_c6_aggregate_complete_count_drop_trips() -> None:
+    b_off, c_off, b_on, c_on = _gate_four()
+    row = next(r for r in c_on["queries"] if r["answer_mode"] == "all")
+    row["per_accepted_ranks"] = [6, None]
+    with pytest.raises(ValueError, match="C6 complete count"):
+        cmp.check_common_hard(b_off, c_off, b_on, c_on, mode="gate")
 
 
 # --------------------------------------------------------------------------

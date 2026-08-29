@@ -113,9 +113,10 @@ _ROLE_TABLE = (
     ("baseline", True, False),
     ("candidate", True, True),
 )
-# strategy 가 fallback rank 를 report 에 채우는 실행축(A2). rrf 단독은 fallback map
-# 이 공집합이라 parity 를 실측하지 못한다.
-_FALLBACK_PARITY_STRATEGIES = frozenset({"both", "fallback"})
+# report JSON 실행축(A2 / verdict 89 R1). runner 는 `--strategy both` 만 허용하며
+# 이 실행만 네 trace 와 fallback rank parity 를 함께 채운다. comparator 도 정확히
+# `both` 만 받는다.
+_REPORT_STRATEGY = "both"
 
 
 # --------------------------------------------------------------------------
@@ -141,6 +142,7 @@ def _frozen_meta(scope: str) -> dict[str, dict]:
             "answer_mode": r["answer_mode"],
             "pair_id": r.get("pair_id"),
             "pair_role": r.get("pair_role"),
+            "accepted_count": len(r["accepted"]),
         }
     return out
 
@@ -191,18 +193,21 @@ def check_execution_roles(reports: list[dict]) -> None:
     for i, (rep, (arm, ve, ae)) in enumerate(zip(reports, _ROLE_TABLE, strict=True)):
         if rep.get("arm") != arm:
             errs.append(f"run[{i}] arm={rep.get('arm')!r} != {arm!r}")
-        if bool(rep.get("variants_enabled")) != ve:
-            errs.append(f"run[{i}] variants_enabled={rep.get('variants_enabled')!r} != {ve}")
-        if bool(rep.get("augmentation_enabled")) != ae:
-            errs.append(
-                f"run[{i}] augmentation_enabled={rep.get('augmentation_enabled')!r} != {ae}"
-            )
+        # verdict 89 R1: key 존재 + 정확한 bool 타입 + exact value 를 모두 fail-closed.
+        # bool(rep.get(...)) 는 필드 삭제(None)·문자열을 truthiness 로 통과시킨다.
+        for key, want in (("variants_enabled", ve), ("augmentation_enabled", ae)):
+            if key not in rep:
+                errs.append(f"run[{i}] {key} 필드 누락")
+            elif type(rep[key]) is not bool:
+                errs.append(f"run[{i}] {key}={rep[key]!r} 가 bool 아님")
+            elif rep[key] != want:
+                errs.append(f"run[{i}] {key}={rep[key]!r} != {want}")
         if rep.get("lexical_field") != "text":
             errs.append(f"run[{i}] lexical_field={rep.get('lexical_field')!r} != 'text'")
-        if rep.get("strategy") not in _FALLBACK_PARITY_STRATEGIES:
+        if rep.get("strategy") != _REPORT_STRATEGY:
             errs.append(
-                f"run[{i}] strategy={rep.get('strategy')!r} 가 fallback parity 실행축 아님 "
-                f"(허용 {sorted(_FALLBACK_PARITY_STRATEGIES)})"
+                f"run[{i}] strategy={rep.get('strategy')!r} != {_REPORT_STRATEGY!r} "
+                "(fallback rank parity 를 실측하는 실행축)"
             )
         if rep.get("top_k") != _TOP_K:
             errs.append(f"run[{i}] top_k={rep.get('top_k')!r} != {_TOP_K}")
@@ -261,6 +266,9 @@ def check_fallback_exactness(
                     f"{tag} fallback map 이 {scope} 전체 ID 를 덮지 않음 "
                     f"(덮음 {len(set(fb) & want)}/{len(want)})"
                 )
+            for k, v in fb.items():
+                if not _valid_rank(v):
+                    errs.append(f"{tag} fallback[{k}]={v!r} 가 None/1..{_TOP_K} raw rank 아님")
         bfb = (base.get("unaffected_paths") or {}).get("fallback") or {}
         cfb = (cand.get("unaffected_paths") or {}).get("fallback") or {}
         diff = sorted(k for k in want if bfb.get(k) != cfb.get(k))
@@ -268,6 +276,53 @@ def check_fallback_exactness(
             errs.append(f"{label} fallback rank parity 깨짐: baseline/candidate 불일치 {diff[:5]}")
     if errs:
         raise ValueError("fallback exactness(HARD §6.1.3) 위반:\n  - " + "\n  - ".join(errs))
+
+
+def _valid_rank(x: object) -> bool:
+    """report 의 raw rank 필드가 `None` 또는 1..top_k 정수인지(verdict 89 R2).
+
+    bool 은 `int` 하위형이므로 `type(x) is int` 로 True/False 를 배제한다.
+    """
+    return x is None or (type(x) is int and 1 <= x <= _TOP_K)
+
+
+def check_row_schema(reports: list[dict], *, scope: str) -> None:
+    """모든 row 의 result_empty·per_accepted_ranks·answer_rank 를 fail-closed 로 판정한다.
+
+    `row.get()` falsy 기본값과 `per_accepted_ranks or []` 흡수로 필드 누락이 HARD 를
+    통과하던 경로를 막는다(verdict 89 R2). per_accepted_ranks 길이는 frozen accepted
+    count 와 정확히 같아야 하고, 각 rank·answer_rank 는 유효한 raw rank 여야 한다.
+    """
+    meta = _frozen_meta(scope)
+    errs: list[str] = []
+    for i, rep in enumerate(reports):
+        for r in rep["queries"]:
+            qid = r.get("id")
+            m = meta.get(qid)
+            if type(r.get("result_empty")) is not bool:
+                errs.append(
+                    f"run[{i}] {qid} result_empty={r.get('result_empty')!r} 가 bool 아님"
+                )
+            if not _valid_rank(r.get("answer_rank")):
+                errs.append(
+                    f"run[{i}] {qid} answer_rank={r.get('answer_rank')!r} 가 None/1..{_TOP_K} 아님"
+                )
+            per = r.get("per_accepted_ranks")
+            if not isinstance(per, list):
+                errs.append(f"run[{i}] {qid} per_accepted_ranks 가 list 아님: {per!r}")
+                continue
+            if m is not None and len(per) != m["accepted_count"]:
+                errs.append(
+                    f"run[{i}] {qid} per_accepted_ranks 길이 {len(per)} "
+                    f"!= frozen accepted count {m['accepted_count']}"
+                )
+            for x in per:
+                if not _valid_rank(x):
+                    errs.append(
+                        f"run[{i}] {qid} per_accepted_ranks 값 {x!r} 가 None/1..{_TOP_K} 아님"
+                    )
+    if errs:
+        raise ValueError("row schema(§6.1 report 계약) 위반:\n  - " + "\n  - ".join(errs))
 
 
 # --------------------------------------------------------------------------
@@ -332,6 +387,10 @@ def _hit_loss(base_rows: list[dict], cand_rows: list[dict]) -> int:
         1 for r in base_rows
         if _hit(r.get("answer_rank")) == 1 and cand.get(r["id"], 0) == 0
     )
+
+
+def _hit_count(rows: list[dict]) -> int:
+    return sum(_hit(r.get("answer_rank")) for r in rows)
 
 
 def _coverage(row: dict) -> float:
@@ -461,10 +520,12 @@ def check_common_hard(
             cc = [r for r in c_rows if r["category"] == cat]
             if not bc:
                 continue
-            cat_loss = _hit_loss(bc, cc)
-            if cat_loss > _PER_CAT_HIT_LOSS_MAX:
+            # verdict 89 R3: frozen §6.1.5 는 gross loss 가 아니라 순손실이다.
+            # net_loss = baseline hit count - candidate hit count.
+            net_loss = _hit_count(bc) - _hit_count(cc)
+            if net_loss > _PER_CAT_HIT_LOSS_MAX:
                 errs.append(
-                    f"Per-category floor({label}/{cat}): hit 순손실 {cat_loss} "
+                    f"Per-category floor({label}/{cat}): hit 순손실 {net_loss} "
                     f"> {_PER_CAT_HIT_LOSS_MAX}"
                 )
             drop = _mrr(bc) - _mrr(cc)
@@ -473,16 +534,25 @@ def check_common_hard(
                     f"Per-category floor({label}/{cat}): MRR 하락 {drop:.4f} "
                     f"> {_PER_CAT_MRR_DROP_MAX}"
                 )
-        # C6 coverage/complete non-regression
+        # C6 aggregate coverage/complete non-regression (verdict 89 R4).
+        # frozen §6.1.6 / verdict 69 §3.3 판정 단위는 C6 전체의 평균 coverage 와
+        # complete count 다. 개별 query 값은 진단으로만 남기고 HARD 로 승격하지 않는다.
         c_by_id = _by_id(cand)
-        for r in (x for x in b_rows if x.get("answer_mode") == "all"):
-            cr = c_by_id.get(r["id"], {})
-            if _coverage(cr) < _coverage(r) - _EPS:
+        b_c6 = [x for x in b_rows if x.get("answer_mode") == "all"]
+        c_c6 = [c_by_id.get(x["id"], {}) for x in b_c6]
+        if b_c6:
+            b_cov = sum(_coverage(x) for x in b_c6) / len(b_c6)
+            c_cov = sum(_coverage(x) for x in c_c6) / len(c_c6)
+            if c_cov < b_cov - _EPS:
                 errs.append(
-                    f"C6 coverage({label}/{r['id']}): {_coverage(cr):.2f} < {_coverage(r):.2f}"
+                    f"C6 mean coverage({label}): {c_cov:.4f} < baseline {b_cov:.4f}"
                 )
-            if _complete(cr) < _complete(r):
-                errs.append(f"C6 complete({label}/{r['id']}): {_complete(cr)} < {_complete(r)}")
+            b_cmp = sum(_complete(x) for x in b_c6)
+            c_cmp = sum(_complete(x) for x in c_c6)
+            if c_cmp < b_cmp:
+                errs.append(
+                    f"C6 complete count({label}): {c_cmp} < baseline {b_cmp}"
+                )
         # empty-result 증가 0
         be = sum(1 for r in b_rows if r.get("result_empty"))
         ce = sum(1 for r in c_rows if r.get("result_empty"))
@@ -724,6 +794,7 @@ def _compare(
     check_execution_roles(reports)
     check_scope(reports, mode=mode)
     check_id_and_metadata(reports, scope=scope)
+    check_row_schema(reports, scope=scope)
     check_fallback_exactness(
         baseline_off, candidate_off, baseline_on, candidate_on, scope=scope
     )
