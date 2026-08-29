@@ -115,11 +115,20 @@ def _norm_query_strict(q: str) -> str:
     return re.sub(r"\s+", " ", unicodedata.normalize("NFKC", q).strip().casefold())
 
 
+def _count(it) -> dict:
+    """이터러블의 값별 개수를 평범한 dict 로. 분포 exact 비교용."""
+    out: dict = {}
+    for x in it:
+        out[x] = out.get(x, 0) + 1
+    return out
+
+
 #: --queries-file basename → 그 데이터셋 버전의 frozen manifest. 러너 하드코딩을
 #: 없애고(§6) 각 버전이 자기 manifest·quota·SHA 를 검증하게 한다.
 _MANIFEST_BY_QUERY_FILE = {
     "queries_gate_v1.json": "gate_manifest_v1.json",
     "queries_gate_v2.json": "gate_manifest_v2.json",
+    "queries_gate_v3.json": "gate_manifest_v3.json",
 }
 
 
@@ -257,6 +266,302 @@ def _validate_v2_novelty(raw_items: list[dict]) -> None:
 
     if errs:
         raise ValueError("§3 v2 신규성 검증 실패:\n  - " + "\n  - ".join(errs))
+
+
+def _validate_v3_novelty(raw_items: list[dict]) -> None:
+    """§3/§4 v3 신규성 계약. legacy queries.json + v1 + v2 를 함께 읽어 ID/정규화
+    query·variant/accepted tuple/endpoint·query 조합/route pair/C6 를 전부 대조한다.
+    route family 불교집합은 §4.3 대로 12개 pair block 에만 적용한다(일반 single 은
+    §4.2 endpoint 수준 신규성으로 충분). 검색 실행 전 로더 단계에서 돈다(§6).
+    """
+    errs: list[str] = []
+
+    def bad(msg: str) -> None:
+        errs.append(msg)
+
+    legacy = json.loads((_DIR / "queries.json").read_text())
+    v1 = json.loads((_DIR / "queries_gate_v1.json").read_text())
+    v2 = json.loads((_DIR / "queries_gate_v2.json").read_text())
+    prior_sets = (legacy, v1, v2)
+
+    def acc_tuples(r: dict) -> set[tuple[str, str, str]]:
+        return {(a["doc"], a["method"], a["path"]) for a in r["accepted"]}
+
+    def route_family(path: str) -> str:
+        segs = [s for s in path.split("/") if s and not s.startswith("{")]
+        return "/".join(segs[:2])
+
+    # 1) ID 패턴/번호/불교집합 (v1·v2 양쪽과)
+    ids = [r["id"] for r in raw_items]
+    for r in raw_items:
+        if not re.fullmatch(r"v3g\d{3}", r["id"]):
+            bad(f"{r['id']}: v3 id 패턴(v3gNNN) 아님")
+    nums = sorted(int(x[3:]) for x in ids if re.fullmatch(r"v3g\d{3}", x))
+    if nums != list(range(1, 125)):
+        bad("v3 id 번호가 v3g001~v3g124 연속 아님")
+    for name, src in (("v1", v1), ("v2", v2)):
+        clash = {r["id"] for r in src} & set(ids)
+        if clash:
+            bad(f"v3 id 가 {name} 과 겹침: {sorted(clash)}")
+    for pid in {r["pair_id"] for r in raw_items if r.get("pair_id")}:
+        if not re.fullmatch(r"v3p\d{2}", pid):
+            bad(f"{pid}: v3 pair id 패턴(v3pNN) 아님")
+
+    # 2) 정규화 query/variant 가 legacy/v1/v2 및 v3 내부와 불일치 (NFKC strict)
+    prior_q: set[str] = set()
+    for src in prior_sets:
+        for r in src:
+            prior_q.add(_norm_query_strict(r["query"]))
+            for v in r.get("variants", []) or []:
+                prior_q.add(_norm_query_strict(v))
+    seen: set[str] = set()
+    for r in raw_items:
+        n = _norm_query_strict(r["query"])
+        if n in prior_q:
+            bad(f"{r['id']}: 정규화 query 가 legacy/v1/v2 와 중복 {r['query']!r}")
+        if n in seen:
+            bad(f"{r['id']}: 정규화 query 가 v3 내부에서 중복 {r['query']!r}")
+        seen.add(n)
+        for v in r.get("variants", []) or []:
+            nv = _norm_query_strict(v)
+            if nv in prior_q:
+                bad(f"{r['id']}: 정규화 variant 가 legacy/v1/v2 와 중복 {v!r}")
+            if nv in seen:
+                bad(f"{r['id']}: 정규화 variant 가 다른 v3 query/variant 와 중복 {v!r}")
+            seen.add(nv)
+
+    # 3) accepted tuple(전량) 이 v1·v2 의 scored+diagnostic accepted 에 없음
+    prior_acc: set[tuple[str, str, str]] = set()
+    for src in (v1, v2):
+        for r in src:
+            prior_acc |= acc_tuples(r)
+    for r in raw_items:
+        for t in acc_tuples(r):
+            if t in prior_acc:
+                bad(f"{r['id']}: accepted tuple 이 v1/v2 재사용 {t}")
+
+    # 4) v3 내부에서 scored/diagnostic 레코드끼리 accepted tuple 공유 금지(C6 두 endpoint 포함)
+    owner: dict[tuple[str, str, str], str] = {}
+    for r in raw_items:
+        for t in acc_tuples(r):
+            if t in owner:
+                bad(f"{r['id']}: accepted tuple {t} 가 {owner[t]} 과 중복")
+            else:
+                owner[t] = r["id"]
+
+    # 5) endpoint/query 조합(정규화 query + 정렬된 accepted tuple 집합) 이 legacy/v1/v2 에 없음
+    def combo(r: dict) -> tuple:
+        return (_norm_query_strict(r["query"]),
+                tuple(sorted((a["doc"], a["method"], a["path"]) for a in r["accepted"])))
+
+    prior_combo = {combo(r) for src in prior_sets for r in src}
+    for r in raw_items:
+        if combo(r) in prior_combo:
+            bad(f"{r['id']}: endpoint/query 조합이 legacy/v1/v2 재사용")
+
+    # 6) route pair(§3.4/§4.3): pair id / 두 accepted endpoint / route family 를
+    #    v1·v2 pair block 및 v3 pair 상호와 대조. root/child 는 같은 family.
+    prior_pair_endpoints: set[tuple[str, str, str]] = set()
+    prior_pair_families: set[tuple[str, str]] = set()
+    prior_pair_ids: set[str] = set()
+    for src in (v1, v2):
+        for r in src:
+            if r.get("pair_id"):
+                prior_pair_ids.add(r["pair_id"])
+                a = r["accepted"][0]
+                prior_pair_endpoints.add((a["doc"], a["method"], a["path"]))
+                prior_pair_families.add((r["domain"], route_family(a["path"])))
+    v3_pairs: dict[str, list[dict]] = {}
+    for r in raw_items:
+        if r.get("pair_id"):
+            v3_pairs.setdefault(r["pair_id"], []).append(r)
+    if sorted(v3_pairs) != [f"v3p{i:02d}" for i in range(1, 13)]:
+        bad(f"v3 pair id 집합이 v3p01~v3p12 정확히 아님: {sorted(v3_pairs)}")
+    v3_pair_families: dict[tuple[str, str], str] = {}
+    for pid, prs in v3_pairs.items():
+        if len(prs) != 2:
+            bad(f"{pid}: pair 멤버 2건 아님 ({len(prs)})")
+        if pid in prior_pair_ids:
+            bad(f"{pid}: pair id 가 v1/v2 재사용")
+        fam: set[tuple[str, str]] = set()
+        for r in prs:
+            a = r["accepted"][0]
+            if (a["doc"], a["method"], a["path"]) in prior_pair_endpoints:
+                bad(f"{pid}: pair accepted endpoint 가 v1/v2 pair 재사용 {a['method']} {a['path']}")
+            fam.add((r["domain"], route_family(a["path"])))
+        if len(fam) != 1:
+            bad(f"{pid}: root/child route family 불일치 {sorted(fam)}")
+        if fam & prior_pair_families:
+            bad(f"{pid}: route family 가 v1/v2 pair 재사용 {sorted(fam & prior_pair_families)}")
+        for f in fam:
+            if f in v3_pair_families:
+                bad(f"{pid}: route family 가 다른 v3 pair {v3_pair_families[f]} 와 겹침 {f}")
+            v3_pair_families[f] = pid
+
+    # 7) C6: 두 endpoint 모두 v1·v2 accepted 와 불일치 + v3 내부 C6 끼리 endpoint 집합 중복 없음
+    c6_sets: list[tuple] = []
+    for r in raw_items:
+        if r["category"] != _C6:
+            continue
+        s = tuple(sorted((a["doc"], a["method"], a["path"]) for a in r["accepted"]))
+        if s in c6_sets:
+            bad(f"{r['id']}: C6 endpoint 집합이 다른 C6 와 중복")
+        c6_sets.append(s)
+        for t in acc_tuples(r):
+            if t in prior_acc:
+                bad(f"{r['id']}: C6 endpoint 가 v1/v2 accepted {t}")
+
+    # 8) §3.3/§3.4 세부 분포 고정. counts 요약이 아니라 fixture 행에서 직접 센다.
+    diag = [r for r in raw_items if r.get("evaluation_role") == "diagnostic"]
+    diag_dom = _count(r["domain"] for r in diag)
+    diag_lang = _count(r["language"] for r in diag)
+    if diag_dom != {"stripe": 2, "github": 2}:
+        bad(f"diagnostic domain 분포 2/2 아님: {diag_dom}")
+    if diag_lang != {"ko": 2, "en": 2}:
+        bad(f"diagnostic language 분포 2/2 아님: {diag_lang}")
+
+    # 대표행은 prs[0](입력 순서 의존) 이 아니라 pair_role=root 로 고른다. root 를
+    # 못 고르는 pair 는 그 자체로 결함. root/child 는 category 도 같아야 한다
+    # (_validate_gate_schema 가 domain/language/split 동일성은 이미 강제).
+    pair_root: dict[str, dict] = {}
+    for pid, prs in v3_pairs.items():
+        roots = [r for r in prs if r.get("pair_role") == "root"]
+        if len(roots) != 1:
+            bad(f"{pid}: pair_role=root 정확히 1건 아님 ({len(roots)})")
+            continue
+        pair_root[pid] = roots[0]
+        cats = {r["category"] for r in prs}
+        if len(cats) != 1:
+            bad(f"{pid}: root/child category 불일치 {sorted(cats)}")
+    if len(pair_root) != 12:
+        bad(f"pair total(root 기준) 12 아님: {len(pair_root)}")
+    pf = list(pair_root.values())
+    p_split = _count(r["split"] for r in pf)
+    if p_split != {"gate": 10, "holdout": 2}:
+        bad(f"pair split 10/2 아님: {p_split}")
+    p_cat = _count(r["category"] for r in pf)
+    if p_cat != {"C2-한글패러프레이즈": 2, "C3-영문의역": 2, "C5-decoy구분": 8}:
+        bad(f"pair category C2/C3/C5=2/2/8 아님: {p_cat}")
+    if _count(r["domain"] for r in pf) != {"stripe": 6, "github": 6}:
+        bad(f"pair domain 6/6 아님: {_count(r['domain'] for r in pf)}")
+    if _count(r["language"] for r in pf) != {"ko": 6, "en": 6}:
+        bad(f"pair language 6/6 아님: {_count(r['language'] for r in pf)}")
+    g_pf = [r for r in pf if r["split"] == "gate"]
+    h_pf = [r for r in pf if r["split"] == "holdout"]
+    if _count(r["domain"] for r in g_pf) != {"stripe": 5, "github": 5}:
+        bad(f"gate pair domain 5/5 아님: {_count(r['domain'] for r in g_pf)}")
+    if _count(r["language"] for r in g_pf) != {"ko": 5, "en": 5}:
+        bad(f"gate pair language 5/5 아님: {_count(r['language'] for r in g_pf)}")
+    if _count(r["domain"] for r in h_pf) != {"stripe": 1, "github": 1}:
+        bad(f"holdout pair domain 1/1 아님: {_count(r['domain'] for r in h_pf)}")
+    if _count(r["language"] for r in h_pf) != {"ko": 1, "en": 1}:
+        bad(f"holdout pair language 1/1 아님: {_count(r['language'] for r in h_pf)}")
+
+    if errs:
+        raise ValueError("§3 v3 신규성 검증 실패:\n  - " + "\n  - ".join(errs))
+
+
+# --- 85번 설계에서 규범으로 고정된 schema 3 manifest 값(형식이 아니라 값 자체를 잠근다) ---
+_V3_MANIFEST_SCALARS = {
+    "schema_version": 3,
+    "dataset_version": "v3",
+    "status": "frozen",
+    "query_file": "queries_gate_v3.json",
+    "baseline_lexical_field": "text",
+    "candidate_lexical_field": "text",
+    "rules": "docs/architect-review/85_text_primary_augmentation_v3_freeze_design.md",
+    "rules_git_sha": "dbc29008aa9803fd708bf619d263f76925e4d2a6",
+    "product_source_sha": "961bccad9d7d7f169ea5ee17c81581782c441bec",
+}
+_V3_CORPUS_SHA256 = {
+    "stripe": "3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5",
+    "github": "80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d",
+}
+_V3_NOVELTY_AGAINST = {
+    "legacy_query_sha256": "8f61cb99006e0d07923111fc919aaaa7489b486b0fffca15928efce75355441f",
+    "v1_query_sha256": "6eb897d24d681d1389963007a184ded043d3ae914cf862f6ffd8aba7f75838d8",
+    "v2_query_sha256": "a325583905a624c4e8293b7abff49e65741bc4aa6d0e09e48d5ed74bfa0346e5",
+}
+_V3_COUNTS = {
+    "total": 124, "scored": 120, "diagnostic": 4, "gate": 96, "holdout": 24,
+    "category": {
+        "C1-직접키워드": 12, "C2-한글패러프레이즈": 24, "C3-영문의역": 18,
+        "C4-흔한토큰범람": 12, "C5-decoy구분": 24, "C6-다개념": 12,
+        "C7-대형엔드포인트세부": 18,
+    },
+    "category_gate_holdout": {
+        "C1-직접키워드": [10, 2], "C2-한글패러프레이즈": [19, 5],
+        "C3-영문의역": [14, 4], "C4-흔한토큰범람": [10, 2],
+        "C5-decoy구분": [19, 5], "C6-다개념": [10, 2],
+        "C7-대형엔드포인트세부": [14, 4],
+    },
+    "corpus": {"stripe": 60, "github": 60},
+    "language": {"ko": 58, "en": 58, "code": 4},
+    "pairs": {"total": 12, "gate": 10, "holdout": 2},
+}
+#: candidate_contract 전체를 값까지 exact 로 잠근다(84/85번 계약). structured evidence 는
+#: 원질의에서만 유도(variant/alias 금지), text-primary, A/B/C weight only, D·variant·alias
+#: 제외, vector-only base-wide 후보에만, candidate 주입 금지, protected slot 불가침,
+#: non-overlap adjacent max-one-swap, 승급 상한 1, RRF/arm/rank weight frozen.
+_V3_CANDIDATE_CONTRACT = {
+    "design_path": "docs/architect-review/84_text_primary_bounded_structured_augmentation_design.md",
+    "structured_query_source": "original_query_only",
+    "text_lexical_arm": "primary; existing text keyword ranks are protected",
+    "structured_evidence_weights": ["A", "B", "C"],
+    "structured_evidence_excludes": ["D", "query_variant", "alias_expansion"],
+    "structured_evidence_scope": "vector-only candidates already present in base-wide RRF",
+    "candidate_injection": "forbidden — no reference outside base-wide",
+    "protected_slots": "text keyword-backed absolute slots are immovable",
+    "allowed_moves": "non-overlapping adjacent swap only (max one swap per document)",
+    "MAX_STRUCTURED_PROMOTION": 1,
+    "rrf_k": 60,
+    "lexical_arm_weight": 1,
+    "vector_arm_weight": 1,
+    "frozen_constants": {
+        "_STRUCTURED_RANK_WEIGHTS": [0.1, 0.2, 0.4, 1.0],
+        "OPERATION_ALIASES": "unchanged",
+        "RRF_K": 60,
+        "lexical_arm_weight": 1,
+        "vector_arm_weight": 1,
+    },
+}
+
+
+def _validate_v3_manifest(manifest_path: Path) -> None:
+    """schema 3 manifest 정적 검증(§5). 형식이 아니라 85번 설계가 규범으로 고정한 값
+    자체를 exact 비교한다: dataset_version/status/query_file, baseline·candidate lexical
+    field, rules 경로·git SHA, product SHA, 양 corpus SHA, legacy/v1/v2 novelty SHA,
+    counts 전체, candidate_contract 전체(structured_query_source=original_query_only 포함).
+    query_sha256/split_sha256 의 값 대조는 _verify_manifest_shas 가 담당한다.
+    """
+    man = json.loads(manifest_path.read_text())
+    errs: list[str] = []
+
+    for k, want in _V3_MANIFEST_SCALARS.items():
+        if man.get(k) != want:
+            errs.append(f"{k} != {want!r} (실제 {man.get(k)!r})")
+    for k in ("query_sha256", "split_sha256"):
+        v = man.get(k)
+        if not (isinstance(v, str) and re.fullmatch(r"[0-9a-f]{64}", v)):
+            errs.append(f"{k} 이 64자 hex 아님: {v!r}")
+    if man.get("corpus_sha256") != _V3_CORPUS_SHA256:
+        errs.append(f"corpus_sha256 불일치: {man.get('corpus_sha256')!r}")
+    if man.get("novelty_against") != _V3_NOVELTY_AGAINST:
+        errs.append(f"novelty_against 불일치: {man.get('novelty_against')!r}")
+    if man.get("counts") != _V3_COUNTS:
+        errs.append(f"counts 불일치: {man.get('counts')!r}")
+    if man.get("candidate_contract") != _V3_CANDIDATE_CONTRACT:
+        cc = man.get("candidate_contract", {})
+        if not isinstance(cc, dict):
+            errs.append(f"candidate_contract 형식 오류: {cc!r}")
+        else:
+            for k in set(_V3_CANDIDATE_CONTRACT) | set(cc):
+                if cc.get(k) != _V3_CANDIDATE_CONTRACT.get(k):
+                    errs.append(f"candidate_contract.{k} != "
+                                f"{_V3_CANDIDATE_CONTRACT.get(k)!r} (실제 {cc.get(k)!r})")
+
+    if errs:
+        raise ValueError(f"{manifest_path.name} schema3 검증 실패:\n  - " + "\n  - ".join(errs))
 
 
 def _verify_manifest_shas(queries_file: Path, raw_items: list[dict], manifest_path: Path) -> None:
@@ -489,6 +794,9 @@ def _load_and_validate_queries(
         _verify_manifest_shas(queries_file, raw_items, manifest_path)
         if queries_file.name == "queries_gate_v2.json":
             _validate_v2_novelty(raw_items)
+        if queries_file.name == "queries_gate_v3.json":
+            _validate_v3_manifest(manifest_path)
+            _validate_v3_novelty(raw_items)
         # 확장 스키마인데 --split 미지정이면 diagnostic 4건이 headline·category 집계에
         # 조용히 섞인다(§4.1-10). 기본을 gate+holdout 로 잡고, diagnostic 은 명시할 때만.
         if split is None:

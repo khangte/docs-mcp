@@ -39,6 +39,7 @@ def test_manifest_map_covers_v1_and_v2() -> None:
     assert rce._MANIFEST_BY_QUERY_FILE == {
         "queries_gate_v1.json": "gate_manifest_v1.json",
         "queries_gate_v2.json": "gate_manifest_v2.json",
+        "queries_gate_v3.json": "gate_manifest_v3.json",
     }
 
 

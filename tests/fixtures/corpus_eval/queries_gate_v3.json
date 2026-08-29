@@ -1,0 +1,2398 @@
+[
+  {
+    "id": "v3g001",
+    "query": "발행해 둔 쿠폰들을 한꺼번에 훑어보고 싶어",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/coupons"
+      }
+    ],
+    "variants": [
+      "look over all the coupons that have been created"
+    ],
+    "pair_id": "v3p01",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g002",
+    "query": "그 중 쿠폰 하나를 아이디로 집어서 상세만 보여줘",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/coupons/{coupon}"
+      }
+    ],
+    "variants": [
+      "pull just one of those coupons by its id"
+    ],
+    "pair_id": "v3p01",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g003",
+    "query": "깃허브가 알고 있는 오픈소스 라이선스 종류를 쭉 나열해줘",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/licenses"
+      }
+    ],
+    "variants": [
+      "list every open source license github knows about"
+    ],
+    "pair_id": "v3p02",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g004",
+    "query": "그 라이선스 키 하나를 지정해서 전문과 조건을 확인해줘",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/licenses/{license}"
+      }
+    ],
+    "variants": [
+      "look up one license by its key with the full text"
+    ],
+    "pair_id": "v3p02",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g005",
+    "query": "walk me through every currency conversion rate on file",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/exchange_rates"
+      }
+    ],
+    "pair_id": "v3p03",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g006",
+    "query": "zoom in on a single currency's rate by its identifier",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/exchange_rates/{rate_id}"
+      }
+    ],
+    "pair_id": "v3p03",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g007",
+    "query": "surface the whole feed of global security advisories",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/advisories"
+      }
+    ],
+    "pair_id": "v3p04",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g008",
+    "query": "drill into one advisory using its ghsa identifier",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/advisories/{ghsa_id}"
+      }
+    ],
+    "pair_id": "v3p04",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g009",
+    "query": "탄소 제거 주문 목록만, 개별 주문 상세 말고 전체를 보여줘",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/climate/orders"
+      }
+    ],
+    "variants": [
+      "the list of carbon removal orders only, not one order's detail"
+    ],
+    "pair_id": "v3p05",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g010",
+    "query": "그 목록 말고 주문 번호 하나짜리 상세 화면을 열어줘",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/climate/orders/{order}"
+      }
+    ],
+    "variants": [
+      "open one order's detail page by its number, not the list"
+    ],
+    "pair_id": "v3p05",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g011",
+    "query": "만들어진 파일 공유 링크 전체 목록만 뽑아줘, 단건 조회 아님",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/file_links"
+      }
+    ],
+    "variants": [
+      "just the full list of file share links, not a single lookup"
+    ],
+    "pair_id": "v3p06",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g012",
+    "query": "링크 아이디 하나로 그 공유 링크 한 건만 조회해줘",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/file_links/{link}"
+      }
+    ],
+    "variants": [
+      "fetch only that one file link by its link id"
+    ],
+    "pair_id": "v3p06",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g013",
+    "query": "내가 속한 교실 전체 목록이 필요해, 특정 교실 하나 말고",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/classrooms"
+      }
+    ],
+    "variants": [
+      "I need the list of all classrooms, not a single classroom"
+    ],
+    "pair_id": "v3p07",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g014",
+    "query": "교실 아이디를 줄 테니 그 교실 하나만 상세히 알려줘",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/classrooms/{classroom_id}"
+      }
+    ],
+    "variants": [
+      "given a classroom id, tell me about that one classroom only"
+    ],
+    "pair_id": "v3p07",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g015",
+    "query": "선택 가능한 행동 강령 종류 전부를 목록으로 줘",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/codes_of_conduct"
+      }
+    ],
+    "variants": [
+      "give me the list of every available code of conduct"
+    ],
+    "pair_id": "v3p08",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g016",
+    "query": "행동 강령 키 하나를 지정해서 그 본문만 보여줘",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/codes_of_conduct/{key}"
+      }
+    ],
+    "variants": [
+      "show only the body of one code of conduct by its key"
+    ],
+    "pair_id": "v3p08",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g017",
+    "query": "every invoice payment record, the collection and not one entry",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/invoice_payments"
+      }
+    ],
+    "pair_id": "v3p09",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g018",
+    "query": "one invoice payment entry by its id, not the whole collection",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/invoice_payments/{invoice_payment}"
+      }
+    ],
+    "pair_id": "v3p09",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g019",
+    "query": "the roster of saved payment methods, not a single method",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/payment_methods"
+      }
+    ],
+    "pair_id": "v3p10",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g020",
+    "query": "just one saved payment method looked up by its id",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/payment_methods/{payment_method}"
+      }
+    ],
+    "pair_id": "v3p10",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g021",
+    "query": "the index of all gitignore starter templates, not one file",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/gitignore/templates"
+      }
+    ],
+    "pair_id": "v3p11",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g022",
+    "query": "the contents of a single gitignore template named directly",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/gitignore/templates/{name}"
+      }
+    ],
+    "pair_id": "v3p11",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g023",
+    "query": "the full list of this app's installations, not one install",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app/installations"
+      }
+    ],
+    "pair_id": "v3p12",
+    "pair_role": "root"
+  },
+  {
+    "id": "v3g024",
+    "query": "a single app installation addressed by its installation id",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app/installations/{installation_id}"
+      }
+    ],
+    "pair_id": "v3p12",
+    "pair_role": "child"
+  },
+  {
+    "id": "v3g025",
+    "query": "github API의 repos tasks 엔드포인트를 조회하는 방법",
+    "category": "C1-직접키워드",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/agents/repos/{owner}/{repo}/tasks"
+      }
+    ],
+    "variants": [
+      "look up the repos tasks endpoint in the github api"
+    ]
+  },
+  {
+    "id": "v3g026",
+    "query": "github API의 repos tasks 엔드포인트를 새로 만드는 방법",
+    "category": "C1-직접키워드",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/agents/repos/{owner}/{repo}/tasks"
+      }
+    ],
+    "variants": [
+      "create the repos tasks endpoint in the github api"
+    ]
+  },
+  {
+    "id": "v3g027",
+    "query": "github API의 agents tasks 엔드포인트를 조회하는 방법",
+    "category": "C1-직접키워드",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/agents/tasks"
+      }
+    ],
+    "variants": [
+      "look up the agents tasks endpoint in the github api"
+    ]
+  },
+  {
+    "id": "v3g028",
+    "query": "github API의 app 엔드포인트를 조회하는 방법",
+    "category": "C1-직접키워드",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app"
+      }
+    ],
+    "variants": [
+      "look up the app endpoint in the github api"
+    ]
+  },
+  {
+    "id": "v3g029",
+    "query": "stripe API의 v1 account 엔드포인트를 조회하는 방법",
+    "category": "C1-직접키워드",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/account"
+      }
+    ],
+    "variants": [
+      "look up the v1 account endpoint in the stripe api"
+    ]
+  },
+  {
+    "id": "v3g030",
+    "query": "stripe API의 v1 account links 엔드포인트를 새로 만드는 방법",
+    "category": "C1-직접키워드",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/account_links"
+      }
+    ],
+    "variants": [
+      "create the v1 account links endpoint in the stripe api"
+    ]
+  },
+  {
+    "id": "v3g031",
+    "query": "stripe API의 v1 account sessions 엔드포인트를 새로 만드는 방법",
+    "category": "C1-직접키워드",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/account_sessions"
+      }
+    ],
+    "variants": [
+      "create the v1 account sessions endpoint in the stripe api"
+    ]
+  },
+  {
+    "id": "v3g032",
+    "query": "stripe API의 v1 accounts 엔드포인트를 조회하는 방법",
+    "category": "C1-직접키워드",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts"
+      }
+    ],
+    "variants": [
+      "look up the v1 accounts endpoint in the stripe api"
+    ]
+  },
+  {
+    "id": "v3g033",
+    "query": "get a task by repo 하려는데 github의 repos tasks 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/agents/repos/{owner}/{repo}/tasks/{task_id}"
+      }
+    ],
+    "variants": [
+      "i need to look up the repos tasks route on github — get a task by repo"
+    ]
+  },
+  {
+    "id": "v3g034",
+    "query": "get a task by id 하려는데 github의 agents tasks 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/agents/tasks/{task_id}"
+      }
+    ],
+    "variants": [
+      "i need to look up the agents tasks route on github — get a task by id"
+    ]
+  },
+  {
+    "id": "v3g035",
+    "query": "create a github app from a manifest 하려는데 github의 app manifests conversions 경로를 새로 만드는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/app-manifests/{code}/conversions"
+      }
+    ],
+    "variants": [
+      "i need to create the app manifests conversions route on github — create a github app from a manifest"
+    ]
+  },
+  {
+    "id": "v3g036",
+    "query": "get a webhook configuration for an app 하려는데 github의 hook config 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app/hook/config"
+      }
+    ],
+    "variants": [
+      "i need to look up the hook config route on github — get a webhook configuration for an app"
+    ]
+  },
+  {
+    "id": "v3g037",
+    "query": "update a webhook configuration for an app 하려는데 github의 hook config 경로를 일부 필드만 수정하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PATCH",
+        "path": "/app/hook/config"
+      }
+    ],
+    "variants": [
+      "i need to partially update the hook config route on github — update a webhook configuration for an app"
+    ]
+  },
+  {
+    "id": "v3g038",
+    "query": "list deliveries for an app webhook 하려는데 github의 hook deliveries 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app/hook/deliveries"
+      }
+    ],
+    "variants": [
+      "i need to look up the hook deliveries route on github — list deliveries for an app webhook"
+    ]
+  },
+  {
+    "id": "v3g039",
+    "query": "get a delivery for an app webhook 하려는데 github의 hook deliveries 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app/hook/deliveries/{delivery_id}"
+      }
+    ],
+    "variants": [
+      "i need to look up the hook deliveries route on github — get a delivery for an app webhook"
+    ]
+  },
+  {
+    "id": "v3g040",
+    "query": "redeliver a delivery for an app webhook 하려는데 github의 deliveries attempts 경로를 새로 만드는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/app/hook/deliveries/{delivery_id}/attempts"
+      }
+    ],
+    "variants": [
+      "i need to create the deliveries attempts route on github — redeliver a delivery for an app webhook"
+    ]
+  },
+  {
+    "id": "v3g041",
+    "query": "list installation requests for the authenticated app 하려는데 github의 app installation requests 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/app/installation-requests"
+      }
+    ],
+    "variants": [
+      "i need to look up the app installation requests route on github — list installation requests for the authenticated app"
+    ]
+  },
+  {
+    "id": "v3g042",
+    "query": "delete an installation for the authenticated app 하려는데 github의 app installations 경로를 삭제하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "DELETE",
+        "path": "/app/installations/{installation_id}"
+      }
+    ],
+    "variants": [
+      "i need to remove the app installations route on github — delete an installation for the authenticated app"
+    ]
+  },
+  {
+    "id": "v3g043",
+    "query": "create an account 하려는데 stripe의 v1 accounts 경로를 새로 만드는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts"
+      }
+    ],
+    "variants": [
+      "i need to create the v1 accounts route on stripe — create an account"
+    ]
+  },
+  {
+    "id": "v3g044",
+    "query": "delete an account 하려는데 stripe의 v1 accounts 경로를 삭제하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "DELETE",
+        "path": "/v1/accounts/{account}"
+      }
+    ],
+    "variants": [
+      "i need to remove the v1 accounts route on stripe — delete an account"
+    ]
+  },
+  {
+    "id": "v3g045",
+    "query": "retrieve account 하려는데 stripe의 v1 accounts 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}"
+      }
+    ],
+    "variants": [
+      "i need to look up the v1 accounts route on stripe — retrieve account"
+    ]
+  },
+  {
+    "id": "v3g046",
+    "query": "update an account 하려는데 stripe의 v1 accounts 경로를 새로 만드는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}"
+      }
+    ],
+    "variants": [
+      "i need to create the v1 accounts route on stripe — update an account"
+    ]
+  },
+  {
+    "id": "v3g047",
+    "query": "create an external account 하려는데 stripe의 accounts bank accounts 경로를 새로 만드는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/bank_accounts"
+      }
+    ],
+    "variants": [
+      "i need to create the accounts bank accounts route on stripe — create an external account"
+    ]
+  },
+  {
+    "id": "v3g048",
+    "query": "delete an external account 하려는데 stripe의 accounts bank accounts 경로를 삭제하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "DELETE",
+        "path": "/v1/accounts/{account}/bank_accounts/{id}"
+      }
+    ],
+    "variants": [
+      "i need to remove the accounts bank accounts route on stripe — delete an external account"
+    ]
+  },
+  {
+    "id": "v3g049",
+    "query": "retrieve an external account 하려는데 stripe의 accounts bank accounts 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/bank_accounts/{id}"
+      }
+    ],
+    "variants": [
+      "i need to look up the accounts bank accounts route on stripe — retrieve an external account"
+    ]
+  },
+  {
+    "id": "v3g050",
+    "query": "update a bank account 하려는데 stripe의 accounts bank accounts 경로를 새로 만드는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/bank_accounts/{id}"
+      }
+    ],
+    "variants": [
+      "i need to create the accounts bank accounts route on stripe — update a bank account"
+    ]
+  },
+  {
+    "id": "v3g051",
+    "query": "list all account capabilities 하려는데 stripe의 accounts capabilities 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/capabilities"
+      }
+    ],
+    "variants": [
+      "i need to look up the accounts capabilities route on stripe — list all account capabilities"
+    ]
+  },
+  {
+    "id": "v3g052",
+    "query": "retrieve an account capability 하려는데 stripe의 accounts capabilities 경로를 조회하는 방법이 궁금해",
+    "category": "C2-한글패러프레이즈",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/capabilities/{capability}"
+      }
+    ],
+    "variants": [
+      "i need to look up the accounts capabilities route on stripe — retrieve an account capability"
+    ]
+  },
+  {
+    "id": "v3g053",
+    "query": "spin up the installations access tokens on github for me, the bit about create an installation access token for an app",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/app/installations/{installation_id}/access_tokens"
+      }
+    ]
+  },
+  {
+    "id": "v3g054",
+    "query": "tear down the installations suspended on github for me, the bit about unsuspend an app installation",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "DELETE",
+        "path": "/app/installations/{installation_id}/suspended"
+      }
+    ]
+  },
+  {
+    "id": "v3g055",
+    "query": "installations suspended 를 swap out 하듯이 통째로 교체하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PUT",
+        "path": "/app/installations/{installation_id}/suspended"
+      }
+    ],
+    "variants": [
+      "swap out the installations suspended on github — suspend an app installation"
+    ]
+  },
+  {
+    "id": "v3g056",
+    "query": "applications grant 를 tear down 하듯이 삭제하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "DELETE",
+        "path": "/applications/{client_id}/grant"
+      }
+    ],
+    "variants": [
+      "tear down the applications grant on github — delete an app authorization"
+    ]
+  },
+  {
+    "id": "v3g057",
+    "query": "applications token 를 tear down 하듯이 삭제하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "DELETE",
+        "path": "/applications/{client_id}/token"
+      }
+    ],
+    "variants": [
+      "tear down the applications token on github — delete an app token"
+    ]
+  },
+  {
+    "id": "v3g058",
+    "query": "applications token 를 tweak 하듯이 일부 필드만 수정하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PATCH",
+        "path": "/applications/{client_id}/token"
+      }
+    ],
+    "variants": [
+      "tweak the applications token on github — reset a token"
+    ]
+  },
+  {
+    "id": "v3g059",
+    "query": "applications token 를 spin up 하듯이 새로 만드는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/applications/{client_id}/token"
+      }
+    ],
+    "variants": [
+      "spin up the applications token on github — check a token"
+    ]
+  },
+  {
+    "id": "v3g060",
+    "query": "accounts capabilities 를 spin up 하듯이 새로 만드는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/capabilities/{capability}"
+      }
+    ],
+    "variants": [
+      "spin up the accounts capabilities on stripe — update an account capability"
+    ]
+  },
+  {
+    "id": "v3g061",
+    "query": "accounts external accounts 를 pull up 하듯이 조회하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/external_accounts"
+      }
+    ],
+    "variants": [
+      "pull up the accounts external accounts on stripe — list all external accounts"
+    ]
+  },
+  {
+    "id": "v3g062",
+    "query": "accounts external accounts 를 spin up 하듯이 새로 만드는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/external_accounts"
+      }
+    ],
+    "variants": [
+      "spin up the accounts external accounts on stripe — create an external account"
+    ]
+  },
+  {
+    "id": "v3g063",
+    "query": "accounts external accounts 를 tear down 하듯이 삭제하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "DELETE",
+        "path": "/v1/accounts/{account}/external_accounts/{id}"
+      }
+    ],
+    "variants": [
+      "tear down the accounts external accounts on stripe — delete an external account"
+    ]
+  },
+  {
+    "id": "v3g064",
+    "query": "accounts login links 를 spin up 하듯이 새로 만드는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/login_links"
+      }
+    ],
+    "variants": [
+      "spin up the accounts login links on stripe — create a login link"
+    ]
+  },
+  {
+    "id": "v3g065",
+    "query": "accounts people 를 pull up 하듯이 조회하는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/people"
+      }
+    ],
+    "variants": [
+      "pull up the accounts people on stripe — list all persons"
+    ]
+  },
+  {
+    "id": "v3g066",
+    "query": "accounts people 를 spin up 하듯이 새로 만드는 방법을 알려줘",
+    "category": "C3-영문의역",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/people"
+      }
+    ],
+    "variants": [
+      "spin up the accounts people on stripe — create a person"
+    ]
+  },
+  {
+    "id": "v3g067",
+    "query": "token scoped",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/applications/{client_id}/token/scoped"
+      }
+    ]
+  },
+  {
+    "id": "v3g068",
+    "query": "apps",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/apps/{app_slug}"
+      }
+    ]
+  },
+  {
+    "id": "v3g069",
+    "query": "assignments 쪽",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/assignments/{assignment_id}"
+      }
+    ],
+    "variants": [
+      "assignments only"
+    ]
+  },
+  {
+    "id": "v3g070",
+    "query": "assignments accepted assignments 쪽",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/assignments/{assignment_id}/accepted_assignments"
+      }
+    ],
+    "variants": [
+      "assignments accepted assignments only"
+    ]
+  },
+  {
+    "id": "v3g071",
+    "query": "assignments grades 쪽",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/assignments/{assignment_id}/grades"
+      }
+    ],
+    "variants": [
+      "assignments grades only"
+    ]
+  },
+  {
+    "id": "v3g072",
+    "query": "classrooms assignments 쪽",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/classrooms/{classroom_id}/assignments"
+      }
+    ],
+    "variants": [
+      "classrooms assignments only"
+    ]
+  },
+  {
+    "id": "v3g073",
+    "query": "accounts external accounts",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/external_accounts/{id}"
+      }
+    ]
+  },
+  {
+    "id": "v3g074",
+    "query": "accounts people",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "DELETE",
+        "path": "/v1/accounts/{account}/people/{person}"
+      }
+    ]
+  },
+  {
+    "id": "v3g075",
+    "query": "accounts persons",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/persons"
+      }
+    ]
+  },
+  {
+    "id": "v3g076",
+    "query": "accounts reject",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/reject"
+      }
+    ]
+  },
+  {
+    "id": "v3g077",
+    "query": "accounts external accounts 쪽",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/external_accounts/{id}"
+      }
+    ],
+    "variants": [
+      "accounts external accounts only"
+    ]
+  },
+  {
+    "id": "v3g078",
+    "query": "accounts people 쪽",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/people/{person}"
+      }
+    ],
+    "variants": [
+      "accounts people only"
+    ]
+  },
+  {
+    "id": "v3g079",
+    "query": "the credentials revoke route on github specifically, not the look-alike ones — revoke a list of credentials",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/credentials/revoke"
+      }
+    ]
+  },
+  {
+    "id": "v3g080",
+    "query": "the emojis route on github specifically, not the look-alike ones — get emojis",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/emojis"
+      }
+    ]
+  },
+  {
+    "id": "v3g081",
+    "query": "the cache retention limit route on github specifically, not the look-alike ones — get github actions cache retention limit for an enterprise",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/actions/cache/retention-limit"
+      }
+    ]
+  },
+  {
+    "id": "v3g082",
+    "query": "the cache retention limit route on github specifically, not the look-alike ones — set github actions cache retention limit for an enterprise",
+    "category": "C5-decoy구분",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PUT",
+        "path": "/enterprises/{enterprise}/actions/cache/retention-limit"
+      }
+    ]
+  },
+  {
+    "id": "v3g083",
+    "query": "the accounts people route on stripe specifically, not the look-alike ones — update a person",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/people/{person}"
+      }
+    ]
+  },
+  {
+    "id": "v3g084",
+    "query": "the accounts persons route on stripe specifically, not the look-alike ones — create a person",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/persons"
+      }
+    ]
+  },
+  {
+    "id": "v3g085",
+    "query": "the accounts persons route on stripe specifically, not the look-alike ones — delete a person",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "DELETE",
+        "path": "/v1/accounts/{account}/persons/{person}"
+      }
+    ]
+  },
+  {
+    "id": "v3g086",
+    "query": "the accounts persons route on stripe specifically, not the look-alike ones — retrieve a person",
+    "category": "C5-decoy구분",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/accounts/{account}/persons/{person}"
+      }
+    ]
+  },
+  {
+    "id": "v3g087",
+    "query": "on github, handle cache storage limit and then also properties repo in the same flow",
+    "category": "C6-다개념",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/actions/cache/storage-limit"
+      },
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/actions/oidc/customization/properties/repo"
+      }
+    ]
+  },
+  {
+    "id": "v3g088",
+    "query": "on github, handle code security configurations and then also configurations defaults in the same flow",
+    "category": "C6-다개념",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/code-security/configurations"
+      },
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/code-security/configurations/defaults"
+      }
+    ]
+  },
+  {
+    "id": "v3g089",
+    "query": "on github, handle code security configurations and then also configurations attach in the same flow",
+    "category": "C6-다개념",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/code-security/configurations/{configuration_id}"
+      },
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/enterprises/{enterprise}/code-security/configurations/{configuration_id}/attach"
+      }
+    ]
+  },
+  {
+    "id": "v3g090",
+    "query": "on github, handle configurations repositories and then also code security configurations in the same flow",
+    "category": "C6-다개념",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/code-security/configurations/{configuration_id}/repositories"
+      },
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/enterprises/{enterprise}/code-security/configurations"
+      }
+    ]
+  },
+  {
+    "id": "v3g091",
+    "query": "on github, handle reports enterprise 1 day and then also enterprise 28 day latest in the same flow",
+    "category": "C6-다개념",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/copilot/metrics/reports/enterprise-1-day"
+      },
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/copilot/metrics/reports/enterprise-28-day/latest"
+      }
+    ]
+  },
+  {
+    "id": "v3g092",
+    "query": "on github, handle reports repos 1 day and then also reports user teams 1 day in the same flow",
+    "category": "C6-다개념",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/copilot/metrics/reports/repos-1-day"
+      },
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/copilot/metrics/reports/user-teams-1-day"
+      }
+    ]
+  },
+  {
+    "id": "v3g093",
+    "query": "on stripe, handle application fees refunds and then also application fees refund in the same flow",
+    "category": "C6-다개념",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/application_fees/{fee}/refunds/{id}"
+      },
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/application_fees/{id}/refund"
+      }
+    ]
+  },
+  {
+    "id": "v3g094",
+    "query": "on stripe, handle apps secrets and then also secrets delete in the same flow",
+    "category": "C6-다개념",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/apps/secrets"
+      },
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/apps/secrets/delete"
+      }
+    ]
+  },
+  {
+    "id": "v3g095",
+    "query": "on stripe, handle secrets find and then also apps secrets in the same flow",
+    "category": "C6-다개념",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/apps/secrets/find"
+      },
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/apps/secrets"
+      }
+    ]
+  },
+  {
+    "id": "v3g096",
+    "query": "on stripe, handle billing alerts and then also alerts activate in the same flow",
+    "category": "C6-다개념",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/billing/alerts"
+      },
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/billing/alerts/{id}/activate"
+      }
+    ]
+  },
+  {
+    "id": "v3g097",
+    "query": "on stripe, handle billing alerts and then also alerts archive in the same flow",
+    "category": "C6-다개념",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/billing/alerts/{id}"
+      },
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/billing/alerts/{id}/archive"
+      }
+    ]
+  },
+  {
+    "id": "v3g098",
+    "query": "on stripe, handle billing credit balance summary and then also billing alerts in the same flow",
+    "category": "C6-다개념",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "all",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/billing/credit_balance_summary"
+      },
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/billing/alerts"
+      }
+    ]
+  },
+  {
+    "id": "v3g099",
+    "query": "when calling cache storage limit on github, how do i set just one specific field — set github actions cache storage limit for an enterprise",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PUT",
+        "path": "/enterprises/{enterprise}/actions/cache/storage-limit"
+      }
+    ]
+  },
+  {
+    "id": "v3g100",
+    "query": "when calling properties repo on github, how do i set just one specific field — create an oidc custom property inclusion for an enterprise",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/enterprises/{enterprise}/actions/oidc/customization/properties/repo"
+      }
+    ]
+  },
+  {
+    "id": "v3g101",
+    "query": "when calling code security configurations on github, how do i set just one specific field — update a custom code security configuration for an enterprise",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PATCH",
+        "path": "/enterprises/{enterprise}/code-security/configurations/{configuration_id}"
+      }
+    ]
+  },
+  {
+    "id": "v3g102",
+    "query": "when calling configurations defaults on github, how do i set just one specific field — set a code security configuration as a default for an enterprise",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PUT",
+        "path": "/enterprises/{enterprise}/code-security/configurations/{configuration_id}/defaults"
+      }
+    ]
+  },
+  {
+    "id": "v3g103",
+    "query": "when calling reports users 1 day on github, how do i set just one specific field — get copilot users usage metrics for a specific day",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/copilot/metrics/reports/users-1-day"
+      }
+    ]
+  },
+  {
+    "id": "v3g104",
+    "query": "when calling users 28 day latest on github, how do i set just one specific field — get copilot users usage metrics",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/copilot/metrics/reports/users-28-day/latest"
+      }
+    ]
+  },
+  {
+    "id": "v3g105",
+    "query": "when calling policies coding agent on github, how do i set just one specific field — set the coding agent policy for an enterprise",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "PUT",
+        "path": "/enterprises/{enterprise}/copilot/policies/coding_agent"
+      }
+    ]
+  },
+  {
+    "id": "v3g106",
+    "query": "when calling coding agent organizations on github, how do i set just one specific field — add organizations to the enterprise coding agent policy",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "POST",
+        "path": "/enterprises/{enterprise}/copilot/policies/coding_agent/organizations"
+      }
+    ]
+  },
+  {
+    "id": "v3g107",
+    "query": "when calling dependabot alerts on github, how do i set just one specific field — list dependabot alerts for an enterprise",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/dependabot/alerts"
+      }
+    ]
+  },
+  {
+    "id": "v3g108",
+    "query": "when calling accounts persons on stripe, how do i set just one specific field — update a person",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/persons/{person}"
+      }
+    ]
+  },
+  {
+    "id": "v3g109",
+    "query": "when calling accounts unreject on stripe, how do i set just one specific field — unreject an account",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/accounts/{account}/unreject"
+      }
+    ]
+  },
+  {
+    "id": "v3g110",
+    "query": "when calling apple pay domains on stripe, how do i set just one specific field — apple pay domains",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/apple_pay/domains"
+      }
+    ]
+  },
+  {
+    "id": "v3g111",
+    "query": "when calling application fees refunds on stripe, how do i set just one specific field — update an application fee refund",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/application_fees/{fee}/refunds/{id}"
+      }
+    ]
+  },
+  {
+    "id": "v3g112",
+    "query": "when calling application fees refunds on stripe, how do i set just one specific field — create an application fee refund",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/application_fees/{id}/refunds"
+      }
+    ]
+  },
+  {
+    "id": "v3g113",
+    "query": "when calling balance history on stripe, how do i set just one specific field — retrieve a balance transaction",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/balance/history/{id}"
+      }
+    ]
+  },
+  {
+    "id": "v3g114",
+    "query": "when calling v1 balance settings on stripe, how do i set just one specific field — update balance settings",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/balance_settings"
+      }
+    ]
+  },
+  {
+    "id": "v3g115",
+    "query": "when calling v1 balance transactions on stripe, how do i set just one specific field — retrieve a balance transaction",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/balance_transactions/{id}"
+      }
+    ]
+  },
+  {
+    "id": "v3g116",
+    "query": "when calling alerts deactivate on stripe, how do i set just one specific field — deactivate a billing alert",
+    "category": "C7-대형엔드포인트세부",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "POST",
+        "path": "/v1/billing/alerts/{id}/deactivate"
+      }
+    ]
+  },
+  {
+    "id": "v3g117",
+    "query": "GET /v1/apple_pay/domains",
+    "category": "C1-직접키워드",
+    "domain": "stripe",
+    "language": "code",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/apple_pay/domains"
+      }
+    ]
+  },
+  {
+    "id": "v3g118",
+    "query": "DELETE /v1/apple_pay/domains/{domain}",
+    "category": "C1-직접키워드",
+    "domain": "stripe",
+    "language": "code",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "DELETE",
+        "path": "/v1/apple_pay/domains/{domain}"
+      }
+    ]
+  },
+  {
+    "id": "v3g119",
+    "query": "DELETE /enterprises/{enterprise}/actions/oidc/customization/properties/repo/{custom_property_name}",
+    "category": "C1-직접키워드",
+    "domain": "github",
+    "language": "code",
+    "evaluation_role": "scored",
+    "split": "gate",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "DELETE",
+        "path": "/enterprises/{enterprise}/actions/oidc/customization/properties/repo/{custom_property_name}"
+      }
+    ]
+  },
+  {
+    "id": "v3g120",
+    "query": "DELETE /enterprises/{enterprise}/code-security/configurations/{configuration_id}",
+    "category": "C1-직접키워드",
+    "domain": "github",
+    "language": "code",
+    "evaluation_role": "scored",
+    "split": "holdout",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "DELETE",
+        "path": "/enterprises/{enterprise}/code-security/configurations/{configuration_id}"
+      }
+    ]
+  },
+  {
+    "id": "v3g121",
+    "query": "stripe apple pay domains 진단 프로브 — 채점 분모에서 제외되는 항목",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "ko",
+    "evaluation_role": "diagnostic",
+    "split": "diagnostic",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/apple_pay/domains/{domain}"
+      }
+    ],
+    "variants": [
+      "stripe apple pay domains diagnostic probe, excluded from the scored denominator"
+    ]
+  },
+  {
+    "id": "v3g122",
+    "query": "stripe balance history diagnostic probe, excluded from the scored denominator",
+    "category": "C4-흔한토큰범람",
+    "domain": "stripe",
+    "language": "en",
+    "evaluation_role": "diagnostic",
+    "split": "diagnostic",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "stripe",
+        "method": "GET",
+        "path": "/v1/balance/history"
+      }
+    ]
+  },
+  {
+    "id": "v3g123",
+    "query": "github dependabot repository access 진단 프로브 — 채점 분모에서 제외되는 항목",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "ko",
+    "evaluation_role": "diagnostic",
+    "split": "diagnostic",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/dependabot/repository-access"
+      }
+    ],
+    "variants": [
+      "github dependabot repository access diagnostic probe, excluded from the scored denominator"
+    ]
+  },
+  {
+    "id": "v3g124",
+    "query": "github enterprises teams diagnostic probe, excluded from the scored denominator",
+    "category": "C4-흔한토큰범람",
+    "domain": "github",
+    "language": "en",
+    "evaluation_role": "diagnostic",
+    "split": "diagnostic",
+    "answer_mode": "any",
+    "accepted": [
+      {
+        "doc": "github",
+        "method": "GET",
+        "path": "/enterprises/{enterprise}/teams"
+      }
+    ]
+  }
+]

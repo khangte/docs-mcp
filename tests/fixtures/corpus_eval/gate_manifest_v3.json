@@ -1,0 +1,119 @@
+{
+  "schema_version": 3,
+  "dataset_version": "v3",
+  "status": "frozen",
+  "query_file": "queries_gate_v3.json",
+  "query_sha256": "1da41901a225990492ead8215eb6a5bfde8afde987cafb60f0f74d03cbd84fdf",
+  "query_sha256_method": "raw file bytes (sha256sum tests/fixtures/corpus_eval/queries_gate_v3.json)",
+  "split_sha256": "701c43479425848c7af8f74360b88adb8f375d8bc801986ea2f684b5d45541e6",
+  "split_sha256_method": "scored rows sorted by id: <id><TAB><split><LF> x120, sha256 of concatenation",
+  "counts": {
+    "total": 124,
+    "scored": 120,
+    "diagnostic": 4,
+    "gate": 96,
+    "holdout": 24,
+    "category": {
+      "C1-직접키워드": 12,
+      "C2-한글패러프레이즈": 24,
+      "C3-영문의역": 18,
+      "C4-흔한토큰범람": 12,
+      "C5-decoy구분": 24,
+      "C6-다개념": 12,
+      "C7-대형엔드포인트세부": 18
+    },
+    "category_gate_holdout": {
+      "C1-직접키워드": [
+        10,
+        2
+      ],
+      "C2-한글패러프레이즈": [
+        19,
+        5
+      ],
+      "C3-영문의역": [
+        14,
+        4
+      ],
+      "C4-흔한토큰범람": [
+        10,
+        2
+      ],
+      "C5-decoy구분": [
+        19,
+        5
+      ],
+      "C6-다개념": [
+        10,
+        2
+      ],
+      "C7-대형엔드포인트세부": [
+        14,
+        4
+      ]
+    },
+    "corpus": {
+      "stripe": 60,
+      "github": 60
+    },
+    "language": {
+      "ko": 58,
+      "en": 58,
+      "code": 4
+    },
+    "pairs": {
+      "total": 12,
+      "gate": 10,
+      "holdout": 2
+    }
+  },
+  "corpus_sha256": {
+    "stripe": "3653ad45bbec54fcbe461c541c908355b715018bdf455a0e11b27bedb2cbdee5",
+    "github": "80850db290cde4eb487e0efb587cf27f305e77b6bef96933ed8a09b5169d5b1d"
+  },
+  "novelty_against": {
+    "legacy_query_sha256": "8f61cb99006e0d07923111fc919aaaa7489b486b0fffca15928efce75355441f",
+    "v1_query_sha256": "6eb897d24d681d1389963007a184ded043d3ae914cf862f6ffd8aba7f75838d8",
+    "v2_query_sha256": "a325583905a624c4e8293b7abff49e65741bc4aa6d0e09e48d5ed74bfa0346e5"
+  },
+  "product_source_sha": "961bccad9d7d7f169ea5ee17c81581782c441bec",
+  "baseline_lexical_field": "text",
+  "candidate_lexical_field": "text",
+  "rules": "docs/architect-review/85_text_primary_augmentation_v3_freeze_design.md",
+  "rules_git_sha": "dbc29008aa9803fd708bf619d263f76925e4d2a6",
+  "candidate_contract": {
+    "design_path": "docs/architect-review/84_text_primary_bounded_structured_augmentation_design.md",
+    "structured_query_source": "original_query_only",
+    "text_lexical_arm": "primary; existing text keyword ranks are protected",
+    "structured_evidence_weights": [
+      "A",
+      "B",
+      "C"
+    ],
+    "structured_evidence_excludes": [
+      "D",
+      "query_variant",
+      "alias_expansion"
+    ],
+    "structured_evidence_scope": "vector-only candidates already present in base-wide RRF",
+    "candidate_injection": "forbidden — no reference outside base-wide",
+    "protected_slots": "text keyword-backed absolute slots are immovable",
+    "allowed_moves": "non-overlapping adjacent swap only (max one swap per document)",
+    "MAX_STRUCTURED_PROMOTION": 1,
+    "rrf_k": 60,
+    "lexical_arm_weight": 1,
+    "vector_arm_weight": 1,
+    "frozen_constants": {
+      "_STRUCTURED_RANK_WEIGHTS": [
+        0.1,
+        0.2,
+        0.4,
+        1.0
+      ],
+      "OPERATION_ALIASES": "unchanged",
+      "RRF_K": 60,
+      "lexical_arm_weight": 1,
+      "vector_arm_weight": 1
+    }
+  }
+}
