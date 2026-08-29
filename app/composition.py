@@ -64,6 +64,10 @@ class AppState:
     #: "text"(기본, 기존 `text_tsv`) | "structured"(가중 `search_tsv`, 78번 설계).
     #: `KeywordSearch` 로 그대로 전달된다.
     search_lexical_field: str = "text"
+    #: base-wide RRF 뒤 구조 점수 postprocessor 스위치(기본 OFF, 87번 설계).
+    #: `search_lexical_field` 와 함께 `EndpointCandidateSearch` 로 전달돼
+    #: 생성자에서 `and text` 배타 가드로 좁혀진다.
+    structured_augmentation_enabled: bool = False
     #: 호출 LLM write-back 활성화 여부(docs/architect-review/56 §2.3).
     #: `MetadataWritebackService` 로 그대로 전달된다.
     metadata_writeback_enabled: bool = True
@@ -89,6 +93,7 @@ class AppState:
         search_strategy: str | None = None,
         document_search_strategy: str | None = None,
         search_lexical_field: str | None = None,
+        structured_augmentation_enabled: bool | None = None,
         metadata_writeback_enabled: bool | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
@@ -137,6 +142,11 @@ class AppState:
                 settings.search_lexical_field
                 if search_lexical_field is None
                 else search_lexical_field
+            ),
+            structured_augmentation_enabled=(
+                settings.structured_augmentation_enabled
+                if structured_augmentation_enabled is None
+                else structured_augmentation_enabled
             ),
             metadata_writeback_enabled=(
                 settings.business_metadata_writeback_enabled
@@ -232,6 +242,8 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             vector_fallback_enabled=state.vector_fallback_enabled,
             document_repo=document_repo,
             search_strategy=state.search_strategy,
+            structured_augmentation_enabled=state.structured_augmentation_enabled,
+            search_lexical_field=state.search_lexical_field,
         )
         endpoint_details_service = EndpointDetailsService(
             endpoint_repo=endpoint_repo,

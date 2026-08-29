@@ -51,6 +51,16 @@ class Settings:
     search_lexical_field: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_LEXICAL_FIELD", "text")
     )
+    #: base-wide RRF 뒤 vector-only 후보를 A/B/C 구조 점수로 최대 한 칸 승격하는
+    #: 기본-OFF postprocessor 스위치(`docs/architect-review/87`). `1/true/yes`
+    #: (대소문자 무시)만 True 로 읽고 그 밖의 값은 안전하게 False 로 degrade 한다.
+    #: `search_lexical_field="text"` 가 아니면 이 값이 True 여도 완전 no-op 이다.
+    structured_augmentation_enabled: bool = field(
+        default_factory=lambda: os.environ.get(
+            "DOCS_MCP_STRUCTURED_AUGMENTATION_ENABLED", "false"
+        ).strip().lower()
+        in ("1", "true", "yes")
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )

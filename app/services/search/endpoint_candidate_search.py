@@ -93,6 +93,8 @@ class EndpointCandidateSearch:
         vector_fallback_enabled: bool = True,
         document_repo: DocumentRepository | None = None,
         search_strategy: str = "rrf",
+        structured_augmentation_enabled: bool = False,
+        search_lexical_field: str = "text",
     ) -> None:
         """저장소·검색기와 벡터 보조 활성화 여부·검색 전략을 보관한다.
 
@@ -111,6 +113,11 @@ class EndpointCandidateSearch:
                 문자열을 그대로 받는다 — `embedding_backend` 등 이 코드베이스의
                 다른 env 기반 설정과 동일하게 Literal 로 좁히지 않고 비교로
                 분기해, 인식 못 하는 값은 안전하게 rrf 로 degrade한다.
+            structured_augmentation_enabled: base-wide RRF 뒤 구조 점수
+                postprocessor 스위치(기본 OFF, `docs/architect-review/87`).
+            search_lexical_field: 키워드 arm 필드. structured augmentation 은
+                이 값이 "text" 일 때만 적용된다 — env 가 True 여도 "structured"
+                이면 아래 conjunction 으로 완전 no-op 이 된다(I7 배타 가드).
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
@@ -119,6 +126,9 @@ class EndpointCandidateSearch:
         self._vector_fallback_enabled = vector_fallback_enabled
         self._document_repo = document_repo
         self._search_strategy = search_strategy
+        self._structured_augmentation_enabled = (
+            structured_augmentation_enabled and search_lexical_field == "text"
+        )
 
     def search(self, query: str, options: CandidateSearchOptions) -> list[EndpointCandidate]:
         """질의에 대한 엔드포인트 후보 목록을 반환한다.

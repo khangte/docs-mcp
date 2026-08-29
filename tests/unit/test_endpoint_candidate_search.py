@@ -361,6 +361,44 @@ def test_narrow_scope_still_passes_candidate_ids_to_vector_search(
     assert stub.last_candidates is not None
 
 
+# --- structured augmentation 배타 가드(87번 I7): env True 여도 lexical!=text 면 no-op ---
+
+
+def _search_with_augmentation_flags(
+    *, enabled: bool, lexical_field: str
+) -> EndpointCandidateSearch:
+    """구조 augmentation 스위치와 lexical 필드만 바꿔 검색기를 만든다(DB 불필요)."""
+    return EndpointCandidateSearch(
+        chunk_repo=object(),
+        endpoint_repo=object(),
+        keyword_search=object(),
+        vector_search=object(),
+        structured_augmentation_enabled=enabled,
+        search_lexical_field=lexical_field,
+    )
+
+
+def test_structured_augmentation_active_only_when_enabled_and_text() -> None:
+    """env True + lexical text 조합에서만 내부 플래그가 True 다."""
+    search = _search_with_augmentation_flags(enabled=True, lexical_field="text")
+
+    assert search._structured_augmentation_enabled is True
+
+
+def test_structured_augmentation_off_when_lexical_field_structured() -> None:
+    """env 가 True 여도 lexical field 가 structured 면 완전 no-op 이다(I7)."""
+    search = _search_with_augmentation_flags(enabled=True, lexical_field="structured")
+
+    assert search._structured_augmentation_enabled is False
+
+
+def test_structured_augmentation_off_when_setting_disabled() -> None:
+    """기본값(env False)이면 lexical 이 text 여도 비활성이다."""
+    search = _search_with_augmentation_flags(enabled=False, lexical_field="text")
+
+    assert search._structured_augmentation_enabled is False
+
+
 # --- query_variants: 키워드 arm 후보 필터만 확장(docs/12 후보4) ----------------
 
 
