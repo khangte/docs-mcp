@@ -1,6 +1,8 @@
 # 구현 계획 — P4(pg_trgm)·P5(임베딩 LRU 캐시)·P6(HNSW ef_search)
 
-- 상태: **착수 승인**(lead, 2026-08-10). developer 구현 대상.
+- 상태: **완료**(2026-08-10 구현·병합). P5 LRU 캐시, P6 `hnsw.ef_search` `SET LOCAL`
+  (메타 필터 시 하한 200으로 확장), P4 pg_trgm GIN 인덱스가 main 에 반영됨
+  (마이그레이션 `6a3ed3b327a9`, 모델 `__table_args__` 동기화). 워킹트리 클린, 관련 유닛테스트 71 passed.
 - 작성: architect
 - 근거: `docs/architect-review/03_search_performance_improvements.md` P4/P5/P6
 - 원칙: **셋 다 저효과·저리스크 → 최소 변경, 과설계 금지.** 새 env·설정 표면 늘리지 않는다
