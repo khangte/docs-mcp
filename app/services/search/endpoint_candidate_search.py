@@ -17,8 +17,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from app.core.errors import ValidationError
 from app.core.logging import get_logger
@@ -26,12 +25,8 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope
-from app.services.search.keyword_search import KeywordSearch, tokenize_terms
+from app.services.search.keyword_search import KeywordSearch
 from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
-from app.services.search.structured_augmentation import (
-    RrfSearchTrace,
-    apply_structured_augmentation,
-)
 from app.services.search.vector_search import VectorSearch
 
 _LOG = get_logger("docs_mcp.search.candidate")
@@ -84,13 +79,6 @@ class CandidateSearchOptions:
     #: `docs/architect-review/12_rag_depth_directions.md` 후보4의 "벡터 arm은
     #: 손대지 않는다" 결정을 뒤집었다).
     query_variants: list[str] | None = None
-    #: base-wide RRF 직후(첫 결과를 top_k 로 자르기 전) 스냅샷을 한 번 받는
-    #: request-scoped 콜백. v3 gate eval trace 전용이며 제품 경로에서는 None
-    #: 이라 trace tuple 생성 외 추가 I/O 가 없다(`docs/architect-review/87`
-    #: Task 4). repr/compare 에서 제외한다.
-    rrf_trace_sink: Callable[[RrfSearchTrace], None] | None = field(
-        default=None, repr=False, compare=False
-    )
 
 
 class EndpointCandidateSearch:
@@ -105,8 +93,6 @@ class EndpointCandidateSearch:
         vector_fallback_enabled: bool = True,
         document_repo: DocumentRepository | None = None,
         search_strategy: str = "rrf",
-        structured_augmentation_enabled: bool = False,
-        search_lexical_field: str = "text",
     ) -> None:
         """저장소·검색기와 벡터 보조 활성화 여부·검색 전략을 보관한다.
 
@@ -125,11 +111,6 @@ class EndpointCandidateSearch:
                 문자열을 그대로 받는다 — `embedding_backend` 등 이 코드베이스의
                 다른 env 기반 설정과 동일하게 Literal 로 좁히지 않고 비교로
                 분기해, 인식 못 하는 값은 안전하게 rrf 로 degrade한다.
-            structured_augmentation_enabled: base-wide RRF 뒤 구조 점수
-                postprocessor 스위치(기본 OFF, `docs/architect-review/87`).
-            search_lexical_field: 키워드 arm 필드. structured augmentation 은
-                이 값이 "text" 일 때만 적용된다 — env 가 True 여도 "structured"
-                이면 아래 conjunction 으로 완전 no-op 이 된다(I7 배타 가드).
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
@@ -138,9 +119,6 @@ class EndpointCandidateSearch:
         self._vector_fallback_enabled = vector_fallback_enabled
         self._document_repo = document_repo
         self._search_strategy = search_strategy
-        self._structured_augmentation_enabled = (
-            structured_augmentation_enabled and search_lexical_field == "text"
-        )
 
     def search(self, query: str, options: CandidateSearchOptions) -> list[EndpointCandidate]:
         """질의에 대한 엔드포인트 후보 목록을 반환한다.
@@ -181,7 +159,6 @@ class EndpointCandidateSearch:
                 document_id,
                 project,
                 options.query_variants,
-                options.rrf_trace_sink,
             )
         seen_ids = {c.endpoint_id for c in exact_candidates}
         return exact_candidates + [c for c in rest if c.endpoint_id not in seen_ids]
@@ -236,15 +213,12 @@ class EndpointCandidateSearch:
         document_id: str | None,
         project: str | None,
         query_variants: list[str] | None,
-        rrf_trace_sink: Callable[[RrfSearchTrace], None] | None = None,
     ) -> list[EndpointCandidate]:
         """키워드·벡터 두 ranker를 항상 병렬 실행해 RRF로 융합한다.
 
-        RRF 는 `width`(top_k 보다 넓게)로 base-wide 를 만든 뒤, structured
-        augmentation 이 활성일 때만 vector-only 후보를 A/B/C original-query
-        구조 점수로 최대 한 칸 승격하고, 그 결과를 top_k 로 자른다
-        (`docs/architect-review/87`). `query_variants` 는 keyword/vector arm
-        에만 현행대로 전달하고 구조 scorer 에는 넘기지 않는다.
+        RRF 는 `width`(top_k 보다 넓게)로 base-wide 를 만든 뒤 top_k 로 자른다
+        (`docs/architect-review/07` 5.3). `query_variants` 는 keyword/vector
+        arm 양쪽에 전달한다.
         """
         width = max(top_k * _CANDIDATE_WIDTH_MULTIPLIER, _MIN_CANDIDATE_WIDTH)
 
@@ -272,37 +246,7 @@ class EndpointCandidateSearch:
         vector_ref_ids = [ref_id for ref_id, _ in vector_hits]
 
         base_wide = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
-        final_wide: list[FusedResult] = list(base_wide)
-        structured_scores: dict[str, float] = {}
-        if self._structured_augmentation_enabled:
-            protected = frozenset(keyword_ref_ids)
-            eligible = [x.ref_id for x in base_wide if x.ref_id not in protected]
-            raw_scores = self._chunk_repo.score_endpoint_structured_augmentation(
-                tokenize_terms(query), eligible
-            )
-            structured_scores = {ref_id: raw_scores.get(ref_id, 0.0) for ref_id in eligible}
-            final_wide = list(
-                apply_structured_augmentation(
-                    base_wide,
-                    protected_ref_ids=protected,
-                    augmentation_scores=structured_scores,
-                ).fused
-            )
-
-        if rrf_trace_sink is not None:
-            rrf_trace_sink(
-                RrfSearchTrace(
-                    augmentation_enabled=self._structured_augmentation_enabled,
-                    keyword_hits=tuple((h.ref_id, h.score) for h in keyword_hits),
-                    vector_hits=tuple(vector_hits),
-                    base_wide=tuple(base_wide),
-                    protected_ref_ids=frozenset(keyword_ref_ids),
-                    structured_scores=tuple(structured_scores.items()),
-                    final_wide=tuple(final_wide),
-                )
-            )
-
-        return self._to_candidates_from_fused(final_wide[:top_k])
+        return self._to_candidates_from_fused(list(base_wide[:top_k]))
 
     def _search_vector_with_variants(
         self,

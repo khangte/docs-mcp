@@ -23,8 +23,7 @@ import statistics
 import sys
 import time
 import unicodedata
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 _DIR = Path(__file__).parent
@@ -892,38 +891,7 @@ def _parse_args() -> argparse.Namespace:
         help="질의당 반복 검색 횟수. n=20 질의 그대로는 p99 표본이 1건(=max)이라 해상도가 없어, "
         "기본 5회 반복으로 전략당 표본을 100건까지 확보한다(정확도 순위는 1회차만 채점).",
     )
-    parser.add_argument(
-        "--structured-augmentation",
-        choices=("off", "on"),
-        default="off",
-        help="base-wide RRF 뒤 A/B/C 원질의 구조 점수로 vector-only 후보를 최대 한 칸 "
-        "승격하는 postprocessor(기본 off, 87번 설계). on 이면 "
-        "structured_augmentation_enabled=True 로 주입한다. --lexical-field structured 와는 "
-        "함께 쓸 수 없다(text-primary 계약).",
-    )
-    parser.add_argument(
-        "--report-json",
-        default=None,
-        help="rrf 전략의 질의별 augmentation trace(keyword/vector/base_wide/protected/"
-        "structured_scores/final_wide)를 이 경로에 JSON 으로 쓴다. scratchpad 경로만 허용한다.",
-    )
-    args = parser.parse_args()
-    if args.lexical_field == "structured" and args.structured_augmentation == "on":
-        parser.error(
-            "--structured-augmentation on 은 --lexical-field structured 와 함께 쓸 수 없다 "
-            "(87번 설계: augmentation 은 text keyword arm 위에서만 동작)"
-        )
-    if args.report_json is not None and "scratchpad" not in Path(args.report_json).resolve().parts:
-        parser.error(
-            "--report-json 은 이름이 정확히 scratchpad 인 디렉터리 하위 경로만 허용한다 "
-            "(resolve 후 path component 검사 — scratchpad-evil, scratchpad/../ 우회 차단)"
-        )
-    if args.report_json is not None and args.strategy != "both":
-        parser.error(
-            "--report-json 은 --strategy both 를 요구한다 (88번 A2: rrf 전략만으로는 "
-            "unaffected_paths.fallback 이 공집합이라 fallback rank parity 를 실측하지 못한다)"
-        )
-    return args
+    return parser.parse_args()
 
 
 @dataclass
@@ -945,7 +913,6 @@ def _rank_of_one(candidates, method: str, path: str) -> int | None:
 
 def _run_strategy(
     bundle, queries: list[EvalQuery], top_k: int, with_variants: bool, latency_reps: int,
-    trace_sink: Callable[[EvalQuery, object, list], None] | None = None,
 ) -> StrategyRun:
     ranks: list[int | None] = []
     per_accepted_ranks: list[list[int | None]] = []
@@ -956,23 +923,13 @@ def _run_strategy(
             top_k=top_k,
             query_variants=eq.variants if with_variants and eq.variants else None,
         )
-        # 정확도 1회차에만 RRF trace 를 받는다. latency 반복에는 sink 를 넘기지 않는다.
-        if trace_sink is not None:
-            captured: list = []
-            accuracy_options = replace(
-                options, rrf_trace_sink=lambda tr, _c=captured: _c.append(tr)
-            )
-        else:
-            accuracy_options = options
         start = time.perf_counter()
-        candidates = bundle.candidate_search.search(eq.query, accuracy_options)
+        candidates = bundle.candidate_search.search(eq.query, options)
         latencies_ms.append((time.perf_counter() - start) * 1000)
         ranks.append(_rank_of_answer(candidates, eq.accepted))
         per_accepted_ranks.append([_rank_of_one(candidates, m, p) for m, p in eq.accepted])
         if not candidates:
             empty_count += 1
-        if trace_sink is not None and captured:
-            trace_sink(eq, captured[-1], candidates)
         for _ in range(latency_reps - 1):
             start = time.perf_counter()
             bundle.candidate_search.search(eq.query, options)
@@ -1127,12 +1084,6 @@ def _shared_index_triples(engine) -> list[tuple[str, str, str, str]]:
     )
 
 
-def _shared_index_fingerprint_hex(engine) -> str:
-    """§4.3 shared-index 지문 값(네 실행이 같은 물리 인덱스를 읽는지 대조)."""
-    triples = _shared_index_triples(engine)
-    return hashlib.sha256("\n".join("\t".join(t) for t in triples).encode()).hexdigest()
-
-
 def _print_shared_index_fingerprint(
     engine, queries_file: Path, lexical_field: str = "text"
 ) -> None:
@@ -1161,116 +1112,19 @@ def _print_shared_index_fingerprint(
     print(f"- lexical field: {lexical_field}")
 
 
-def _load_v3_gate_manifest() -> dict:
-    """87번 §0 frozen identity 를 담은 gate_manifest_v3.json 을 읽는다."""
-    return json.loads((_DIR / "gate_manifest_v3.json").read_text())
-
-
-def _augmentation_identity_root(engine) -> dict:
-    """augmentation trace 리포트의 identity 블록(85번 §2 eval identity 분리)."""
-    man = _load_v3_gate_manifest()
-    return {
-        "product_source_sha": _V3_MANIFEST_SCALARS["product_source_sha"],
-        "rules_git_sha": _V3_MANIFEST_SCALARS["rules_git_sha"],
-        "query_sha256": man["query_sha256"],
-        "split_sha256": man["split_sha256"],
-        "corpus_sha256": dict(_V3_CORPUS_SHA256),
-        "candidate_contract": json.loads(json.dumps(_V3_CANDIDATE_CONTRACT)),
-        "implementation_git_sha": _fixture_commit(),
-        "shared_index_fingerprint": _shared_index_fingerprint_hex(engine),
-    }
-
-
-def _augmentation_effectiveness(rows: list[dict]) -> dict:
-    """§7.8~9 crossing net / Top-10 recall paired 순증.
-
-    ponytail: compare_v3_candidate.crossing_net/recall_net 와 같은 산식을 6줄
-    복제한다. comparator 가 runner 를 import 하므로 역방향 import 는 순환이다.
-    """
-    up = sum(1 for r in rows if r["base_answer_rank"] == 11 and r["answer_rank"] == 10)
-    down = sum(1 for r in rows if r["base_answer_rank"] == 10 and r["answer_rank"] == 11)
-
-    def _cap(v: object) -> int:
-        return v if isinstance(v, int) else 10**9
-
-    gain = sum(1 for r in rows if _cap(r["base_answer_rank"]) > 10 and _cap(r["answer_rank"]) <= 10)
-    loss = sum(1 for r in rows if _cap(r["base_answer_rank"]) <= 10 and _cap(r["answer_rank"]) > 10)
-    return {"gain": up - down, "recall_net": gain - loss}
-
-
-def _augmentation_trace_row(eq: EvalQuery, trace, candidates, endpoint_by_ref: dict) -> dict:
-    """RrfSearchTrace 한 건 + 정답 순위를 comparator 스키마의 행으로 직렬화한다."""
-
-    def _fused(seq) -> list[dict]:
-        return [
-            {
-                "ref_id": fr.ref_id,
-                "rank": i,
-                "rrf_score": round(fr.score, 6),
-                "arms": list(fr.contributing_arms),
-            }
-            for i, fr in enumerate(seq, start=1)
-        ]
-
-    def _hits(seq) -> list[dict]:
-        return [
-            {"ref_id": ref, "score": round(score, 6), "rank": i}
-            for i, (ref, score) in enumerate(seq, start=1)
-        ]
-
-    accepted = set(eq.accepted)
-    answer_ref_id: str | None = None
-    base_answer_rank: int | None = None
-    for i, fr in enumerate(trace.base_wide, start=1):
-        ep = endpoint_by_ref.get(fr.ref_id)
-        if ep is not None and (ep.method, ep.path) in accepted:
-            answer_ref_id = fr.ref_id
-            base_answer_rank = i
-            break
-    return {
-        "id": eq.id,
-        "split": eq.split,
-        "category": eq.category,
-        "language": eq.language,
-        "answer_mode": eq.answer_mode,
-        "pair_id": eq.pair_id,
-        "pair_role": eq.pair_role,
-        "result_empty": not candidates,
-        "per_accepted_ranks": [_rank_of_one(candidates, m, p) for m, p in eq.accepted],
-        "keyword": _hits(trace.keyword_hits),
-        "vector": _hits(trace.vector_hits),
-        "base_wide": _fused(trace.base_wide),
-        "protected_ref_ids": sorted(trace.protected_ref_ids),
-        "structured_scores": [
-            {"ref_id": ref, "score": round(score, 6)} for ref, score in trace.structured_scores
-        ],
-        "final_wide": _fused(trace.final_wide),
-        "answer_ref_id": answer_ref_id,
-        "base_answer_rank": base_answer_rank,
-        "answer_rank": _rank_of_answer(candidates, eq.accepted),
-    }
-
-
 def _evaluate_and_report(
     state, queries: list[EvalQuery], strategies: tuple[str, ...], args: argparse.Namespace,
     indexed_rss: tuple[int, int] | None,
 ) -> None:
     """전략별 검색 실행 + 리포트. indexed_rss=None 이면 색인은 별도(preflight) 프로세스."""
     ranks_by_strategy: dict[str, StrategyRun] = {}
-    trace_rows: list[dict] = []
     cpu_before = resource.getrusage(resource.RUSAGE_SELF)
     for strategy in strategies:
         state.search_strategy = strategy
         state.search_lexical_field = args.lexical_field
-        state.structured_augmentation_enabled = args.structured_augmentation == "on"
         b = next(build_services(state))
-        sink = None
-        if strategy == "rrf" and args.report_json:
-            def sink(eq: EvalQuery, tr, cands, _b=b) -> None:
-                ep_by_ref = _b.endpoint_repo.get_many([fr.ref_id for fr in tr.base_wide])
-                trace_rows.append(_augmentation_trace_row(eq, tr, cands, ep_by_ref))
         ranks_by_strategy[strategy] = _run_strategy(
-            b, queries, args.top_k, args.with_variants, args.latency_reps, sink
+            b, queries, args.top_k, args.with_variants, args.latency_reps
         )
     cpu_after = resource.getrusage(resource.RUSAGE_SELF)
     rss_peak_kb = cpu_after.ru_maxrss
@@ -1335,37 +1189,6 @@ def _evaluate_and_report(
                 print(f"- {q!r}: fallback={fb} -> rrf={rr} (MRR delta {mrr_delta:+.3f})")
         else:
             print("- 없음")
-
-    if args.report_json:
-        fallback_run = ranks_by_strategy.get("fallback")
-        report = {
-            "identity": _augmentation_identity_root(state.engine),
-            "arm": "candidate" if args.structured_augmentation == "on" else "baseline",
-            "augmentation_enabled": args.structured_augmentation == "on",
-            "variants_enabled": args.with_variants,
-            "lexical_field": args.lexical_field,
-            "strategy": args.strategy,
-            "top_k": args.top_k,
-            "split_scope": args.split or "all",
-            "queries": trace_rows,
-            "unaffected_paths": {
-                "exact": {},
-                # augmentation 은 _search_rrf 안에서만 동작한다. fallback 경로 순위는
-                # baseline/candidate 가 같아야 하며, 다르면 HARD item 8 이 잡는다.
-                "fallback": (
-                    {}
-                    if fallback_run is None
-                    else {
-                        eq.id: r
-                        for eq, r in zip(queries, fallback_run.ranks, strict=True)
-                    }
-                ),
-                "document": {},
-            },
-            "effectiveness": _augmentation_effectiveness(trace_rows),
-        }
-        Path(args.report_json).write_text(json.dumps(report, ensure_ascii=False, indent=2))
-        print(f"\n### augmentation trace -> {args.report_json} ({len(trace_rows)} queries)")
 
 
 def _cmd_preflight(args: argparse.Namespace) -> None:

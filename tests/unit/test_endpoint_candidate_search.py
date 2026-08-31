@@ -15,8 +15,7 @@ from app.services.search.endpoint_candidate_search import (
     CandidateSearchOptions,
     EndpointCandidateSearch,
 )
-from app.services.search.keyword_search import KeywordSearch, tokenize_terms
-from app.services.search.structured_augmentation import RrfSearchTrace
+from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch, VectorSearchHit
 from tests.fixtures.fakes import ExplodingEmbeddingProvider, StubVectorSearch
 
@@ -362,44 +361,6 @@ def test_narrow_scope_still_passes_candidate_ids_to_vector_search(
     assert stub.last_candidates is not None
 
 
-# --- structured augmentation 배타 가드(87번 I7): env True 여도 lexical!=text 면 no-op ---
-
-
-def _search_with_augmentation_flags(
-    *, enabled: bool, lexical_field: str
-) -> EndpointCandidateSearch:
-    """구조 augmentation 스위치와 lexical 필드만 바꿔 검색기를 만든다(DB 불필요)."""
-    return EndpointCandidateSearch(
-        chunk_repo=object(),
-        endpoint_repo=object(),
-        keyword_search=object(),
-        vector_search=object(),
-        structured_augmentation_enabled=enabled,
-        search_lexical_field=lexical_field,
-    )
-
-
-def test_structured_augmentation_active_only_when_enabled_and_text() -> None:
-    """env True + lexical text 조합에서만 내부 플래그가 True 다."""
-    search = _search_with_augmentation_flags(enabled=True, lexical_field="text")
-
-    assert search._structured_augmentation_enabled is True
-
-
-def test_structured_augmentation_off_when_lexical_field_structured() -> None:
-    """env 가 True 여도 lexical field 가 structured 면 완전 no-op 이다(I7)."""
-    search = _search_with_augmentation_flags(enabled=True, lexical_field="structured")
-
-    assert search._structured_augmentation_enabled is False
-
-
-def test_structured_augmentation_off_when_setting_disabled() -> None:
-    """기본값(env False)이면 lexical 이 text 여도 비활성이다."""
-    search = _search_with_augmentation_flags(enabled=False, lexical_field="text")
-
-    assert search._structured_augmentation_enabled is False
-
-
 # --- query_variants: 키워드 arm 후보 필터만 확장(docs/12 후보4) ----------------
 
 
@@ -716,15 +677,22 @@ def test_exact_match_respects_document_scope(app_state, sample_openapi_3: str) -
     assert matched_endpoint.document_id == document_id
 
 
-# --- Task 4: base-wide RRF 뒤 structured augmentation 통합 (docs/architect-review/87) ---
+# --- 회귀: cleanup 후 OFF baseline 순서 고정 (docs/architect-review/91 §4.2) -----
+#
+# v3 structured-augmentation 후보가 폐기되면서 `_search_rrf` 는 base-wide RRF 를
+# 그대로 top_k 로 자르는 단일 경로만 남았다. 봉인 baseline report
+# (`scratchpad/v3_gate_baseline_off.json`, verdict 91 §1 SHA-256
+# `7f6e922790ee69dc267442a6d6345fa58440f8c659efd3e820827ee6f9cf88d4`) 의 OFF
+# 순서가 keyword arm 우선 + vector-only 후속의 순수 RRF 융합이라는 사실을
+# DB 없이 고정한다 — 삭제된 `test_augmentation_off_skips_scorer_and_keeps_rrf_order`
+# 의 잔존 본질이다.
 
 
 class _StubKeyword:
-    """고정 (ref_id, score) 히트를 내는 키워드 검색기. 받은 query/variants 를 기록."""
+    """고정 ref_id 히트를 내는 키워드 검색기 스텁."""
 
-    def __init__(self, hits: list[tuple[str, float]]) -> None:
-        self._hits = hits
-        self.seen: list[tuple[str, tuple[str, ...]]] = []
+    def __init__(self, ref_ids: list[str]) -> None:
+        self._ref_ids = ref_ids
 
     def search(
         self,
@@ -734,69 +702,32 @@ class _StubKeyword:
         project: str | None = None,
         query_variants: list[str] | None = None,
     ) -> list[SimpleNamespace]:
-        self.seen.append((query, tuple(query_variants or ())))
-        return [SimpleNamespace(ref_id=r, score=s) for r, s in self._hits][:top_k]
+        return [SimpleNamespace(ref_id=r) for r in self._ref_ids][:top_k]
 
 
 class _StubVector:
-    """고정 (ref_id, score) 히트를 내는 벡터 검색기."""
+    """고정 ref_id 히트를 내는 벡터 검색기 스텁."""
 
-    def __init__(self, hits: list[tuple[str, float]]) -> None:
-        self._hits = hits
-        self.seen: list[str] = []
+    def __init__(self, ref_ids: list[str]) -> None:
+        self._ref_ids = ref_ids
 
     def search(
         self, query: str, top_k: int, candidates: set[str] | None = None
     ) -> list[VectorSearchHit]:
-        self.seen.append(query)
         return [
-            VectorSearchHit(chunk_id=f"c-{r}", ref_id=r, score=s) for r, s in self._hits
+            VectorSearchHit(chunk_id=f"c-{r}", ref_id=r, score=0.9)
+            for r in self._ref_ids
         ][:top_k]
 
 
-class _SpyChunkRepo:
-    """structured 점수 호출 인자를 기록하는 스파이."""
-
-    def __init__(self, scores: dict[str, float] | None = None) -> None:
-        self._scores = scores or {}
-        self.calls: list[tuple[list[str], list[str]]] = []
-
-    def has_endpoint_chunks(
-        self, document_id: str | None = None, project: str | None = None
-    ) -> bool:
-        return True
-
-    def list_endpoint_chunk_ids(
-        self, document_id: str | None = None, project: str | None = None
-    ) -> set[str]:
-        return set()
-
-    def score_endpoint_structured_augmentation(
-        self, terms, ref_ids
-    ) -> dict[str, float]:
-        self.calls.append((list(terms), list(ref_ids)))
-        return {r: self._scores.get(r, 0.0) for r in ref_ids}
-
-
 class _StubEndpointRepo:
-    """모든 ref_id 를 임의 엔드포인트로 되돌려 주는 스텁."""
+    """ref_id 를 그대로 엔드포인트로 되돌려 주는 스텁(exact 단계는 항상 0건)."""
 
-    def __init__(self, exact: list[SimpleNamespace] | None = None) -> None:
-        self._exact = exact or []
+    def list_by_operation_id(self, *_a: object, **_k: object) -> list[SimpleNamespace]:
+        return []
 
-    def list_by_operation_id(
-        self, query: str, document_id: str | None = None, project: str | None = None
-    ) -> list[SimpleNamespace]:
-        return self._exact
-
-    def list_by_method_path(
-        self,
-        method: str,
-        path: str,
-        document_id: str | None = None,
-        project: str | None = None,
-    ) -> list[SimpleNamespace]:
-        return self._exact
+    def list_by_method_path(self, *_a: object, **_k: object) -> list[SimpleNamespace]:
+        return []
 
     def get_many(self, ref_ids: list[str]) -> dict[str, SimpleNamespace]:
         return {
@@ -805,211 +736,26 @@ class _StubEndpointRepo:
         }
 
 
-def _make_search(
-    *,
-    keyword_hits: list[tuple[str, float]],
-    vector_hits: list[tuple[str, float]],
-    aug_scores: dict[str, float] | None = None,
-    enabled: bool = True,
-    lexical_field: str = "text",
-    strategy: str = "rrf",
-    exact: list[SimpleNamespace] | None = None,
-) -> tuple[EndpointCandidateSearch, _SpyChunkRepo]:
-    repo = _SpyChunkRepo(aug_scores)
+class _StubChunkRepo:
+    """endpoint 청크가 있다고만 답하는 스텁(전역 스코프라 chunk id 목록은 안 쓰인다)."""
+
+    def has_endpoint_chunks(
+        self, document_id: str | None = None, project: str | None = None
+    ) -> bool:
+        return True
+
+
+def test_rrf_off_baseline_keeps_plain_fused_order() -> None:
+    """keyword 5건(양 arm) + vector-only 25건 -> 순수 RRF 순서를 top_k 로 자른다."""
+    kw = [f"k{i:02d}" for i in range(1, 6)]
+    von = [f"v{i:02d}" for i in range(1, 26)]
     search = EndpointCandidateSearch(
-        chunk_repo=repo,
-        endpoint_repo=_StubEndpointRepo(exact),
-        keyword_search=_StubKeyword(keyword_hits),
-        vector_search=_StubVector(vector_hits),
-        search_strategy=strategy,
-        structured_augmentation_enabled=enabled,
-        search_lexical_field=lexical_field,
-    )
-    return search, repo
-
-
-_KW5 = [f"k{i:02d}" for i in range(1, 6)]
-_VON = [f"v{i:02d}" for i in range(1, 31)]
-
-
-def _wide_stub_hits() -> tuple[list[tuple[str, float]], list[tuple[str, float]]]:
-    """keyword 5건(양 arm 히트) + vector-only 30건 -> fused rank 10=v05, 11=v06."""
-    keyword_hits = [(r, 0.5) for r in _KW5]
-    vector_hits = [(r, 0.9) for r in _KW5] + [(r, 0.9) for r in _VON]
-    return keyword_hits, vector_hits
-
-
-def test_augmentation_promotes_rank_11_over_rank_10_before_cut() -> None:
-    """requested top_k=10 에서 ON 은 기존 rank 11(v06)을, OFF 는 rank 10(v05)을 반환한다."""
-    keyword_hits, vector_hits = _wide_stub_hits()
-
-    on, repo_on = _make_search(
-        keyword_hits=keyword_hits, vector_hits=vector_hits, aug_scores={"v06": 5.0}
-    )
-    off, _ = _make_search(
-        keyword_hits=keyword_hits,
-        vector_hits=vector_hits,
-        aug_scores={"v06": 5.0},
-        enabled=False,
-    )
-
-    res_on = on.search("find pet", CandidateSearchOptions(top_k=10))
-    res_off = off.search("find pet", CandidateSearchOptions(top_k=10))
-
-    assert len(res_on) == 10
-    assert [c.endpoint_id for c in res_off][9] == "v05"
-    assert [c.endpoint_id for c in res_on][9] == "v06"
-    # scorer 가 받은 ref = base-wide vector-only ref 전량
-    assert set(repo_on.calls[0][1]) == set(_VON)
-
-
-def test_augmentation_off_skips_scorer_and_keeps_rrf_order() -> None:
-    """setting OFF: scorer 0회, 기존 RRF 순서 그대로."""
-    keyword_hits, vector_hits = _wide_stub_hits()
-    off, repo = _make_search(
-        keyword_hits=keyword_hits,
-        vector_hits=vector_hits,
-        aug_scores={"v06": 5.0},
-        enabled=False,
-    )
-
-    res = off.search("find pet", CandidateSearchOptions(top_k=10))
-
-    assert repo.calls == []
-    assert [c.endpoint_id for c in res] == _KW5 + ["v01", "v02", "v03", "v04", "v05"]
-
-
-def test_augmentation_no_op_when_lexical_field_structured() -> None:
-    """setting ON + lexical structured: scorer 0회, 승격 없음(I7)."""
-    keyword_hits, vector_hits = _wide_stub_hits()
-    search, repo = _make_search(
-        keyword_hits=keyword_hits,
-        vector_hits=vector_hits,
-        aug_scores={"v06": 5.0},
-        enabled=True,
-        lexical_field="structured",
+        chunk_repo=_StubChunkRepo(),
+        endpoint_repo=_StubEndpointRepo(),
+        keyword_search=_StubKeyword(kw),
+        vector_search=_StubVector(kw + von),
     )
 
     res = search.search("find pet", CandidateSearchOptions(top_k=10))
 
-    assert repo.calls == []
-    assert [c.endpoint_id for c in res][9] == "v05"
-
-
-def test_fallback_strategy_never_scores_structured() -> None:
-    """fallback 전략은 `_search_rrf` 를 타지 않으므로 scorer 0회."""
-    search, repo = _make_search(
-        keyword_hits=[("k01", 0.5)],
-        vector_hits=[("v01", 0.9)],
-        aug_scores={"v01": 9.0},
-        strategy="fallback",
-    )
-
-    search.search("find pet", CandidateSearchOptions(top_k=5))
-
-    assert repo.calls == []
-
-
-def test_exact_fill_skips_structured_scorer() -> None:
-    """exact 가 요청 top_k 를 모두 채우면 scorer 0회."""
-    exact = [SimpleNamespace(id="e1", method="GET", path="/pet", summary="s")]
-    search, repo = _make_search(
-        keyword_hits=[("k01", 0.5)],
-        vector_hits=[("v01", 0.9)],
-        aug_scores={"v01": 9.0},
-        exact=exact,
-    )
-
-    res = search.search("getPetById", CandidateSearchOptions(top_k=1))
-
-    assert [c.endpoint_id for c in res] == ["e1"]
-    assert repo.calls == []
-
-
-def test_augmentation_on_text_rrf_calls_scorer_once_when_eligible() -> None:
-    """ON + text + RRF: eligible ref 가 있으면 scorer 정확히 1회, eligible 만 넘긴다."""
-    search, repo = _make_search(
-        keyword_hits=[("k01", 0.5)],
-        vector_hits=[("v01", 0.9), ("v02", 0.9)],
-    )
-
-    search.search("find pet", CandidateSearchOptions(top_k=5))
-
-    assert len(repo.calls) == 1
-    assert set(repo.calls[0][1]) == {"v01", "v02"}
-
-
-def test_scorer_receives_only_original_query_tokens_not_variants() -> None:
-    """query variant 가 있어도 scorer terms 는 original query tokenize 결과만."""
-    search, repo = _make_search(
-        keyword_hits=[("k01", 0.5)],
-        vector_hits=[("v01", 0.9)],
-    )
-
-    search.search(
-        "find pet", CandidateSearchOptions(top_k=5, query_variants=["강아지 검색"])
-    )
-
-    assert repo.calls[0][0] == tokenize_terms("find pet")
-    assert repo.calls[0][0] == ["find", "pet"]
-
-
-def test_rrf_trace_sink_defaults_to_none() -> None:
-    """제품 경로 기본값: trace sink 는 None 이다."""
-    assert CandidateSearchOptions().rrf_trace_sink is None
-
-
-def test_rrf_trace_sink_excluded_from_equality() -> None:
-    """sink 는 compare 에서 제외된다(repr/compare=False)."""
-    a = CandidateSearchOptions(top_k=5, rrf_trace_sink=lambda t: None)
-    b = CandidateSearchOptions(top_k=5)
-
-    assert a == b
-
-
-def test_rrf_trace_sink_captures_pre_cut_snapshot() -> None:
-    """sink 는 첫 결과를 자르기 전 base/final wide 스냅샷을 한 번만 받는다."""
-    von = [f"v{i:02d}" for i in range(1, 13)]
-    search, _ = _make_search(
-        keyword_hits=[("k01", 0.5)],
-        vector_hits=[(r, 0.9) for r in von],
-        aug_scores={"v02": 9.0},
-    )
-    captured: list[RrfSearchTrace] = []
-
-    search.search(
-        "find pet", CandidateSearchOptions(top_k=5, rrf_trace_sink=captured.append)
-    )
-
-    assert len(captured) == 1
-    trace = captured[0]
-    assert isinstance(trace, RrfSearchTrace)
-    assert trace.augmentation_enabled is True
-    assert trace.keyword_hits == (("k01", 0.5),)
-    assert trace.vector_hits == tuple((r, 0.9) for r in von)
-    assert trace.protected_ref_ids == frozenset({"k01"})
-    assert [f.ref_id for f in trace.base_wide][:3] == ["k01", "v01", "v02"]
-    assert set(dict(trace.structured_scores)) == set(von)
-    assert dict(trace.structured_scores)["v02"] == 9.0
-    assert len(trace.final_wide) == len(trace.base_wide)
-    assert [f.ref_id for f in trace.final_wide][:3] == ["k01", "v02", "v01"]
-
-
-def test_rrf_trace_sink_reports_disabled_augmentation() -> None:
-    """OFF 경로에서도 sink 는 호출되며 augmentation_enabled=False, base==final."""
-    search, _ = _make_search(
-        keyword_hits=[("k01", 0.5)],
-        vector_hits=[("v01", 0.9), ("v02", 0.9)],
-        aug_scores={"v02": 9.0},
-        enabled=False,
-    )
-    captured: list[RrfSearchTrace] = []
-
-    search.search(
-        "find pet", CandidateSearchOptions(top_k=5, rrf_trace_sink=captured.append)
-    )
-
-    assert len(captured) == 1
-    assert captured[0].augmentation_enabled is False
-    assert captured[0].structured_scores == ()
-    assert captured[0].base_wide == captured[0].final_wide
+    assert [c.endpoint_id for c in res] == kw + ["v01", "v02", "v03", "v04", "v05"]
