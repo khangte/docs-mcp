@@ -47,6 +47,19 @@ MAX_TOP_K = 50
 _MIN_CANDIDATE_WIDTH = 50
 _CANDIDATE_WIDTH_MULTIPLIER = 4
 
+#: P2 arm-exclusive rescue quota 상한(`docs/architect-review/92` §6.3). legacy
+#: F 건수에 맞춰 늘리면 RRF `k` 튜닝식 과적합이 되므로 하드 상한을 둔다.
+_MAX_ARM_RESCUE_QUOTA = 3
+
+
+def _coerce_arm_rescue_quota(raw: str | int) -> int:
+    """원시 설정값을 [0, _MAX_ARM_RESCUE_QUOTA] 정수로 좁힌다(미인식 값은 0=비활성)."""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(value, _MAX_ARM_RESCUE_QUOTA))
+
 #: "GET /pet/{petId}" 형태의 method+path exact 질의를 잡아내는 패턴
 #: (`docs/architect-review/37_user_rag_proposal_vs_our_design_diff.md` 5b).
 _METHOD_PATH_RE = re.compile(
@@ -95,6 +108,7 @@ class EndpointCandidateSearch:
         vector_fallback_enabled: bool = True,
         document_repo: DocumentRepository | None = None,
         search_strategy: str = "rrf",
+        arm_rescue_quota: str | int = 0,
     ) -> None:
         """저장소·검색기와 벡터 보조 활성화 여부·검색 전략을 보관한다.
 
@@ -113,6 +127,11 @@ class EndpointCandidateSearch:
                 문자열을 그대로 받는다 — `embedding_backend` 등 이 코드베이스의
                 다른 env 기반 설정과 동일하게 Literal 로 좁히지 않고 비교로
                 분기해, 인식 못 하는 값은 안전하게 rrf 로 degrade한다.
+            arm_rescue_quota: RRF 융합 후 final top-k 컷 밖의 arm-exclusive(단일
+                arm) 후보를 끌어올리는 사전 고정 quota(`docs/architect-review/92`
+                §6, P2). 0(기본)이면 완전 비활성 — `base_wide[:top_k]` 와 동일하다.
+                원시 env 문자열/정수를 받아 [0, _MAX_ARM_RESCUE_QUOTA] 로 좁히고
+                미인식 값은 0 으로 degrade한다.
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
@@ -121,6 +140,7 @@ class EndpointCandidateSearch:
         self._vector_fallback_enabled = vector_fallback_enabled
         self._document_repo = document_repo
         self._search_strategy = search_strategy
+        self._arm_rescue_quota = _coerce_arm_rescue_quota(arm_rescue_quota)
 
     def search(self, query: str, options: CandidateSearchOptions) -> list[EndpointCandidate]:
         """질의에 대한 엔드포인트 후보 목록을 반환한다.
@@ -248,7 +268,38 @@ class EndpointCandidateSearch:
         vector_ref_ids = [ref_id for ref_id, _ in vector_hits]
 
         base_wide = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
-        return self._to_candidates_from_fused(list(base_wide[:top_k]))
+        return self._to_candidates_from_fused(self._apply_arm_rescue(list(base_wide), top_k))
+
+    def _apply_arm_rescue(
+        self, base_wide: list[FusedResult], top_k: int
+    ) -> list[FusedResult]:
+        """RRF 컷 밖의 arm-exclusive(단일 arm) 후보를 사전 고정 quota 만큼 final 로 끌어올린다.
+
+        `docs/architect-review/92` §6 P2. `arm_rescue_quota == 0`(기본)이면
+        `base_wide[:top_k]` 와 완전히 동일하다 — 롤아웃 스위치.
+
+        불변식:
+        - arm 순위·RRF 순위·RRF 점수는 건드리지 않는다. base-wide 를 재정렬하지
+          않고, final top-k 의 **tail 슬롯만** 교체한다.
+        - 선택 신호는 `match_type`(single-arm 여부)과 기존 RRF 등수뿐이다.
+          route-family·path 길이·structured score 를 쓰지 않는다.
+        - rescue 대상은 base-wide 순서(=RRF 점수 내림차순) 그대로 앞에서부터 최대
+          quota 건. 결정적이다.
+        - 최소 1건의 순수 RRF 히트는 남긴다(`top_k` 가 작을수록 슬롯 하나의 영향이
+          커진다는 §6.3 리스크 완화).
+        - exact 후보는 `search()` 에서 별도 처리돼 `top_k`(=remaining_top_k)에 이미
+          반영되므로 이 경로에서 보호가 필요 없다.
+        """
+        keep = base_wide[:top_k]
+        if self._arm_rescue_quota <= 0 or len(base_wide) <= top_k:
+            return keep
+        rescued = [f for f in base_wide[top_k:] if f.match_type != "both"][
+            : self._arm_rescue_quota
+        ]
+        n = min(len(rescued), max(top_k - 1, 0))
+        if n <= 0:
+            return keep
+        return keep[: top_k - n] + rescued[:n]
 
     def _search_vector_with_variants(
         self,

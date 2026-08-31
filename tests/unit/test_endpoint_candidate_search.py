@@ -12,6 +12,7 @@ import pytest
 from app.composition import build_services
 from app.core.errors import DocumentNotFoundError, ValidationError
 from app.services.search.endpoint_candidate_search import (
+    _MAX_ARM_RESCUE_QUOTA,
     CandidateSearchOptions,
     EndpointCandidateSearch,
 )
@@ -767,3 +768,99 @@ def test_rrf_off_baseline_keeps_plain_fused_order() -> None:
     res = search.search("find pet", CandidateSearchOptions(top_k=10))
 
     assert [c.endpoint_id for c in res] == kw + ["v01", "v02", "v03", "v04", "v05"]
+
+
+# --- P2: bounded arm-exclusive rescue quota (docs/architect-review/92 §6) ----
+#
+# 진단 근거: docs/eval-results/10_2026-08-31_p0_arm_trace_reclassification.md —
+# 09 miss 11건 중 8건이 arm(주로 vector) top-50 에는 있으나 등가중 RRF 가 both-arm
+# route-family decoy 로 base_wide 상위를 채워 final top-10 밖으로 밀린 final_cut.
+# 아래는 DB 없이 그 좌표(both-arm 10건이 컷을 채우고 vector-only 후보가 바로 밖)를
+# 고정한다. _StubKeyword/_StubVector/_StubEndpointRepo/_StubChunkRepo 재사용.
+
+_BOTH10 = [f"b{i:02d}" for i in range(1, 11)]
+_VONLY = [f"v{i:02d}" for i in range(1, 21)]
+
+
+def _rescue_search(
+    kw_ref_ids: list[str], vec_ref_ids: list[str], quota: object
+) -> EndpointCandidateSearch:
+    """arm_rescue_quota 를 주입한 순수 스텁 검색기(전 경로 search() 통과)."""
+    return EndpointCandidateSearch(
+        chunk_repo=_StubChunkRepo(),
+        endpoint_repo=_StubEndpointRepo(),
+        keyword_search=_StubKeyword(kw_ref_ids),
+        vector_search=_StubVector(vec_ref_ids),
+        arm_rescue_quota=quota,
+    )
+
+
+def test_arm_rescue_disabled_by_default_keeps_rrf_cut() -> None:
+    """quota 0(기본) -> base_wide[:top_k] 그대로. arm-exclusive 구제 없음."""
+    search = _rescue_search(_BOTH10, _BOTH10 + _VONLY, quota=0)
+    res = search.search("q", CandidateSearchOptions(top_k=10))
+    assert [c.endpoint_id for c in res] == _BOTH10
+    assert all(c.match_type == "both" for c in res)
+
+
+def test_arm_rescue_promotes_one_arm_exclusive_below_cut() -> None:
+    """quota=1 -> RRF 컷 바로 밖의 vector-only 후보 1건이 final tail 로 올라오고
+    가장 낮은 RRF 등수의 both-arm 1건이 밀린다(boundary-crossing)."""
+    search = _rescue_search(_BOTH10, _BOTH10 + _VONLY, quota=1)
+    res = search.search("q", CandidateSearchOptions(top_k=10))
+    ids = [c.endpoint_id for c in res]
+    assert ids == _BOTH10[:9] + ["v01"]
+    assert next(c for c in res if c.endpoint_id == "v01").match_type == "vector"
+
+
+def test_arm_rescue_respects_quota_cap() -> None:
+    """상한 위로 줘도 _MAX_ARM_RESCUE_QUOTA 건까지만 구제한다(과적합 방지 하드 상한)."""
+    search = _rescue_search(_BOTH10, _BOTH10 + _VONLY, quota=999)
+    res = search.search("q", CandidateSearchOptions(top_k=10))
+    rescued = [c.endpoint_id for c in res if c.endpoint_id.startswith("v")]
+    assert rescued == ["v01", "v02", "v03"]
+    assert len(rescued) == _MAX_ARM_RESCUE_QUOTA
+    assert [c.endpoint_id for c in res] == _BOTH10[:7] + ["v01", "v02", "v03"]
+
+
+def test_arm_rescue_only_rescues_arm_exclusive_not_both() -> None:
+    """컷 밖 후보가 전부 both-arm 이면 아무것도 밀지 않는다(single-arm 신호만 구제)."""
+    both14 = [f"b{i:02d}" for i in range(1, 15)]
+    search = _rescue_search(both14, both14, quota=3)
+    res = search.search("q", CandidateSearchOptions(top_k=10))
+    assert [c.endpoint_id for c in res] == both14[:10]
+    assert all(c.match_type == "both" for c in res)
+
+
+def test_arm_rescue_keeps_at_least_one_rrf_hit_when_top_k_is_one() -> None:
+    """top_k=1 이면 슬롯 교체 없이 순수 RRF 1위를 지킨다(§6.3: 작은 top_k 리스크)."""
+    search = _rescue_search(["b01"], ["b01", "v01", "v02"], quota=3)
+    res = search.search("q", CandidateSearchOptions(top_k=1))
+    assert [c.endpoint_id for c in res] == ["b01"]
+
+
+def test_arm_rescue_pool_follows_base_wide_order_deterministic() -> None:
+    """구제 풀은 base_wide(RRF 점수 내림차순) 순서 그대로이고 재실행에도 동일하다."""
+    search = _rescue_search(_BOTH10, _BOTH10 + _VONLY, quota=2)
+    r1 = [c.endpoint_id for c in search.search("q", CandidateSearchOptions(top_k=10))]
+    r2 = [c.endpoint_id for c in search.search("q", CandidateSearchOptions(top_k=10))]
+    assert r1 == r2 == _BOTH10[:8] + ["v01", "v02"]
+
+
+def test_arm_rescue_quota_coerces_unrecognized_to_zero() -> None:
+    """미인식/음수/None 설정값은 0(비활성)으로 degrade 한다."""
+    for bad in ("abc", "-5", "", None):
+        search = _rescue_search(_BOTH10, _BOTH10 + _VONLY, quota=bad)
+        res = search.search("q", CandidateSearchOptions(top_k=10))
+        assert [c.endpoint_id for c in res] == _BOTH10
+
+
+def test_arm_rescue_wired_from_app_state_default_off(app_state) -> None:
+    """AppState 기본값이 비활성(quota 0)으로 서비스까지 전달된다."""
+    assert _bundle(app_state).candidate_search._arm_rescue_quota == 0
+
+
+def test_arm_rescue_wired_when_app_state_sets_quota(app_state) -> None:
+    """AppState 에 quota 를 주면 서비스가 상한 안에서 반영한다."""
+    app_state.search_arm_rescue_quota = "2"
+    assert _bundle(app_state).candidate_search._arm_rescue_quota == 2

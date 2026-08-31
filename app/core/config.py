@@ -51,6 +51,14 @@ class Settings:
     search_lexical_field: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_LEXICAL_FIELD", "text")
     )
+    #: search_endpoints RRF 컷 밖의 arm-exclusive(단일 arm) 후보를 final top-k 로
+    #: 끌어올리는 사전 고정 quota(`docs/architect-review/92` §6, P2). "0"(기본)이면
+    #: 완전 비활성 — 기존 `base_wide[:top_k]` 와 동일하다. 원시 env 문자열을 그대로
+    #: 두고 `EndpointCandidateSearch` 가 정수로 좁히며 상한으로 클램프한다(미인식
+    #: 값은 "0" 으로 degrade — 롤아웃 스위치).
+    search_arm_rescue_quota: str = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_ARM_RESCUE_QUOTA", "0")
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )
