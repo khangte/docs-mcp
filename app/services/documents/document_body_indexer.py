@@ -102,7 +102,9 @@ def index_document_body(
         for endpoint in list(endpoint_repo.list_by_document(document_id)):
             session.delete(endpoint)
         session.execute(sa_delete(ApiSchema).where(ApiSchema.document_id == document_id))
-        session.execute(sa_delete(DocumentSection).where(DocumentSection.document_id == document_id))
+        session.execute(
+            sa_delete(DocumentSection).where(DocumentSection.document_id == document_id)
+        )
         session.flush()
         document.content_hash = new_hash
         document.raw_text = raw

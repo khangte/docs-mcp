@@ -12,7 +12,6 @@ from typing import Any
 from app.core.errors import EndpointNotFoundError, ValidationError
 from app.models import (
     ApiEndpoint,
-    ApiParameter,
     ApiRequestBody,
 )
 from app.repositories.endpoint_repository import EndpointRepository

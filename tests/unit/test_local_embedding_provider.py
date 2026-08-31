@@ -145,7 +145,9 @@ def test_embed_query_returns_defensive_copy_not_shared_with_cache() -> None:
     assert encoder.encode_calls == [["query: 로그인"]]
 
 
-def test_embed_documents_warns_when_token_count_exceeds_threshold(caplog: pytest.LogCaptureFixture) -> None:
+def test_embed_documents_warns_when_token_count_exceeds_threshold(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """docs/16 Phase 1: 안전 상한(480토큰) 초과 시 경고 로그가 남는다."""
     encoder = _FakeEncoder(tokenizer=_FakeTokenizer(token_count=600))
     provider = LocalEmbeddingProvider("fake-model", encoder=encoder)

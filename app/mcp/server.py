@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from app.composition import AppState
 from app.bootstrap import bootstrap_app_state
+from app.composition import AppState
 from app.mcp.tools.documents import register_document_tools
 from app.mcp.tools.endpoints import register_endpoint_tools
 from app.mcp.tools.sources import register_source_tools

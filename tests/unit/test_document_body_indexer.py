@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.models import DEFAULT_PROJECT
+from app.models import DEFAULT_PROJECT, EMBEDDING_DIM
 from app.models.document_meta import SOURCE_DRIVE
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
@@ -20,7 +20,6 @@ from app.services.documents.document_body_indexer import (
 )
 from app.services.indexer.embedding_provider import HashEmbeddingProvider
 from app.services.indexer.indexer_service import IndexerService
-from app.models import EMBEDDING_DIM
 
 
 @pytest.fixture()

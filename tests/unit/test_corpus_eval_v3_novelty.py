@@ -209,7 +209,10 @@ def test_v3_manifest_requires_schema_version_three(tmp_path: Path) -> None:
         ("query_file", "queries_gate_v2.json"),
         ("baseline_lexical_field", "structured"),
         ("candidate_lexical_field", "structured"),
-        ("rules", "docs/architect-review/84_text_primary_bounded_structured_augmentation_design.md"),
+        (
+            "rules",
+            "docs/architect-review/84_text_primary_bounded_structured_augmentation_design.md",
+        ),
         ("rules_git_sha", "0" * 40),
         ("product_source_sha", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"),
     ],

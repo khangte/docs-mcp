@@ -399,7 +399,11 @@ def test_query_variants_widen_vector_arm_too(app_state, sample_openapi_3: str) -
     """
     _register(app_state, sample_openapi_3)
     bundle = _bundle(app_state)
-    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
+    endpoint_chunks = [
+        (c.id, c.ref_id)
+        for c in bundle.chunk_repo.list_all()
+        if c.chunk_type == "endpoint"
+    ]
     assert endpoint_chunks
 
     original_query = "고객 새로 등록"
@@ -445,7 +449,11 @@ def test_rrf_both_match_type_when_keyword_and_vector_agree(
     """키워드·벡터 두 arm 모두에서 같은 엔드포인트가 나오면 match_type="both" 다."""
     _register(app_state, sample_openapi_3)
     bundle = _bundle(app_state)
-    endpoint_chunks = [(c.id, c.ref_id) for c in bundle.chunk_repo.list_all() if c.chunk_type == "endpoint"]
+    endpoint_chunks = [
+        (c.id, c.ref_id)
+        for c in bundle.chunk_repo.list_all()
+        if c.chunk_type == "endpoint"
+    ]
     keyword_search = KeywordSearch(bundle.chunk_repo)
     keyword_hits = keyword_search.search("find pet by id", top_k=50)
     assert keyword_hits, "키워드 arm 이 최소 1건은 잡아야 시나리오가 의미 있다"

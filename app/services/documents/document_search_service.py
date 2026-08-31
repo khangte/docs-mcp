@@ -785,7 +785,9 @@ class DocumentSearchService:
         for fused_result in fused:
             row = meta_by_doc_id.get(fused_result.ref_id)
             if row is None:
-                _LOG.warning("융합 결과가 참조하는 문서 메타를 찾을 수 없음: %s", fused_result.ref_id)
+                _LOG.warning(
+                    "융합 결과가 참조하는 문서 메타를 찾을 수 없음: %s", fused_result.ref_id
+                )
                 continue
             if source is not None and row.source != source:
                 continue

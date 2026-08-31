@@ -1244,7 +1244,10 @@ def _seed_indexed_document(
     chunk_texts: list[str],
     mime_type: str | None = None,
 ) -> None:
-    """색인된 문서 한 건(Document + section 청크 N개 + document_meta.document_id 연결)을 저장한다."""
+    """색인된 문서 한 건을 저장한다.
+
+    Document + section 청크 N개 + document_meta.document_id 연결.
+    """
     session.add(
         Document(
             id=document_id,
@@ -1284,7 +1287,10 @@ def _seed_indexed_document(
 
 @pytest.fixture()
 def indexed_search_service(db_session, default_resolver):
-    """indexed 전략(벡터 arm 비활성 — HashEmbeddingProvider 는 의미 유사도가 없어 결정성을 위해 끈다)."""
+    """indexed 전략.
+
+    벡터 arm 비활성 — HashEmbeddingProvider 는 의미 유사도가 없어 결정성을 위해 끈다.
+    """
     return DocumentSearchService(
         meta_repo=DocumentMetaRepository(db_session),
         resolver=default_resolver,
@@ -1417,7 +1423,10 @@ def test_indexed_strategy_unindexed_document_survives_via_title_arm(
 def test_indexed_strategy_source_filter_excludes_other_source_body_match(
     db_session, indexed_search_service
 ) -> None:
-    """source 필터는 body-only 매치에도 그대로 적용된다(청크 arm 은 project 스코프만 걸기 때문에 별도 후처리가 필요)."""
+    """source 필터는 body-only 매치에도 그대로 적용된다.
+
+    청크 arm 은 project 스코프만 걸기 때문에 별도 후처리가 필요하다.
+    """
     _seed_indexed_document(
         db_session,
         document_id="notion:doc-wrong-source",

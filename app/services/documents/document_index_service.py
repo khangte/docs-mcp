@@ -37,12 +37,12 @@ from app.services.documents.document_body_indexer import (
     deterministic_document_id,
     index_document_body,
 )
+from app.services.documents.project_source_resolver import ProjectSourceResolver
 from app.services.documents.sources.document_source import (
     NO_SOURCE_CONFIGURED_MESSAGE,
     DocumentSource,
     FileMeta,
 )
-from app.services.documents.project_source_resolver import ProjectSourceResolver
 from app.services.indexer.indexer_service import IndexerService
 
 _LOG = get_logger("docs_mcp.documents.index")
@@ -312,7 +312,14 @@ class DocumentIndexService:
                     continue
                 seen.add(meta.external_id)
                 self._stage_upsert(
-                    project, source_name, meta, existing, now, pending, document_source, index_bodies
+                    project,
+                    source_name,
+                    meta,
+                    existing,
+                    now,
+                    pending,
+                    document_source,
+                    index_bodies,
                 )
                 if pending.total_changes >= BATCH_SIZE:
                     pending = self._commit_batch(committed, pending)

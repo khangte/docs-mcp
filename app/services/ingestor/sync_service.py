@@ -7,9 +7,8 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sqlalchemy.orm import Session
-
 from sqlalchemy import delete as sa_delete
+from sqlalchemy.orm import Session
 
 from app.core.errors import (
     DocumentNotFoundError,
@@ -21,10 +20,10 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
-from app.services.project_scope import normalize_project
 from app.services.indexer.indexer_service import IndexerService
 from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.parser.document_router import detect_doc_type, extract_text, parse_document
+from app.services.project_scope import normalize_project
 
 
 @dataclass
@@ -187,7 +186,9 @@ class SyncService:
         for ep in existing_endpoints:
             self._session.delete(ep)
         self._session.execute(sa_delete(ApiSchema).where(ApiSchema.document_id == document_id))
-        self._session.execute(sa_delete(DocumentSection).where(DocumentSection.document_id == document_id))
+        self._session.execute(
+            sa_delete(DocumentSection).where(DocumentSection.document_id == document_id)
+        )
         self._session.flush()
 
         document.content_hash = new_hash

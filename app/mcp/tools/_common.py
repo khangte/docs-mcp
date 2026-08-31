@@ -8,9 +8,9 @@ from typing import TypeVar
 import anyio
 
 from app.composition import AppState, ServiceBundle, build_services
+from app.core.config import get_settings
 from app.core.errors import DomainError, IntegrationError
 from app.core.logging import get_logger
-from app.core.config import get_settings
 from app.mcp.types import ErrorPayload
 
 _LOG = get_logger("docs_mcp.mcp", level=get_settings().log_level)

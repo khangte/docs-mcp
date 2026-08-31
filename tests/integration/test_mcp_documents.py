@@ -439,7 +439,9 @@ async def test_refresh_index_include_registered_rolls_back_failed_reindex(
     app_state.embedding_provider = _FailOnceEmbeddingProvider(app_state.embedding_provider)
 
     payload = _result(
-        await mcp_server.call_tool("refresh_index", arguments={"include_registered": True, "force": True})
+        await mcp_server.call_tool(
+            "refresh_index", arguments={"include_registered": True, "force": True}
+        )
     )
 
     assert len(payload["registered"]["failed"]) == 1

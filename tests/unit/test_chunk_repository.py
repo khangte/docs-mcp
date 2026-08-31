@@ -216,7 +216,9 @@ def test_search_endpoint_by_text_doc_types_excludes_other_doc_types(db_session) 
     등록형 문서를 걸러낸다(45번 리뷰 §3.2).
     """
     _seed_chunk(db_session, "c1", "doc-drive", "find pet by id", ref_id="ep1", doc_type="drive")
-    _seed_chunk(db_session, "c2", "doc-markdown", "find pet again", ref_id="ep2", doc_type="markdown")
+    _seed_chunk(
+        db_session, "c2", "doc-markdown", "find pet again", ref_id="ep2", doc_type="markdown"
+    )
     db_session.commit()
     repo = ChunkRepository(db_session)
 

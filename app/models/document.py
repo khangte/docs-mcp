@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, PROJECT_MAX_LENGTH, _utcnow
+from app.models.base import PROJECT_MAX_LENGTH, Base, _utcnow
 
 if TYPE_CHECKING:
     # 순환 임포트 방지용 타입체크 전용 임포트(런타임엔 평가 안 됨) — 관계
@@ -32,7 +32,8 @@ class Document(Base):
     source_url: Mapped[str | None] = mapped_column(String(1024), unique=True, nullable=True)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     version: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
-    doc_type: Mapped[str] = mapped_column(String(32), nullable=False, default="openapi")  # openapi|markdown|csv|drive|notion
+    # openapi|markdown|csv|drive|notion
+    doc_type: Mapped[str] = mapped_column(String(32), nullable=False, default="openapi")
     content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     raw_text: Mapped[str] = mapped_column(Text, nullable=False)
     indexed_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)

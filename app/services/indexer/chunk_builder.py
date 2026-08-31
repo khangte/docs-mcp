@@ -115,7 +115,11 @@ def build_schema_chunk_text(schema: ParsedSchema) -> str:
     lines = [f"Schema: {schema.name}"]
     if schema.description:
         lines.append(schema.description)
-    properties = schema.json_schema.get("properties") if isinstance(schema.json_schema, dict) else None
+    properties = (
+        schema.json_schema.get("properties")
+        if isinstance(schema.json_schema, dict)
+        else None
+    )
     if isinstance(properties, dict) and properties:
         names = ", ".join(sorted(str(k) for k in properties.keys()))
         lines.append(f"Properties: {names}")

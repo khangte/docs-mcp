@@ -113,7 +113,9 @@ class ApiRequestBody(Base):
     endpoint_id: Mapped[str] = mapped_column(
         ForeignKey("api_endpoint.id", ondelete="CASCADE"), primary_key=True
     )
-    content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="application/json")
+    content_type: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="application/json"
+    )
     schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     schema_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
     required: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -150,7 +152,9 @@ class ApiResponse(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     endpoint_id: Mapped[str] = mapped_column(ForeignKey("api_endpoint.id", ondelete="CASCADE"))
     status_code: Mapped[str] = mapped_column(String(16), nullable=False)
-    content_type: Mapped[str] = mapped_column(String(128), nullable=False, default="application/json")
+    content_type: Mapped[str] = mapped_column(
+        String(128), nullable=False, default="application/json"
+    )
     schema_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     schema_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")

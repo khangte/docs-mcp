@@ -78,6 +78,17 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# lint 대상에서 제외: 자동 생성 마이그레이션(alembic), untracked 임시(scratchpad),
+# pytest 미수집 일회성 평가·실험 하네스(corpus_eval / mcp_eval / rrf_eval 의 비교·스윕 스크립트).
+# 손유지보수 fixture·헬퍼(fakes.py, document_sources.py, rrf_eval/metrics.py 등)는 계속 검사한다.
+extend-exclude = [
+    "alembic",
+    "scratchpad",
+    "tests/fixtures/corpus_eval/*.py",
+    "tests/fixtures/mcp_eval/*.py",
+    "tests/fixtures/rrf_eval/compare_*.py",
+    "tests/fixtures/rrf_eval/sweep_*.py",
+]
 
 [tool.ruff.lint]
 select = [

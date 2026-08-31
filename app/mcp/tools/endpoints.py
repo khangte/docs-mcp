@@ -9,7 +9,11 @@ from app.composition import AppState, ServiceBundle
 from app.core.config import get_settings
 from app.core.errors import DocumentNotFoundError
 from app.core.logging import get_logger
-from app.mcp.payloads import _to_endpoint_details_payload, _to_resolved_schema_payload, _to_tag_list_payload
+from app.mcp.payloads import (
+    _to_endpoint_details_payload,
+    _to_resolved_schema_payload,
+    _to_tag_list_payload,
+)
 from app.mcp.tools._common import _run_bundle, run_bundle_tool
 from app.mcp.types import (
     EndpointCandidateItem,
@@ -272,6 +276,10 @@ def register_endpoint_tools(mcp: FastMCP, app_state: AppState) -> None:
             try:
                 return _run_bundle(app_state, _inner)
             except DocumentNotFoundError as e:
-                _LOG.error("mcp resource error: document_not_found document_id=%s", document_id, exc_info=e)
+                _LOG.error(
+                    "mcp resource error: document_not_found document_id=%s",
+                    document_id,
+                    exc_info=e,
+                )
                 raise
         return await anyio.to_thread.run_sync(_sync)

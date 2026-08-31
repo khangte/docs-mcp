@@ -102,7 +102,9 @@ def _seed_document(session, document_id: str, project: str = DEFAULT_PROJECT) ->
     session.flush()
 
 
-def test_list_by_document_ids_returns_matching_rows(db_session, repo: DocumentMetaRepository) -> None:
+def test_list_by_document_ids_returns_matching_rows(
+    db_session, repo: DocumentMetaRepository
+) -> None:
     """document_id 집합에 해당하는 메타 행만 배치로 돌려준다."""
     _seed_document(db_session, "drive:doc-a")
     _seed_document(db_session, "drive:doc-b")
@@ -119,7 +121,9 @@ def test_list_by_document_ids_returns_matching_rows(db_session, repo: DocumentMe
     assert [r.title for r in rows] == ["A 문서"]
 
 
-def test_list_by_document_ids_ignores_unindexed_rows(db_session, repo: DocumentMetaRepository) -> None:
+def test_list_by_document_ids_ignores_unindexed_rows(
+    db_session, repo: DocumentMetaRepository
+) -> None:
     """document_id 가 NULL(미색인)인 행은 어떤 조회에도 걸리지 않는다."""
     repo.add(_row(SOURCE_DRIVE, "unindexed"))
     db_session.commit()

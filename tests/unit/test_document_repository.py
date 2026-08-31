@@ -10,7 +10,9 @@ def test_list_resyncable_excludes_raw_document(
 ) -> None:
     in_memory_fetcher.put("https://example.com/openapi.json", sample_openapi_3)
     services = services_factory()
-    services.sync_service.register(project="default", source_url=None, raw_document=sample_openapi_3)
+    services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
     services.sync_service.register(
         project="default", source_url="https://example.com/openapi.json", raw_document=None
     )
@@ -46,7 +48,9 @@ def test_list_resyncable_empty_when_no_url_documents(
     services_factory, sample_openapi_3: str
 ) -> None:
     services = services_factory()
-    services.sync_service.register(project="default", source_url=None, raw_document=sample_openapi_3)
+    services.sync_service.register(
+        project="default", source_url=None, raw_document=sample_openapi_3
+    )
 
     services2 = services_factory()
     assert services2.document_repo.list_resyncable() == []

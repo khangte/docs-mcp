@@ -56,7 +56,10 @@ def test_new_files_are_counted_as_added(index_service, meta_repo, fake_drive_sou
     result = index_service.refresh()
 
     assert (result.added, result.updated, result.removed, result.synced) == (2, 0, 0, 2)
-    assert {m.external_id for m in meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)} == {"d1", "d2"}
+    assert {
+        m.external_id
+        for m in meta_repo.list_by_project_source(DEFAULT_PROJECT, SOURCE_DRIVE)
+    } == {"d1", "d2"}
 
 
 def test_unchanged_modified_at_is_not_counted_as_updated(
@@ -220,7 +223,8 @@ def test_refresh_does_not_fetch_document_bodies(index_service, fake_drive_source
 def test_index_bodies_false_logs_warning(
     index_service, fake_drive_source, caplog
 ) -> None:
-    """index_bodies=False(기본값)면 검색이 title 매칭만으로 퇴화할 수 있음을 경고한다(45번 리뷰 §3.4).
+    """index_bodies=False(기본값)면 검색이 title 매칭만으로 퇴화할 수 있음을
+    경고한다(45번 리뷰 §3.4).
 
     검색 기본 전략은 indexed(3-arm RRF)인데 refresh 기본은 본문을 색인하지
     않으므로, 이 경고 없이는 section 청크가 비거나 낡은 채 남는 실패가
@@ -715,12 +719,12 @@ def test_project_with_only_drive_configured_refreshes_drive_only(
 @pytest.fixture()
 def body_index_deps(db_session):
     """`index_bodies=True` 에 필요한 저장소·인덱서 묶음."""
+    from app.models import EMBEDDING_DIM
     from app.repositories.chunk_repository import ChunkRepository
     from app.repositories.document_repository import DocumentRepository
     from app.repositories.endpoint_repository import EndpointRepository
     from app.services.indexer.embedding_provider import HashEmbeddingProvider
     from app.services.indexer.indexer_service import IndexerService
-    from app.models import EMBEDDING_DIM
 
     document_repo = DocumentRepository(db_session)
     endpoint_repo = EndpointRepository(db_session)

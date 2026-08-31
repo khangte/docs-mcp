@@ -41,7 +41,8 @@ __all__ = [
 MIN_TOP_K = 1
 MAX_TOP_K = 50
 
-#: RRF 융합 전 각 ranker 에서 가져올 후보 폭(`docs/architect-review/07_search_rrf_reevaluation.md` 5.3).
+#: RRF 융합 전 각 ranker 에서 가져올 후보 폭
+#: (`docs/architect-review/07_search_rrf_reevaluation.md` 5.3).
 #: 정답이 한쪽 arm 의 상위에만 있어도 융합에서 건질 수 있도록 top_k 보다 넓게 본다.
 _MIN_CANDIDATE_WIDTH = 50
 _CANDIDATE_WIDTH_MULTIPLIER = 4
@@ -82,7 +83,8 @@ class CandidateSearchOptions:
 
 
 class EndpointCandidateSearch:
-    """RRF 순위 융합(기본) 또는 키워드 우선·벡터 보조(롤백)로 엔드포인트 후보만 반환하는 검색 서비스."""
+    """RRF 순위 융합(기본) 또는 키워드 우선·벡터 보조(롤백)로 엔드포인트 후보만
+    반환하는 검색 서비스."""
 
     def __init__(
         self,

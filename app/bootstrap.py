@@ -34,7 +34,8 @@ def bootstrap_app_state(cfg: Settings | None = None) -> AppState:
 
 
 def seed_default_sources(engine: Engine, cfg: Settings) -> None:
-    """하위 호환용 `drive_folder_id`/`notion_database_id`/`notion_page_id` 설정을 DEFAULT_PROJECT 로 시드한다.
+    """하위 호환용 `drive_folder_id`/`notion_database_id`/`notion_page_id` 설정을
+    DEFAULT_PROJECT 로 시드한다.
 
     ARCH_REVIEW R1: AppState 를 만드는 경로가 `bootstrap_app_state()` 외에도
     `main.py` 의 커스텀 fetcher 우회 경로가 있어, seed 를 `bootstrap_app_state()`

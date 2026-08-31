@@ -14,7 +14,8 @@ def test_index_document_creates_endpoints_and_chunks(
     result = services.sync_service.register(
         project="default", source_url=None, raw_document=sample_openapi_3
     )
-    assert result.endpoints_count == 4  # POST /pet, GET /pet/{petId}, DELETE /pet/{petId}, POST /user
+    # POST /pet, GET /pet/{petId}, DELETE /pet/{petId}, POST /user
+    assert result.endpoints_count == 4
     assert result.chunks_count == result.endpoints_count + result.schemas_count
 
     chunks = services.chunk_repo.list_by_document(result.document.id)

@@ -2,7 +2,8 @@
 
 키워드(ts_rank)와 벡터(코사인 유사도)는 스케일이 서로 달라 점수를 직접 더하면
 가중치가 왜곡된다. RRF 는 각 ranker 안에서의 **등수만** 사용하므로 스케일에
-무관하게 두 신호를 자연스럽게 합칠 수 있다(`docs/architect-review/07_search_rrf_reevaluation.md` 3·5절).
+무관하게 두 신호를 자연스럽게 합칠 수 있다
+(`docs/architect-review/07_search_rrf_reevaluation.md` 3·5절).
 """
 
 from __future__ import annotations
@@ -76,9 +77,15 @@ def reciprocal_rank_fuse(
     가중치 0 은 그 arm 이 점수에 기여하지 않는다는 뜻일 뿐, `contributing_arms`
     (존재 여부로만 계산, 가중치와 무관)에서는 여전히 남는다.
     """
-    keyword_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(keyword_ref_ids), start=1)}
-    vector_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(vector_ref_ids), start=1)}
-    title_ranks = {ref_id: rank for rank, ref_id in enumerate(_dedupe_first(title_ref_ids), start=1)}
+    keyword_ranks = {
+        ref_id: rank for rank, ref_id in enumerate(_dedupe_first(keyword_ref_ids), start=1)
+    }
+    vector_ranks = {
+        ref_id: rank for rank, ref_id in enumerate(_dedupe_first(vector_ref_ids), start=1)
+    }
+    title_ranks = {
+        ref_id: rank for rank, ref_id in enumerate(_dedupe_first(title_ref_ids), start=1)
+    }
 
     fused: list[FusedResult] = []
     for ref_id in keyword_ranks.keys() | vector_ranks.keys() | title_ranks.keys():
@@ -92,7 +99,11 @@ def reciprocal_rank_fuse(
             score += _arm_weight(weights, ARM_VECTOR) / (k + vector_ranks[ref_id])
         if in_title:
             score += _arm_weight(weights, ARM_TITLE) / (k + title_ranks[ref_id])
-        match_type: MatchType = "both" if in_keyword and in_vector else ("keyword" if in_keyword else "vector")
+        match_type: MatchType = (
+            "both"
+            if in_keyword and in_vector
+            else ("keyword" if in_keyword else "vector")
+        )
         contributing_arms = tuple(
             arm
             for arm, hit in (

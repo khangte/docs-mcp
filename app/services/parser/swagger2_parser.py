@@ -11,13 +11,13 @@ from typing import Any
 from app.core.errors import ParserError
 from app.services.parser.openapi_parser import (
     _HTTP_METHODS,
-    _get_info,
-    _parse_parameter_like,
     ParsedDocument,
     ParsedEndpoint,
     ParsedRequestBody,
     ParsedResponse,
     ParsedSchema,
+    _get_info,
+    _parse_parameter_like,
 )
 from app.services.parser.schema_normalizer import (
     _ensure_dict,
@@ -72,7 +72,8 @@ def _parse_swagger2_operation(
     consumes_default: list[str],
     produces_default: list[str],
 ) -> ParsedEndpoint:
-    """Swagger 2.0 의 operation 하나를 ParsedEndpoint 로 변환한다(body 파라미터는 requestBody 로 승격)."""
+    """Swagger 2.0 의 operation 하나를 ParsedEndpoint 로 변환한다
+    (body 파라미터는 requestBody 로 승격)."""
     parameters: list[Any] = []
     body_param: dict[str, Any] | None = None
     for p in operation.get("parameters") or []:
