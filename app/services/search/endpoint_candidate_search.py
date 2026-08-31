@@ -25,6 +25,12 @@ from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.project_scope import resolve_document_scope
+from app.services.search.cross_encoder_reranker import (
+    RERANK_WIDTH,
+    CrossEncoderReranker,
+    apply_slot_lock,
+    rerank_document,
+)
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
 from app.services.search.vector_search import VectorSearch
@@ -109,6 +115,7 @@ class EndpointCandidateSearch:
         document_repo: DocumentRepository | None = None,
         search_strategy: str = "rrf",
         arm_rescue_quota: str | int = 0,
+        cross_encoder_reranker: CrossEncoderReranker | None = None,
     ) -> None:
         """저장소·검색기와 벡터 보조 활성화 여부·검색 전략을 보관한다.
 
@@ -132,6 +139,13 @@ class EndpointCandidateSearch:
                 §6, P2). 0(기본)이면 완전 비활성 — `base_wide[:top_k]` 와 동일하다.
                 원시 env 문자열/정수를 받아 [0, _MAX_ARM_RESCUE_QUOTA] 로 좁히고
                 미인식 값은 0 으로 degrade한다.
+            cross_encoder_reranker: P3 local cross-encoder(`docs/architect-review/96`).
+                None(기본)이면 rerank 단계가 통째로 실행되지 않아 exact/RRF/fallback
+                결과·순서가 baseline 과 byte-identical 이다. 주어지면 RRF `base_wide`
+                상위 N 을 재점수하되 `both` 후보는 원 slot 에 HARD lock 한다.
+                `score_pairs` 가 튀거나 개수가 안 맞으면 baseline 순서로 fail-closed.
+                P3 ON 이면 P2 arm_rescue_quota 는 0 으로 강제된다(설계 96 §1/§8.1 —
+                단독 candidate 경계에서만 검증하므로 두 단계를 겹치지 않는다).
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
@@ -141,6 +155,15 @@ class EndpointCandidateSearch:
         self._document_repo = document_repo
         self._search_strategy = search_strategy
         self._arm_rescue_quota = _coerce_arm_rescue_quota(arm_rescue_quota)
+        self._cross_encoder_reranker = cross_encoder_reranker
+        if cross_encoder_reranker is not None and self._arm_rescue_quota > 0:
+            # 설계 96 §1/§8.1: P3 는 P2 arm-rescue quota=0 을 전제로 단독 candidate
+            # 경계를 검증한다. P3 ON 에서 두 단계를 겹쳐 실행하지 않는다.
+            _LOG.warning(
+                "P3 rerank ON — P2 arm_rescue_quota(%d) 를 0 으로 강제(설계 96 §1)",
+                self._arm_rescue_quota,
+            )
+            self._arm_rescue_quota = 0
 
     def search(self, query: str, options: CandidateSearchOptions) -> list[EndpointCandidate]:
         """질의에 대한 엔드포인트 후보 목록을 반환한다.
@@ -268,7 +291,57 @@ class EndpointCandidateSearch:
         vector_ref_ids = [ref_id for ref_id, _ in vector_hits]
 
         base_wide = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
-        return self._to_candidates_from_fused(self._apply_arm_rescue(list(base_wide), top_k))
+        fused = self._apply_arm_rescue(list(base_wide), top_k)
+        fused = self._apply_cross_encoder_rerank(query, list(base_wide), fused, top_k)
+        return self._to_candidates_from_fused(fused)
+
+    def _apply_cross_encoder_rerank(
+        self,
+        query: str,
+        base_wide: list[FusedResult],
+        fallback: list[FusedResult],
+        top_k: int,
+    ) -> list[FusedResult]:
+        """P3: RRF `base_wide` 상위 N 을 재점수하고 `both` slot lock 을 적용한다(`docs/96`).
+
+        `cross_encoder_reranker` 가 없으면(flag off) `fallback`(= baseline 순서)을 그대로
+        돌려준다 — rerank 코드가 실행되지 않는다. 모델 asset 부재·inference 실패·score
+        개수 불일치·후보 endpoint 미조회는 전부 `fallback` 으로 fail-closed 하며 관측
+        로그를 남긴다(이 상태는 승급 평가에서 PASS 가 될 수 없다, §2.1).
+        """
+        reranker = self._cross_encoder_reranker
+        if reranker is None:
+            return fallback
+        n = min(RERANK_WIDTH, len(base_wide))
+        if n == 0 or top_k <= 0:
+            return fallback
+
+        pool = base_wide[:n]
+        try:
+            endpoints = self._endpoint_repo.get_many([f.ref_id for f in pool])
+            documents: list[str] = []
+            for f in pool:
+                endpoint = endpoints.get(f.ref_id)
+                if endpoint is None:
+                    _LOG.warning(
+                        "P3 rerank: 후보 endpoint 미조회(%s) — baseline degrade", f.ref_id
+                    )
+                    return fallback
+                documents.append(rerank_document(endpoint))
+            scores = reranker.score_pairs(query, documents)
+        except Exception:  # DB 조회·직렬화·모델 실패 전부 baseline fail-closed
+            _LOG.warning("P3 cross-encoder rerank 실패 — baseline 순서 degrade", exc_info=True)
+            return fallback
+        if len(scores) != len(pool):
+            _LOG.warning(
+                "P3 rerank: score 개수 불일치(%d != %d) — baseline 순서 degrade",
+                len(scores),
+                len(pool),
+            )
+            return fallback
+
+        scores_by_ref = {f.ref_id: score for f, score in zip(pool, scores, strict=True)}
+        return apply_slot_lock(base_wide, top_k, scores_by_ref)
 
     def _apply_arm_rescue(
         self, base_wide: list[FusedResult], top_k: int

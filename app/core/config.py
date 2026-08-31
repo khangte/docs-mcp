@@ -59,6 +59,13 @@ class Settings:
     search_arm_rescue_quota: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_ARM_RESCUE_QUOTA", "0")
     )
+    #: P3 local cross-encoder rerank on/off(`docs/architect-review/96`). "false"(기본)
+    #: 이면 composition 이 reranker 를 만들지 않아 exact/RRF/fallback 결과가 baseline
+    #: 과 byte-identical 이다. "1"/"true"/"yes"/"on"(대소문자 무시) 일 때만 pinned
+    #: 로컬 asset 을 오프라인 load 한다 — asset 부재 시 fail-closed baseline.
+    search_cross_encoder_enabled: str = field(
+        default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_CROSS_ENCODER_ENABLED", "false")
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from app.core.db import create_session_factory
+from app.core.logging import get_logger
 from app.models import EMBEDDING_DIM
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
@@ -40,6 +41,12 @@ from app.services.ingestor.openapi_fetcher import OpenAPIFetcher
 from app.services.ingestor.sync_service import SyncService
 from app.services.metadata.writeback_service import MetadataWritebackService
 from app.services.schema_resolution.schema_ref_resolver import SchemaRefResolver
+from app.services.search.cross_encoder_reranker import (
+    CrossEncoderReranker,
+    CrossEncoderUnavailableError,
+    LocalCrossEncoderReranker,
+    cross_encoder_enabled,
+)
 from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
@@ -68,6 +75,9 @@ class AppState:
     #: `docs/architect-review/92` §6). `EndpointCandidateSearch` 로 그대로 전달된다.
     #: "0"(기본)=비활성.
     search_arm_rescue_quota: str = "0"
+    #: P3 local cross-encoder rerank on/off(원시 env 문자열, `docs/architect-review/96`).
+    #: "false"(기본)면 reranker 를 만들지 않아 baseline 과 byte-identical.
+    search_cross_encoder_enabled: str = "false"
     #: 호출 LLM write-back 활성화 여부(docs/architect-review/56 §2.3).
     #: `MetadataWritebackService` 로 그대로 전달된다.
     metadata_writeback_enabled: bool = True
@@ -94,6 +104,7 @@ class AppState:
         document_search_strategy: str | None = None,
         search_lexical_field: str | None = None,
         search_arm_rescue_quota: str | None = None,
+        search_cross_encoder_enabled: str | None = None,
         metadata_writeback_enabled: bool | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
@@ -148,6 +159,11 @@ class AppState:
                 if search_arm_rescue_quota is None
                 else search_arm_rescue_quota
             ),
+            search_cross_encoder_enabled=(
+                settings.search_cross_encoder_enabled
+                if search_cross_encoder_enabled is None
+                else search_cross_encoder_enabled
+            ),
             metadata_writeback_enabled=(
                 settings.business_metadata_writeback_enabled
                 if metadata_writeback_enabled is None
@@ -179,6 +195,25 @@ def _build_embedding_provider() -> EmbeddingProvider:
     if settings.embedding_backend == _HASH_BACKEND:
         return HashEmbeddingProvider(dim=EMBEDDING_DIM)
     return LocalEmbeddingProvider(model_name=settings.embedding_model)
+
+
+def _build_cross_encoder_reranker(raw_enabled: str) -> CrossEncoderReranker | None:
+    """P3 flag 가 켜져 있을 때만 pinned 로컬 cross-encoder 를 오프라인 load 한다.
+
+    flag off(기본)면 None — `EndpointCandidateSearch` 가 rerank 단계를 통째로
+    건너뛰어 baseline 과 byte-identical 이다. flag on 이어도 asset 부재·load 실패는
+    None 으로 degrade 해(관측 로그) 검색이 baseline 순서로 계속 동작한다 — startup
+    을 죽이지 않는다(`docs/architect-review/96` §2.1/§7).
+    """
+    if not cross_encoder_enabled(raw_enabled):
+        return None
+    try:
+        return LocalCrossEncoderReranker()
+    except CrossEncoderUnavailableError:
+        get_logger("docs_mcp.composition").warning(
+            "P3 cross-encoder asset 오프라인 load 실패 — rerank 비활성(baseline 순서 유지)"
+        )
+        return None
 
 
 @dataclass
@@ -243,6 +278,9 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             document_repo=document_repo,
             search_strategy=state.search_strategy,
             arm_rescue_quota=state.search_arm_rescue_quota,
+            cross_encoder_reranker=_build_cross_encoder_reranker(
+                state.search_cross_encoder_enabled
+            ),
         )
         endpoint_details_service = EndpointDetailsService(
             endpoint_repo=endpoint_repo,
