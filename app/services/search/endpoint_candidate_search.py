@@ -31,6 +31,7 @@ from app.services.search.cross_encoder_reranker import (
     apply_slot_lock,
     rerank_document,
 )
+from app.services.search.endpoint_representation_search import EndpointRepresentationSearch
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.rrf import FusedResult, MatchType, reciprocal_rank_fuse
 from app.services.search.vector_search import VectorSearch
@@ -65,6 +66,43 @@ def _coerce_arm_rescue_quota(raw: str | int) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(value, _MAX_ARM_RESCUE_QUOTA))
+
+
+def _lock_both_slots(
+    legacy_base_wide: list[FusedResult],
+    tentative_wide: list[FusedResult],
+    top_k: int,
+) -> list[FusedResult]:
+    """§3.3 both-arm slot 보존: legacy base final 의 `both` 후보를 원 slot 에 HARD lock 한다.
+
+    `apply_slot_lock`(P3, score 기준)의 order 기준 쌍둥이다.
+
+    1. `legacy_base_wide[:top_k]` 안 `match_type == "both"` ref 의 0-based slot 을 lock.
+    2. 나머지 slot 만 `tentative_wide`(3-arm RRF 점수 내림차순, 동점 ref_id 오름차순 —
+       `reciprocal_rank_fuse` 가 이미 결정적으로 정렬) 순서로 앞에서부터 채우되
+       locked ref 는 건너뛴다.
+
+    locked 후보의 id·slot·상대 순서는 불변이다(both-arm slot preservation HARD gate).
+    tentative pool 이 부족하면 뒤 slot 은 비워 둔 채(= 결과 길이가 top_k 미만) 반환한다.
+    """
+    if top_k <= 0:
+        return []
+    locked = {
+        slot: f
+        for slot, f in enumerate(legacy_base_wide[:top_k])
+        if f.match_type == "both"
+    }
+    locked_ids = {f.ref_id for f in locked.values()}
+
+    result: list[FusedResult | None] = [None] * top_k
+    for slot, f in locked.items():
+        result[slot] = f
+    fill = (f for f in tentative_wide if f.ref_id not in locked_ids)
+    for slot in range(top_k):
+        if result[slot] is None:
+            result[slot] = next(fill, None)
+    return [f for f in result if f is not None]
+
 
 #: "GET /pet/{petId}" 형태의 method+path exact 질의를 잡아내는 패턴
 #: (`docs/architect-review/37_user_rag_proposal_vs_our_design_diff.md` 5b).
@@ -116,6 +154,7 @@ class EndpointCandidateSearch:
         search_strategy: str = "rrf",
         arm_rescue_quota: str | int = 0,
         cross_encoder_reranker: CrossEncoderReranker | None = None,
+        endpoint_representation_search: EndpointRepresentationSearch | None = None,
     ) -> None:
         """저장소·검색기와 벡터 보조 활성화 여부·검색 전략을 보관한다.
 
@@ -146,6 +185,15 @@ class EndpointCandidateSearch:
                 `score_pairs` 가 튀거나 개수가 안 맞으면 baseline 순서로 fail-closed.
                 P3 ON 이면 P2 arm_rescue_quota 는 0 으로 강제된다(설계 96 §1/§8.1 —
                 단독 candidate 경계에서만 검증하므로 두 단계를 겹치지 않는다).
+            endpoint_representation_search: 결정적 endpoint 표현형 arm
+                (`docs/architect-review/101`). None(기본)이면 `_search_rrf` 가
+                기존 keyword+vector 2-arm RRF 경로를 그대로 타 baseline 과
+                byte-identical 이다(projection repository lookup·추가 임베딩
+                호출 없음). 주어지면 rrf 전략에서만 세 번째 RRF list 로 편입되고,
+                legacy keyword+vector-only base final 안의 `both` 후보는 원 slot 에
+                HARD lock 된다(§3.3). fallback 전략은 이 arm 을 호출하지 않는다.
+                P2/P3 와의 동시 설정은 composition 이 invalid configuration 으로
+                fail-closed 하므로 여기서는 세 옵션이 동시에 활성일 수 없다.
         """
         self._chunk_repo = chunk_repo
         self._endpoint_repo = endpoint_repo
@@ -156,6 +204,7 @@ class EndpointCandidateSearch:
         self._search_strategy = search_strategy
         self._arm_rescue_quota = _coerce_arm_rescue_quota(arm_rescue_quota)
         self._cross_encoder_reranker = cross_encoder_reranker
+        self._endpoint_representation_search = endpoint_representation_search
         if cross_encoder_reranker is not None and self._arm_rescue_quota > 0:
             # 설계 96 §1/§8.1: P3 는 P2 arm-rescue quota=0 을 전제로 단독 candidate
             # 경계를 검증한다. P3 ON 에서 두 단계를 겹쳐 실행하지 않는다.
@@ -290,10 +339,49 @@ class EndpointCandidateSearch:
             _LOG.debug("벡터 arm 생략(rrf 전략, 키워드 단독 degrade): 임베딩 백엔드 비의미론적")
         vector_ref_ids = [ref_id for ref_id, _ in vector_hits]
 
+        if self._endpoint_representation_search is not None:
+            fused = self._compose_with_representation_arm(
+                query, keyword_ref_ids, vector_ref_ids, width, top_k, document_id, project
+            )
+            return self._to_candidates_from_fused(fused)
+
         base_wide = reciprocal_rank_fuse(keyword_ref_ids, vector_ref_ids, top_k=width)
         fused = self._apply_arm_rescue(list(base_wide), top_k)
         fused = self._apply_cross_encoder_rerank(query, list(base_wide), fused, top_k)
         return self._to_candidates_from_fused(fused)
+
+    def _compose_with_representation_arm(
+        self,
+        query: str,
+        keyword_ref_ids: list[str],
+        vector_ref_ids: list[str],
+        width: int,
+        top_k: int,
+        document_id: str | None,
+        project: str | None,
+    ) -> list[FusedResult]:
+        """feature ON: `endpoint_repr` 를 세 번째 RRF list 로 넣고 both-slot lock 을 적용한다(§3.3).
+
+        같은 query 로 legacy keyword+vector-only RRF `base_wide` 를 함께 계산해
+        `base_wide[:top_k]` 안의 모든 `match_type == "both"` endpoint 를 relative
+        slot 에 HARD lock 하고, 나머지 slot 만 tentative 3-arm wide 순서로 채운다.
+        `top_k` 은 exact 후보 수를 뺀 `remaining_top_k` 이라 exact-relative 처리는
+        이미 반영돼 있다.
+        """
+        assert self._endpoint_representation_search is not None
+        repr_result = self._endpoint_representation_search.search(
+            query, document_id=document_id, project=project
+        )
+        tentative_wide = reciprocal_rank_fuse(
+            keyword_ref_ids,
+            vector_ref_ids,
+            top_k=width,
+            title_ref_ids=repr_result.ordered_endpoint_ids,
+        )
+        legacy_base_wide = reciprocal_rank_fuse(
+            keyword_ref_ids, vector_ref_ids, top_k=width
+        )
+        return _lock_both_slots(legacy_base_wide, tentative_wide, top_k)
 
     def _apply_cross_encoder_rerank(
         self,

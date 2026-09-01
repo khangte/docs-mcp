@@ -23,9 +23,11 @@ from app.models import (
     DocumentSection,
 )
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.endpoint_projection_repository import EndpointProjectionRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.indexer.chunk_builder import build_chunks
 from app.services.indexer.embedding_provider import TOKEN_WARNING_THRESHOLD, EmbeddingProvider
+from app.services.indexer.endpoint_projection import build_endpoint_projection
 from app.services.parser.openapi_parser import (
     ParsedDocument,
     ParsedEndpoint,
@@ -43,11 +45,18 @@ class IndexerService:
         endpoint_repo: EndpointRepository,
         chunk_repo: ChunkRepository,
         embedding_provider: EmbeddingProvider,
+        projection_repo: EndpointProjectionRepository | None = None,
     ) -> None:
-        """저장소·임베딩 의존성을 보관한다."""
+        """저장소·임베딩 의존성을 보관한다.
+
+        `projection_repo` 가 주어지면 endpoint lifecycle 에 canonical projection
+        (`docs/architect-review/101`) 생성을 포함한다. None 이면(협업 문서 본문
+        색인 등 endpoint 가 없는 경로) projection 을 만들지 않는다.
+        """
         self._endpoint_repo = endpoint_repo
         self._chunk_repo = chunk_repo
         self._embedding_provider = embedding_provider
+        self._projection_repo = projection_repo
 
     def index_document(
         self, document: Document, parsed: ParsedDocument
@@ -131,7 +140,53 @@ class IndexerService:
             )
             self._chunk_repo.add(chunk)
 
+        self._index_projections(document, parsed, endpoint_ids)
+
         return len(parsed.endpoints), len(built_chunks)
+
+    def _index_projections(
+        self,
+        document: Document,
+        parsed: ParsedDocument,
+        endpoint_ids: dict[tuple[str, str], str],
+    ) -> None:
+        """endpoint 마다 canonical projection 1행을 만들거나 갱신한다(`docs/architect-review/101`).
+
+        같은 세션/트랜잭션에서 돌아 chunk indexing 과 원자성을 공유한다 —
+        local embedding 이 실패하면 여기서 예외가 올라가 문서 트랜잭션이 통째로
+        롤백되고 반쪽 projection 을 남기지 않는다. non-semantic provider 에서는
+        dense vector 를 만들지 않고 `embedding` 을 NULL 로 둔다(§5.2).
+        """
+        if self._projection_repo is None or not parsed.endpoints:
+            return
+        projections = [build_endpoint_projection(ep) for ep in parsed.endpoints]
+        if self._embedding_provider.is_semantic:
+            labels = [
+                f"{document.id}:projection:{endpoint_ids[(ep.method, ep.path)]}"
+                for ep in parsed.endpoints
+            ]
+            vectors: list[list[float] | None] = [
+                list(v)
+                for v in self._embedding_provider.embed_documents(
+                    [p.canonical_text for p in projections], labels=labels
+                )
+            ]
+        else:
+            vectors = [None] * len(projections)
+        for parsed_ep, projection, vector in zip(
+            parsed.endpoints, projections, vectors, strict=True
+        ):
+            self._projection_repo.upsert(
+                id=_make_projection_id(document.id, parsed_ep.method, parsed_ep.path),
+                endpoint_id=endpoint_ids[(parsed_ep.method, parsed_ep.path)],
+                document_id=document.id,
+                method=parsed_ep.method,
+                path=parsed_ep.path,
+                canonical_text=projection.canonical_text,
+                embedding=vector,
+                representation_version=projection.representation_version,
+                source_hash=projection.source_hash,
+            )
 
 
 def _to_endpoint_entity(
@@ -199,6 +254,16 @@ def _make_endpoint_id(document_id: str, parsed: ParsedEndpoint, idx: int) -> str
     key = f"{document_id}:{parsed.method}:{parsed.path}:{idx}"
     digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
     return f"{document_id}:ep:{digest}"
+
+
+def _make_projection_id(document_id: str, method: str, path: str) -> str:
+    """문서ID·메서드·경로를 해시해 결정적인 projection id 를 만든다.
+
+    endpoint id 와 달리 인덱스를 섞지 않는다 — projection 은 `(document_id,
+    method, path)` 당 정확히 한 행이라 재색인 전후 같은 id 로 수렴해야 한다.
+    """
+    digest = hashlib.sha1(f"{document_id}:{method}:{path}".encode()).hexdigest()[:16]
+    return f"{document_id}:pj:{digest}"
 
 
 def _json_dumps_safe(obj: dict[str, object]) -> str:

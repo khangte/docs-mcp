@@ -19,6 +19,7 @@ from app.models import EMBEDDING_DIM
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_meta_repository import DocumentMetaRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.endpoint_projection_repository import EndpointProjectionRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.repositories.project_source_repository import ProjectSourceRepository
 from app.repositories.sync_history_repository import SyncHistoryRepository
@@ -47,7 +48,14 @@ from app.services.search.cross_encoder_reranker import (
     LocalCrossEncoderReranker,
     cross_encoder_enabled,
 )
-from app.services.search.endpoint_candidate_search import EndpointCandidateSearch
+from app.services.search.endpoint_candidate_search import (
+    EndpointCandidateSearch,
+    _coerce_arm_rescue_quota,
+)
+from app.services.search.endpoint_representation_search import (
+    EndpointRepresentationSearch,
+    endpoint_representation_enabled,
+)
 from app.services.search.keyword_search import KeywordSearch
 from app.services.search.vector_search import VectorSearch
 from app.services.tags.tag_catalog_service import TagCatalogService
@@ -78,6 +86,10 @@ class AppState:
     #: P3 local cross-encoder rerank on/off(원시 env 문자열, `docs/architect-review/96`).
     #: "false"(기본)면 reranker 를 만들지 않아 baseline 과 byte-identical.
     search_cross_encoder_enabled: str = "false"
+    #: 결정적 endpoint 표현형 arm on/off(원시 env 문자열, `docs/architect-review/101`).
+    #: "false"(기본)면 arm 을 만들지 않아 baseline 과 byte-identical. P2 quota>0 또는
+    #: P3 활성과 동시 설정은 `build_services` 가 invalid configuration 으로 fail-closed.
+    search_endpoint_representation_enabled: str = "false"
     #: 호출 LLM write-back 활성화 여부(docs/architect-review/56 §2.3).
     #: `MetadataWritebackService` 로 그대로 전달된다.
     metadata_writeback_enabled: bool = True
@@ -105,6 +117,7 @@ class AppState:
         search_lexical_field: str | None = None,
         search_arm_rescue_quota: str | None = None,
         search_cross_encoder_enabled: str | None = None,
+        search_endpoint_representation_enabled: str | None = None,
         metadata_writeback_enabled: bool | None = None,
     ) -> "AppState":
         """엔진과 fetcher 를 받아 기본 의존성(세션 팩토리·프로바이더)을 채운 AppState 를 만든다.
@@ -164,6 +177,11 @@ class AppState:
                 if search_cross_encoder_enabled is None
                 else search_cross_encoder_enabled
             ),
+            search_endpoint_representation_enabled=(
+                settings.search_endpoint_representation_enabled
+                if search_endpoint_representation_enabled is None
+                else search_endpoint_representation_enabled
+            ),
             metadata_writeback_enabled=(
                 settings.business_metadata_writeback_enabled
                 if metadata_writeback_enabled is None
@@ -216,6 +234,37 @@ def _build_cross_encoder_reranker(raw_enabled: str) -> CrossEncoderReranker | No
         return None
 
 
+def _build_endpoint_representation_search(
+    state: AppState,
+    projection_repo: EndpointProjectionRepository,
+) -> EndpointRepresentationSearch | None:
+    """`docs/architect-review/101` arm 을 flag ON 일 때만 만든다(§3.2/§3.3).
+
+    flag OFF(기본)면 None — `EndpointCandidateSearch` 가 기존 keyword+vector 2-arm
+    RRF 경로를 그대로 타 baseline 과 byte-identical 이다(projection repository
+    lookup·추가 임베딩 호출 없음).
+
+    P2 arm_rescue_quota>0 또는 P3 cross-encoder 와의 동시 설정은 §3.3 대로
+    invalid configuration 으로 fail-closed 한다 — P2 의 tail replacement 나 P3 의
+    rerank 가 새 arm 의 rank 효과를 가려 측정을 오염시키는 것을 막는다.
+    """
+    if not endpoint_representation_enabled(state.search_endpoint_representation_enabled):
+        return None
+    if _coerce_arm_rescue_quota(state.search_arm_rescue_quota) > 0:
+        raise ValueError(
+            "invalid configuration: DOCS_MCP_SEARCH_ENDPOINT_REPRESENTATION_ENABLED 과 "
+            "DOCS_MCP_SEARCH_ARM_RESCUE_QUOTA>0 은 동시에 설정할 수 없다"
+            "(docs/architect-review/101 §3.3)"
+        )
+    if cross_encoder_enabled(state.search_cross_encoder_enabled):
+        raise ValueError(
+            "invalid configuration: DOCS_MCP_SEARCH_ENDPOINT_REPRESENTATION_ENABLED 과 "
+            "DOCS_MCP_SEARCH_CROSS_ENCODER_ENABLED 는 동시에 설정할 수 없다"
+            "(docs/architect-review/101 §3.3)"
+        )
+    return EndpointRepresentationSearch(projection_repo, state.embedding_provider)
+
+
 @dataclass
 class ServiceBundle:
     """요청 스코프 서비스 컨테이너."""
@@ -250,12 +299,14 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
         document_repo = DocumentRepository(session)
         endpoint_repo = EndpointRepository(session)
         chunk_repo = ChunkRepository(session)
+        projection_repo = EndpointProjectionRepository(session)
         sync_history_repo = SyncHistoryRepository(session)
         document_meta_repo = DocumentMetaRepository(session)
         indexer = IndexerService(
             endpoint_repo=endpoint_repo,
             chunk_repo=chunk_repo,
             embedding_provider=state.embedding_provider,
+            projection_repo=projection_repo,
         )
         sync_service = SyncService(
             session=session,
@@ -280,6 +331,9 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             arm_rescue_quota=state.search_arm_rescue_quota,
             cross_encoder_reranker=_build_cross_encoder_reranker(
                 state.search_cross_encoder_enabled
+            ),
+            endpoint_representation_search=_build_endpoint_representation_search(
+                state, projection_repo
             ),
         )
         endpoint_details_service = EndpointDetailsService(
@@ -330,6 +384,7 @@ def build_services(state: AppState) -> Iterator[ServiceBundle]:
             chunk_repo=chunk_repo,
             embedding_provider=state.embedding_provider,
             enabled=state.metadata_writeback_enabled,
+            projection_repo=projection_repo,
         )
         yield ServiceBundle(
             session=session,

@@ -23,6 +23,7 @@ from app.core.logging import get_logger
 from app.models import ApiEndpoint, EndpointBusinessMetadata
 from app.repositories.chunk_repository import ChunkRepository
 from app.repositories.document_repository import DocumentRepository
+from app.repositories.endpoint_projection_repository import EndpointProjectionRepository
 from app.repositories.endpoint_repository import EndpointRepository
 from app.services.indexer.embedding_provider import EmbeddingProvider
 from app.services.indexer.endpoint_chunk_refresher import refresh_endpoint_chunk
@@ -84,14 +85,20 @@ class MetadataWritebackService:
         chunk_repo: ChunkRepository,
         embedding_provider: EmbeddingProvider,
         enabled: bool,
+        projection_repo: EndpointProjectionRepository | None = None,
     ) -> None:
-        """세션·저장소·임베딩 의존성과 활성화 여부를 보관한다."""
+        """세션·저장소·임베딩 의존성과 활성화 여부를 보관한다.
+
+        `projection_repo` 가 주어지면 청크 갱신과 같은 트랜잭션에서 canonical
+        projection(`docs/architect-review/101`)도 self-heal 한다.
+        """
         self._session = session
         self._endpoint_repo = endpoint_repo
         self._document_repo = document_repo
         self._chunk_repo = chunk_repo
         self._embedding_provider = embedding_provider
         self._enabled = enabled
+        self._projection_repo = projection_repo
 
     def build_request_hint(self, endpoint_id: str) -> MetadataRequestHint | None:
         """메타데이터가 없거나 낡았으면 기여 요청 힌트를 만든다(아니면 None).
@@ -195,6 +202,7 @@ class MetadataWritebackService:
                 metadata=row,
                 chunk_repo=self._chunk_repo,
                 embedding_provider=self._embedding_provider,
+                projection_repo=self._projection_repo,
             )
             self._session.commit()
             return updated

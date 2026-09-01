@@ -66,6 +66,18 @@ class Settings:
     search_cross_encoder_enabled: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_SEARCH_CROSS_ENCODER_ENABLED", "false")
     )
+    #: 결정적 endpoint-level 다표현 후보 생성기(3번째 RRF arm) on/off
+    #: (`docs/architect-review/101`). "false"(기본)이면 composition 이 arm 을
+    #: 만들지 않아 exact/keyword/vector/fallback/RRF 결과·임베딩 호출·DB projection
+    #: 조회가 baseline 과 byte-identical 이다. "1"/"true"/"yes"/"on"(대소문자 무시)
+    #: 일 때만 projection FTS/vector arm 과 legacy-baseline both-slot lock 이 켜진다.
+    #: P2 arm_rescue_quota>0 또는 P3 cross-encoder 와 동시 설정은 invalid
+    #: configuration 으로 fail-closed 한다(§3.3).
+    search_endpoint_representation_enabled: str = field(
+        default_factory=lambda: os.environ.get(
+            "DOCS_MCP_SEARCH_ENDPOINT_REPRESENTATION_ENABLED", "false"
+        )
+    )
     log_level: str = field(
         default_factory=lambda: os.environ.get("DOCS_MCP_LOG_LEVEL", "INFO")
     )

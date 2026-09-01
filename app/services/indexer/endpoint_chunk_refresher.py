@@ -12,8 +12,11 @@ from __future__ import annotations
 from app.core.logging import get_logger
 from app.models import ApiEndpoint, Document, EndpointBusinessMetadata
 from app.repositories.chunk_repository import ChunkRepository
+from app.repositories.endpoint_projection_repository import EndpointProjectionRepository
 from app.services.indexer.chunk_builder import build_endpoint_chunk_text
 from app.services.indexer.embedding_provider import EmbeddingProvider
+from app.services.indexer.endpoint_projection import build_endpoint_projection
+from app.services.indexer.indexer_service import _make_projection_id
 from app.services.parser.document_router import parse_document
 
 _LOG = get_logger("docs_mcp.indexer.chunk_refresh")
@@ -26,6 +29,7 @@ def refresh_endpoint_chunk(
     metadata: EndpointBusinessMetadata | None,
     chunk_repo: ChunkRepository,
     embedding_provider: EmbeddingProvider,
+    projection_repo: EndpointProjectionRepository | None = None,
 ) -> bool:
     """엔드포인트 1건의 청크 텍스트/임베딩을 다시 만들어 갱신한다.
 
@@ -35,6 +39,10 @@ def refresh_endpoint_chunk(
         metadata: 청크에 주입할 비즈니스 메타데이터(없으면 주입 없이 재조립).
         chunk_repo: 청크 갱신용 저장소.
         embedding_provider: 재임베딩에 쓸 프로바이더(로컬 모델이라 과금 없음).
+        projection_repo: 주어지면 같은 트랜잭션에서 canonical projection 도
+            self-heal 한다(`docs/architect-review/101`). projection 은 OpenAPI
+            원문만 보므로 write-back 자체로는 내용이 바뀌지 않고, 행이 없거나
+            hash 가 어긋난 경우에만 다시 쓴다.
 
     Returns:
         갱신에 성공하면 True. 원문에서 해당 `(method, path)` 를 못 찾거나
@@ -61,9 +69,52 @@ def refresh_endpoint_chunk(
     text = build_endpoint_chunk_text(target, metadata=metadata)
     label = f"{document.id}:endpoint:{endpoint.id}"
     vectors = embedding_provider.embed_documents([text], labels=[label])
-    return chunk_repo.update_endpoint_chunk(
+    updated = chunk_repo.update_endpoint_chunk(
         document_id=document.id,
         ref_id=endpoint.id,
         text=text,
         embedding=list(vectors[0]),
+    )
+    if projection_repo is not None:
+        _refresh_projection(
+            document=document,
+            endpoint=endpoint,
+            target=target,
+            projection_repo=projection_repo,
+            embedding_provider=embedding_provider,
+        )
+    return updated
+
+
+def _refresh_projection(
+    *,
+    document: Document,
+    endpoint: ApiEndpoint,
+    target: object,
+    projection_repo: EndpointProjectionRepository,
+    embedding_provider: EmbeddingProvider,
+) -> None:
+    """canonical projection 을 self-heal 한다(행 없음 / hash 불일치일 때만 재기록)."""
+    projection = build_endpoint_projection(target)  # type: ignore[arg-type]
+    existing = projection_repo.get_by_endpoint(endpoint.id)
+    if existing is not None and existing.source_hash == projection.source_hash:
+        return
+    embedding = None
+    if embedding_provider.is_semantic:
+        label = f"{document.id}:projection:{endpoint.id}"
+        embedding = list(
+            embedding_provider.embed_documents(
+                [projection.canonical_text], labels=[label]
+            )[0]
+        )
+    projection_repo.upsert(
+        id=_make_projection_id(document.id, endpoint.method, endpoint.path),
+        endpoint_id=endpoint.id,
+        document_id=document.id,
+        method=endpoint.method,
+        path=endpoint.path,
+        canonical_text=projection.canonical_text,
+        embedding=embedding,
+        representation_version=projection.representation_version,
+        source_hash=projection.source_hash,
     )

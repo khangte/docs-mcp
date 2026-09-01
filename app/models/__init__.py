@@ -20,6 +20,10 @@ from app.models.base import DEFAULT_PROJECT, PROJECT_MAX_LENGTH, SCHEMA, Base
 from app.models.chunk import EMBEDDING_DIM, TEXT_TSV_EXPRESSION, Chunk
 from app.models.document import Document, DocumentSection, DocumentSyncHistory
 from app.models.document_meta import ALLOWED_SOURCES, SOURCE_DRIVE, SOURCE_NOTION, DocumentMeta
+from app.models.endpoint_projection import (
+    CANONICAL_TSV_EXPRESSION,
+    EndpointSearchProjection,
+)
 from app.models.openapi import (
     ApiEndpoint,
     ApiParameter,
@@ -41,6 +45,8 @@ __all__ = [
     "Chunk",
     "EMBEDDING_DIM",
     "TEXT_TSV_EXPRESSION",
+    "CANONICAL_TSV_EXPRESSION",
+    "EndpointSearchProjection",
     "ApiEndpoint",
     "ApiParameter",
     "ApiRequestBody",
