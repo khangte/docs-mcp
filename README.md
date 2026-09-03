@@ -1,16 +1,77 @@
 # docs-mcp: RAG MCP Server
 
-Markdown·CSV·PDF/DOCX·OpenAPI(Swagger) 문서와 Google Drive/Notion 협업 문서를 수집·색인하고, 하이브리드 검색(키워드+벡터)으로 필요한 문서 내용을 찾아주는 **MCP 서버**입니다. Claude Desktop/Code 등 MCP 호환 클라이언트에 도구로 등록해 사용하며, 최종 자연어 답변은 서버가 아니라 호출 LLM(Claude/ChatGPT)이 검색 결과를 근거로 생성합니다.
+OpenAPI·Markdown·PDF 문서와 Google Drive/Notion 협업 문서를 색인하고, **하이브리드 검색(키워드+벡터)으로 후보를 골라 호출 LLM에 넘기는 MCP 서버**입니다. 최종 자연어 답변은 서버가 아니라 Claude/ChatGPT가 검색 결과를 근거로 생성합니다 — 서버의 역할은 후보 피더이고, 따라서 품질 지표는 정확도가 아니라 **recall@k** 입니다.
 
-> 클라이언트별 등록, 전체 도구 목록, 배치 자동화 같은 운영 상세는 [`docs/operations.md`](docs/operations.md) 에 있습니다.
+| 지표 | 값 |
+| --- | --- |
+| 검색 품질 | Recall@10 **45~60%**, Recall@3 35~40%, MRR 0.36~0.37 (실 코퍼스 1,809 엔드포인트, n=20) |
+| 질의 지연 | p50 **21.7ms** / p95 56.7ms / p99 63.5ms (top_k=10, 100 표본) |
+| 검색 비용 | **$0** (로컬 CPU 임베딩 + 자체 호스팅 Postgres) |
+
+## 이 프로젝트의 핵심: 88%가 60%였던 이야기
+
+초기 20개 엔드포인트짜리 합성 하네스에서는 **Recall@3 88%·@10 95%**가 나왔습니다.
+Stripe 589 + GitHub 1,220 = **1,809개 실제 엔드포인트**를 프리즈한 코퍼스로 다시
+재자, 같은 코드가 **Recall@10 60%**로 떨어졌습니다. 88%는 성능이 아니라 **벤치가
+포화됐다는 증거**였습니다.
+
+여기서부터가 이 저장소가 실제로 한 일입니다.
+
+**1. 측정 자체를 신뢰할 수 있게 만들기**
+
+- n=20의 표준오차는 ±11%p대입니다. 그래서 Recall@10은 **45~60% 구간 자체가 결과**이고,
+  단일 수치를 성능으로 보고하지 않습니다.
+- 벡터 arm `ORDER BY`의 tie-break 누락으로 재색인마다 순위가 흔들리던 결함을 찾아
+  고쳤습니다 — 고치기 전 측정치는 전부 무효입니다.
+- 튜닝이 gate 셋에 과적합되지 않도록 **sealed holdout**을 분리하고, gate manifest로
+  질의·코퍼스·판정 기준을 프리즈했습니다.
+
+**2. 개선안 6건을 만들고, 6건 모두 데이터로 기각**
+
+| 개선안 | 결과 |
+| --- | --- |
+| P1 벡터 질의 재구성 | 기각 ([95](docs/architect-review/95_p1_vector_reformulation_rejection_verdict.md)) |
+| P2 arm 구제(rescue) | 기각 ([93](docs/architect-review/93_p2_arm_rescue_effectiveness_verdict.md)) |
+| P3 로컬 cross-encoder 리랭크 | 코드 병합, **미승격** ([99](docs/architect-review/99_p3_feature_on_diagnostic_verdict.md)) |
+| B1/B2 RRF ablation | 기각 ([98](docs/architect-review/98_b1_b2_verdict_and_p0_coordinate_reconciliation.md)) |
+| 검색시점 키워드 변형 | 트랙 종료 ([74](docs/architect-review/74_p02_coverage_fix_failure_and_keyword_variant_stop_verdict.md)) |
+| 결정적 endpoint-representation arm | hard gate 통과(R@10 +0.10), **미승격·dark 유지** ([103](docs/architect-review/103_endpoint_representation_promotion_verdict.md)) |
+
+마지막 항목이 이 프로젝트의 판정 기준을 가장 잘 보여줍니다. hard gate를 통과하고
+Recall@10이 +0.10 올랐는데도 승격하지 않았습니다 — n=20에서 miss 11→9는 표준오차
+안이고, sealed holdout으로 재확인하기 전에는 개선이라고 부를 근거가 없기 때문입니다.
+**측정이 개선을 증명하지 못하면 코드는 flag-off로 남습니다.**
+
+**3. 남은 좌표를 숨기지 않기**
+
+목표 대비 -45~50%p입니다. 실패 축은 교차언어 질의·흔한 토큰 범람·RRF 회귀 3건으로
+분해돼 있고, 어디까지가 하이브리드 검색의 한계이고 어디부터가 아직 못 푼 문제인지
+[29번 문서 §13](docs/architect-review/29_search_quality_eval_real_corpus_results.md)에
+남겨두었습니다.
+
+### 더 읽을거리
+
+- [`docs/search_flow.md`](docs/search_flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
+- [`docs/architect-review/29_search_quality_eval_real_corpus_results.md`](docs/architect-review/29_search_quality_eval_real_corpus_results.md) — 실 코퍼스 측정 결과와 카테고리별 실패 분해
+- [`docs/implementation_journey.md`](docs/implementation_journey.md) — 로드맵 0~5의 구현 순서·판단(커밋·설계문서 매핑, 기각된 개선안 포함)
+- [`docs/eval-results/`](docs/eval-results/) — 평가 실행 16건의 원본 기록
+
+## 검색 아키텍처 (요약)
+
+검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을
+**RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 두 신호는 스케일이 달라 점수를
+직접 더할 수 없으므로, 각 ranker 안에서의 **등수만** 사용합니다
+(`app/services/search/rrf.py`). 협업 문서 검색은 여기에 제목 arm을 더한 3-arm입니다.
 
 ## 주요 기능
 
-- **다양한 문서 소스 관리**: URL 또는 원문으로 Markdown, CSV, PDF/DOCX, OpenAPI 3.x/Swagger 2.0 문서를 등록·조회·삭제. Google Drive/Notion 은 폴더/DB 매핑으로 연결합니다.
-- **하이브리드 검색(RRF 융합)**: 키워드(Postgres FTS)와 벡터 유사도를 **RRF(Reciprocal Rank Fusion)**로 항상 융합해 문서 섹션을 찾습니다.
-- **OpenAPI 전용 도구**: OpenAPI/Swagger 로 등록한 문서는 엔드포인트 검색·상세 조회(`curl` 예시 생성 포함)·`$ref` 펼치기·태그 목록을 추가로 제공합니다.
-- **자동 재색인**: 원문 해시를 비교해 변경된 문서만 다시 색인합니다.
-- **프로젝트 격리**: 하나의 프로세스·DB 로 여러 프로젝트 문서를 함께 서비스하고 `project` 로 검색 범위를 좁힙니다.
+- **하이브리드 검색(RRF 융합)**: 키워드(Postgres FTS)와 벡터 유사도를 RRF로 항상 융합해 문서 섹션을 찾습니다.
+- **형식별 코드는 전처리에만**: PDF·DOCX·XLSX·PPTX는 텍스트만 뽑아 마크다운 섹션화 경로로 합류하고, 형식마다 별도 파서를 만들지 않습니다. 파서 계층 전체가 749줄이며 그중 실제 구조 파싱은 OpenAPI 3.x/Swagger 2.0 변환뿐입니다(`app/services/parser/document_router.py`).
+- **판단을 클라이언트 LLM에 위임**: 검색 품질을 올리는 비즈니스 메타데이터를 서버가 별도 LLM API를 호출해 만들지 않고, 이미 붙어 있는 호출 LLM이 되돌려주게 합니다(write-back). LLM 비용과 키 관리가 서버에서 사라집니다.
+- **OpenAPI 전용 도구**: 엔드포인트 검색·상세 조회(`curl` 예시 생성)·`$ref` 펼치기·태그 목록.
+- **자동 재색인 / 프로젝트 격리**: 원문 해시로 변경분만 재색인하고, 한 프로세스·한 DB로 여러 프로젝트를 `project` 태그로 분리해 서비스합니다.
+
+> 클라이언트별 등록, 전체 도구 17개 목록, 배치 자동화 같은 운영 상세는 [`docs/operations.md`](docs/operations.md) 에 있습니다.
 
 ## 기술 스택
 
@@ -26,31 +87,7 @@ Markdown·CSV·PDF/DOCX·OpenAPI(Swagger) 문서와 Google Drive/Notion 협업 �
 - **Schema/DTO**: Pydantic v2
 <!-- /AUTO-GENERATED -->
 
-## 검색 아키텍처 (요약)
-
-검색은 **키워드 arm**(Postgres FTS)과 **벡터 arm**(pgvector 코사인 + HNSW)을 **RRF(Reciprocal Rank Fusion)로 항상 융합**합니다. 최종 답변은 서버가 고르지 않고 호출 LLM 이 반환된 후보(top_k) 중에서 선택합니다 — 서버는 **후보 피더**이고 품질 지표는 recall@k 입니다.
-
-품질은 **Stripe 589 + GitHub 1,220 = 1,809개 실제 엔드포인트**를 프리즈한 코퍼스(n=20 질의)로
-측정합니다. 마감 재측정 기준 `rrf` 전략(질의 변형 포함 조건)은 **Recall@3 35~40%·Recall@10
-60%·MRR 0.36~0.37** 수준이며, 벡터 arm `ORDER BY`의 tie-break 누락 결함을 수정한 뒤에도
-n=20의 표준오차(±11%p대)로 인해 Recall@10은 45~60%p 구간에서, MRR·nDCG@10은 소수점대로
-매 실행 흔들립니다 — 단일 수치가 아니라 이 구간 자체가 결과입니다.
-
-초기에는 20개 엔드포인트짜리 합성 하네스에서 Recall@3 88%·@10 95%가 나왔지만, 실 코퍼스로
-다시 재면서 **그 수치가 성능이 아니라 벤치 포화의 증거였음이 드러났습니다.** 경위와 실패 축
-분해(교차언어·흔한 토큰 범람·RRF 회귀 3건)는 아래 문서에 있습니다.
-
-질의 지연(p50/p95/p99, top_k=10·변형 포함, 100 표본)은 **21.7ms / 56.7ms / 63.5ms**이며, 색인
-1,809개 엔드포인트 기준 상주 메모리는 **980MB → 1,721MB**, 검색 비용은 로컬 CPU 임베딩·자체
-호스팅 Postgres라 **$0**입니다.
-
-- [`docs/implementation_journey.md`](docs/implementation_journey.md) — 로드맵 0~5가 실제로 어떤 순서·판단을 거쳐 구현됐는지(커밋·설계문서 매핑, 기각된 개선안 포함)
-- [`docs/search_flow.md`](docs/search_flow.md) — 두 검색 경로의 전체 흐름(단계·코드 위치·다이어그램)
-- [`docs/architect-review/03_search_performance_improvements.md`](docs/architect-review/03_search_performance_improvements.md) — 성능 개선 P1~P6 및 구현 상태
-- [`docs/architect-review/09_search_quality_post_rrf.md`](docs/architect-review/09_search_quality_post_rrf.md) — 합성 평가셋·RRF 실측·K 스윕·리랭킹(P3) 착수 검토
-- [`docs/architect-review/29_search_quality_eval_real_corpus_results.md`](docs/architect-review/29_search_quality_eval_real_corpus_results.md) — 실 코퍼스 측정 결과(마감 재측정은 §13, 카테고리별 실패 분해 포함)
-- [`docs/architect-review/45_portfolio_metrics_and_type_only_import_verdict.md`](docs/architect-review/45_portfolio_metrics_and_type_only_import_verdict.md) — 합성 지표를 대외 문서에서 걷어낸 판정
-
+- **테스트**: 유닛 1,047개 + MCP 계층 통합 테스트, 결정적 RRF 골든 회귀 테스트
 ## 시작하기
 
 아래 1~3 은 준비 단계입니다. 끝나면 [MCP 연동](#mcp-연동)에서 클라이언트에 서버를 등록하며, 등록 후에는 클라이언트가 프로세스를 직접 실행하므로 서버를 따로 띄울 필요가 없습니다.
