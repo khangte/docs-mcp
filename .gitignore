@@ -231,6 +231,9 @@ secrets/
 .team/
 .claude-logs/
 
+# 로컬 스크래치 (eval 로그, gate 러너, 임시 스크립트 등)
+scratchpad/
+
 docs/portfolio_docs-mcp.md
 
 # codex
