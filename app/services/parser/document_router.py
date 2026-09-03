@@ -34,10 +34,26 @@ def detect_doc_type(raw: str, source_url: str | None = None) -> str:
     stripped = (raw or "").strip()
     if stripped.startswith("{") or "openapi:" in stripped[:200] or "swagger:" in stripped[:200]:
         return "openapi"
-    first_line = stripped.splitlines()[0] if stripped else ""
-    if "," in first_line and not first_line.startswith("#"):
+    if _looks_like_csv(stripped):
         return "csv"
     return "markdown"
+
+
+def _looks_like_csv(stripped: str) -> bool:
+    """헤더 줄과 둘째 줄의 쉼표 필드 개수가 같을 때만 CSV 로 판단한다.
+
+    쉼표 하나만으로 CSV 로 판정하면 `"안녕하세요, 반갑습니다"` 처럼 쉼표
+    포함 문장으로 시작하는 마크다운을 오판한다. 데이터 행이 최소 하나
+    있고 컬럼 수가 헤더와 일치해야 CSV 로 본다(2줄 미만이면 CSV 여부를
+    구조로 판단할 수 없어 markdown 취급).
+    """
+    lines = stripped.splitlines()
+    if len(lines) < 2 or lines[0].startswith("#"):
+        return False
+    header_fields = lines[0].count(",") + 1
+    if header_fields < 2:
+        return False
+    return lines[1].count(",") + 1 == header_fields
 
 
 def extract_text(raw_b64: str, doc_type: str) -> str:

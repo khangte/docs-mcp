@@ -46,6 +46,17 @@ def test_detect_doc_type_by_content() -> None:
     assert detect_doc_type("# Heading\nbody") == "markdown"
 
 
+def test_detect_doc_type_comma_sentence_is_not_csv() -> None:
+    """쉼표 포함 문장으로 시작하는 마크다운을 CSV 로 오판하지 않는다."""
+    assert detect_doc_type("안녕하세요, 반갑습니다\n\n# 제목\n본문") == "markdown"
+    assert detect_doc_type("Hello, world") == "markdown"
+
+
+def test_detect_doc_type_csv_requires_matching_column_count() -> None:
+    """헤더와 둘째 줄의 컬럼 수가 다르면 CSV 로 보지 않는다."""
+    assert detect_doc_type("a,b\nsingle line without matching commas") == "markdown"
+
+
 def test_parse_document_routes_by_doc_type() -> None:
     md = parse_document("# Title\nbody", "markdown")
     assert md.sections[0].title == "Title"
